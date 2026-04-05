@@ -1,0 +1,36 @@
+.submit-lead-page {
+  flex: 1;
+  padding: var(--spacing-8) var(--spacing-6);
+  background: linear-gradient(135deg, var(--pacific-blue-50) 0%, var(--cedar-brown-50) 100%);
+  min-height: 100vh;
+}
+
+.submit-lead-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.submit-lead-header {
+  text-align: center;
+  margin-bottom: var(--spacing-8);
+}
+
+.submit-lead-header h2 {
+  margin-bottom: var(--spacing-2);
+}
+
+.submit-lead-header p {
+  color: var(--neutral-600);
+}
+
+.submit-lead-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-6);
+}
+
+@media (max-width: 768px) {
+  .submit-lead-page {
+    padding: var(--spacing-6) var(--spacing-4);
+  }
+}
