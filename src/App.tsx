@@ -1,169 +1,104 @@
-// 👉 FULL CLEAN SaaS VERSION (paste everything)
-
-import { useState } from "react"
-
-type Job = {
-  id: number
-  address: string
-  status: "new" | "ready" | "review" | "needs_info"
-}
-
-const statusStyles = {
-  new: "bg-blue-950 text-blue-300 border-blue-700",
-  ready: "bg-green-900 text-green-200 border-green-700",
-  review: "bg-amber-950 text-amber-300 border-amber-700",
-  needs_info: "bg-red-950 text-red-300 border-red-700",
-}
-
-function StatusBadge({ status }: { status: Job["status"] }) {
-  return (
-    <span className={`text-xs px-2 py-1 rounded-full border ${statusStyles[status]}`}>
-      {status.replace("_", " ")}
-    </span>
-  )
-}
-
-function NavTab({ active, onClick, children }: any) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-xl border text-sm ${
-        active
-          ? "bg-white text-black border-white"
-          : "bg-[#111] border-[#333] text-gray-300 hover:bg-[#1a1a1a]"
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
+import { useState } from 'react'
+import { supabase } from './supabase'
 
 export default function App() {
-  const [mode, setMode] = useState<"agent" | "admin">("agent")
-  const [view, setView] = useState("intake")
-  const [jobs, setJobs] = useState<Job[]>([])
+  const [address, setAddress] = useState('')
 
-  const addJob = () => {
-    setJobs([
-      {
-        id: Date.now(),
-        address: "123 Example St",
-        status: "new",
-      },
-      ...jobs,
+  async function handleSubmit() {
+    const trimmed = address.trim()
+
+    if (!trimmed) {
+      alert('Please enter a property address')
+      return
+    }
+
+    const { error } = await supabase.from('properties').insert([
+      { address: trimmed },
     ])
-    setView("listings")
+
+    if (error) {
+      alert(error.message)
+      console.log(error)
+    } else {
+      alert('Saved to database ✅')
+      setAddress('')
+    }
   }
 
   return (
-    <div className="min-h-screen bg-[#030303] text-white px-6 py-6">
-      <div className="max-w-5xl mx-auto">
+    <div
+      style={{
+        minHeight: '100vh',
+        background: '#0b0b0b',
+        color: 'white',
+        fontFamily: 'Arial, sans-serif',
+        padding: 40,
+      }}
+    >
+      <h1 style={{ fontSize: 28, marginTop: 0 }}>
+        Shelter<span style={{ color: '#22c55e' }}>Prep</span>
+      </h1>
 
-        {/* HEADER */}
-        <div className="flex justify-between items-center mb-8">
+      <p style={{ color: '#aaa', marginBottom: 30 }}>
+        Pre-listing coordination, scope, and reporting
+      </p>
 
-          <div>
-            <h1 className="text-2xl font-semibold">
-              Shelter<span className="text-green-600">Prep</span>
-            </h1>
-            <p className="text-sm text-gray-400">
-              Pre-listing coordination, scope, and reporting
-            </p>
-          </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+        <button style={tab}>New Property</button>
+        <button style={tab}>My Listings</button>
+        <button style={tab}>Reports</button>
+      </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setMode("agent"); setView("intake") }}
-              className={`px-3 py-2 rounded-lg ${mode === "agent" ? "bg-green-700" : "bg-[#111]"}`}
-            >
-              Agent
-            </button>
-            <button
-              onClick={() => { setMode("admin"); setView("dashboard") }}
-              className={`px-3 py-2 rounded-lg ${mode === "admin" ? "bg-green-700" : "bg-[#111]"}`}
-            >
-              Admin
-            </button>
-          </div>
-        </div>
+      <div
+        style={{
+          background: '#111',
+          borderRadius: 12,
+          padding: 20,
+          maxWidth: 500,
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>New Property</h3>
 
-        {/* TABS */}
-        <div className="flex gap-3 mb-8">
-          {mode === "agent" ? (
-            <>
-              <NavTab active={view === "intake"} onClick={() => setView("intake")}>
-                New Property
-              </NavTab>
-              <NavTab active={view === "listings"} onClick={() => setView("listings")}>
-                My Listings
-              </NavTab>
-              <NavTab active={view === "reports"} onClick={() => setView("reports")}>
-                Reports
-              </NavTab>
-            </>
-          ) : (
-            <>
-              <NavTab active={view === "dashboard"} onClick={() => setView("dashboard")}>
-                Operations
-              </NavTab>
-              <NavTab active={view === "analytics"} onClick={() => setView("analytics")}>
-                Insights
-              </NavTab>
-            </>
-          )}
-        </div>
+        <input
+          placeholder="Property Address"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          style={input}
+        />
 
-        {/* VIEWS */}
-
-        {/* INTAKE */}
-        {view === "intake" && (
-          <div className="bg-[#111] border border-[#333] rounded-2xl p-6">
-            <h2 className="text-lg font-semibold mb-4">New Property</h2>
-
-            <input
-              placeholder="Property Address"
-              className="w-full mb-4 p-3 bg-[#080808] border border-[#333] rounded-xl"
-            />
-
-            <button
-              onClick={addJob}
-              className="bg-green-700 hover:bg-green-800 px-4 py-2 rounded-xl"
-            >
-              Submit Property
-            </button>
-          </div>
-        )}
-
-        {/* LISTINGS */}
-        {view === "listings" && (
-          <div className="space-y-4">
-            {jobs.length === 0 && (
-              <div className="text-center text-gray-500">
-                No listings yet
-              </div>
-            )}
-
-            {jobs.map((job) => (
-              <div
-                key={job.id}
-                className="bg-[#111] border border-[#333] rounded-xl p-4 flex justify-between"
-              >
-                <div>{job.address}</div>
-                <StatusBadge status={job.status} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* DASHBOARD */}
-        {view === "dashboard" && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-[#111] p-5 rounded-xl">New Leads: {jobs.length}</div>
-            <div className="bg-[#111] p-5 rounded-xl">In Review</div>
-          </div>
-        )}
-
+        <button style={button} onClick={handleSubmit}>
+          Submit Property
+        </button>
       </div>
     </div>
   )
+}
+
+const tab = {
+  background: '#1f1f1f',
+  color: 'white',
+  padding: '10px 14px',
+  borderRadius: 8,
+  border: 'none',
+  cursor: 'pointer',
+}
+
+const input = {
+  width: '100%',
+  padding: 12,
+  marginTop: 10,
+  marginBottom: 15,
+  borderRadius: 8,
+  border: '1px solid #333',
+  background: '#000',
+  color: 'white',
+}
+
+const button = {
+  background: '#22c55e',
+  color: 'white',
+  padding: '10px 16px',
+  borderRadius: 8,
+  border: 'none',
+  cursor: 'pointer',
 }
