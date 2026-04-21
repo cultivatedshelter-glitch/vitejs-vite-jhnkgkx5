@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-
+import { supabase } from './supabase'
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 type Tab = 'request' | 'dashboard' | 'estimates'
 
