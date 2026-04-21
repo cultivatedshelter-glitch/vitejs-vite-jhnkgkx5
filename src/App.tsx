@@ -1,36 +1,38 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { supabase } from './supabase'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
-
-type StoredFile = {
-  name: string
-  url: string
-  path: string
-  type: 'photo' | 'document'
-}
+type Tab = 'request' | 'dashboard' | 'estimates'
 
 type WorkRequest = {
   id: string
-  created_at: string
-  requester_name: string
+  createdAt: string
+  requesterName: string
   email: string
   phone: string
-  property_address: string
+  workType: string
+  propertyAddress: string
   city: string
   state: string
   zip: string
-  work_type: string
   urgency: string
   occupancy: string
   timeline: string
   description: string
+  photoNames: string[]
+  documentNames: string[]
   status: RequestStatus
-  files: StoredFile[]
 }
 
+type EstimateItem = {
+  id: string
+  label: string
+  qty: number
+  unitCost: number
+}
+
+const STORAGE_KEY = 'shelter-prep-requests-v2'
+const SETTINGS_KEY = 'shelter-prep-settings-v2'
 const ADMIN_PIN = '4242'
-const BUCKET_NAME = 'job-files'
 
 const WORK_TYPES = [
   'General Repair',
@@ -42,1063 +44,1178 @@ const WORK_TYPES = [
   'Landscaping',
   'Inspection Repairs',
   'Turnover Work',
+  'Home Services',
 ]
 
-const STATUS_LABELS: Record<RequestStatus, string> = {
-  new: 'New Lead',
-  needs_info: 'Needs Info',
-  estimate_ready: 'Estimate Ready',
-  pending_approval: 'Pending Approval',
+const STATUS_META: Record<
+  RequestStatus,
+  { label: string; pillBg: string; cardBg: string; border: string }
+> = {
+  new: {
+    label: 'New Lead',
+    pillBg: '#e8f1fb',
+    cardBg: '#eef5ff',
+    border: '#c8d9f2',
+  },
+  needs_info: {
+    label: 'Needs Info',
+    pillBg: '#fdeaea',
+    cardBg: '#fff3f3',
+    border: '#efc5c5',
+  },
+  estimate_ready: {
+    label: 'Estimate Ready',
+    pillBg: '#e8f6ea',
+    cardBg: '#f1fbf2',
+    border: '#c9e3ce',
+  },
+  pending_approval: {
+    label: 'Pending Approval',
+    pillBg: '#f3ece3',
+    cardBg: '#fbf6f0',
+    border: '#e2d0bc',
+  },
 }
 
+const initialEstimateItems: EstimateItem[] = [
+  { id: crypto.randomUUID(), label: 'Labor', qty: 1, unitCost: 250 },
+  { id: crypto.randomUUID(), label: 'Materials', qty: 1, unitCost: 150 },
+]
+
 export default function App() {
-  const [requesterName, setRequesterName] = useState('')
-  const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('')
-  const [propertyAddress, setPropertyAddress] = useState('')
-  const [city, setCity] = useState('')
-  const [state, setState] = useState('')
-  const [zip, setZip] = useState('')
-  const [workType, setWorkType] = useState(WORK_TYPES[0])
-  const [urgency, setUrgency] = useState('Standard')
-  const [occupancy, setOccupancy] = useState('Occupied')
-  const [timeline, setTimeline] = useState('')
-  const [description, setDescription] = useState('')
-
-  const [photoFiles, setPhotoFiles] = useState<File[]>([])
-  const [documentFiles, setDocumentFiles] = useState<File[]>([])
-
-  const [requests, setRequests] = useState<WorkRequest[]>([])
-  const [filter, setFilter] = useState<'all' | RequestStatus>('all')
-  const [search, setSearch] = useState('')
-
+  const [activeTab, setActiveTab] = useState<Tab>('request')
   const [showLogin, setShowLogin] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
 
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [emailAlerts, setEmailAlerts] = useState(true)
+  const [smsAlerts, setSmsAlerts] = useState(true)
+  const [adminAlerts, setAdminAlerts] = useState(true)
+
+  const [requesterName, setRequesterName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [workType, setWorkType] = useState('')
+  const [propertyAddress, setPropertyAddress] = useState('')
+  const [city, setCity] = useState('')
+  const [state, setState] = useState('')
+  const [zip, setZip] = useState('')
+  const [urgency, setUrgency] = useState('Standard')
+  const [occupancy, setOccupancy] = useState('Occupied')
+  const [timeline, setTimeline] = useState('')
+  const [description, setDescription] = useState('')
+  const [photoNames, setPhotoNames] = useState<string[]>([])
+  const [documentNames, setDocumentNames] = useState<string[]>([])
+  const [requests, setRequests] = useState<WorkRequest[]>([])
   const [successMessage, setSuccessMessage] = useState('')
-  const [errorMessage, setErrorMessage] = useState('')
+
+  const [dashboardSearch, setDashboardSearch] = useState('')
+  const [estimateClient, setEstimateClient] = useState('')
+  const [estimateProperty, setEstimateProperty] = useState('')
+  const [estimateTax, setEstimateTax] = useState(0)
+  const [estimateDiscount, setEstimateDiscount] = useState(0)
+  const [estimateItems, setEstimateItems] = useState<EstimateItem[]>(initialEstimateItems)
 
   useEffect(() => {
-    loadRequests()
+    try {
+      const rawRequests = localStorage.getItem(STORAGE_KEY)
+      if (rawRequests) setRequests(JSON.parse(rawRequests))
+
+      const rawSettings = localStorage.getItem(SETTINGS_KEY)
+      if (rawSettings) {
+        const parsed = JSON.parse(rawSettings)
+        setEmailAlerts(Boolean(parsed.emailAlerts))
+        setSmsAlerts(Boolean(parsed.smsAlerts))
+        setAdminAlerts(Boolean(parsed.adminAlerts))
+      }
+    } catch {
+      // ignore malformed local storage
+    }
   }, [])
 
-  async function loadRequests() {
-    setIsLoading(true)
-    setErrorMessage('')
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(requests))
+  }, [requests])
 
-    const { data, error } = await supabase
-      .from('work_requests')
-      .select('*')
-      .order('created_at', { ascending: false })
+  useEffect(() => {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ emailAlerts, smsAlerts, adminAlerts })
+    )
+  }, [emailAlerts, smsAlerts, adminAlerts])
 
-      if (error) {
-        console.error('SUPABASE LOAD ERROR:', error)
-        setErrorMessage(`Supabase load error: ${error.message}`)
-        setRequests([])
-        setIsLoading(false)
-        return
-      }
-    const normalized: WorkRequest[] = (data || []).map((item: any) => ({
-      id: item.id,
-      created_at: item.created_at,
-      requester_name: item.requester_name,
-      email: item.email,
-      phone: item.phone ?? '',
-      property_address: item.property_address,
-      city: item.city ?? '',
-      state: item.state ?? '',
-      zip: item.zip,
-      work_type: item.work_type,
-      urgency: item.urgency,
-      occupancy: item.occupancy,
-      timeline: item.timeline ?? '',
-      description: item.description,
-      status: item.status as RequestStatus,
-      files: Array.isArray(item.files) ? item.files : [],
-    }))
+  const filteredRequests = useMemo(() => {
+    const q = dashboardSearch.trim().toLowerCase()
+    if (!q) return requests
 
-    setRequests(normalized)
-    setIsLoading(false)
-  }
+    return requests.filter((request) =>
+      [
+        request.requesterName,
+        request.email,
+        request.phone,
+        request.workType,
+        request.propertyAddress,
+        request.city,
+        request.state,
+        request.zip,
+        request.description,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    )
+  }, [dashboardSearch, requests])
+
+  const groupedRequests = useMemo(() => {
+    return {
+      new: filteredRequests.filter((r) => r.status === 'new'),
+      needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
+      estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
+      pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
+    }
+  }, [filteredRequests])
+
+  const subtotal = useMemo(
+    () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
+    [estimateItems]
+  )
+  const taxAmount = subtotal * (estimateTax / 100)
+  const discountAmount = subtotal * (estimateDiscount / 100)
+  const total = subtotal + taxAmount - discountAmount
 
   function resetForm() {
     setRequesterName('')
     setEmail('')
     setPhone('')
+    setWorkType('')
     setPropertyAddress('')
     setCity('')
     setState('')
     setZip('')
-    setWorkType(WORK_TYPES[0])
     setUrgency('Standard')
     setOccupancy('Occupied')
     setTimeline('')
     setDescription('')
-    setPhotoFiles([])
-    setDocumentFiles([])
+    setPhotoNames([])
+    setDocumentNames([])
   }
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || [])
-    setPhotoFiles(files)
-  }
-
-  function handleDocumentChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || [])
-    setDocumentFiles(files)
-  }
-
-  async function uploadFiles(files: File[], kind: 'photo' | 'document') {
-    const uploaded: StoredFile[] = []
-
-    for (const file of files) {
-      const safeName = file.name.replace(/\s+/g, '-')
-      const filePath = `leads/${Date.now()}-${crypto.randomUUID()}-${safeName}`
-
-      const { error: uploadError } = await supabase.storage
-        .from(BUCKET_NAME)
-        .upload(filePath, file)
-
-      if (uploadError) {
-        throw new Error(uploadError.message)
-      }
-
-      const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
-
-      uploaded.push({
-        name: file.name,
-        url: data.publicUrl,
-        path: filePath,
-        type: kind,
-      })
-    }
-
-    return uploaded
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
+  function submitRequest(e: React.FormEvent) {
     e.preventDefault()
     setSuccessMessage('')
-    setErrorMessage('')
 
-    if (!requesterName || !email || !propertyAddress || !zip || !description) {
-      setErrorMessage('Please fill out all required fields.')
+    if (!requesterName || !email || !workType || !propertyAddress || !city || !state || !zip || !description) {
+      alert('Please complete all required fields.')
       return
     }
 
-    try {
-      setIsSubmitting(true)
-
-      const uploadedPhotos = await uploadFiles(photoFiles, 'photo')
-      const uploadedDocuments = await uploadFiles(documentFiles, 'document')
-      const allFiles = [...uploadedPhotos, ...uploadedDocuments]
-
-      const payload = {
-        requester_name: requesterName,
-        email,
-        phone,
-        property_address: propertyAddress,
-        city,
-        state,
-        zip,
-        work_type: workType,
-        urgency,
-        occupancy,
-        timeline,
-        description,
-        status: 'new',
-        files: allFiles,
-      }
-
-      const { error } = await supabase.from('work_requests').insert(payload)
-
-      if (error) {
-        throw new Error(error.message)
-      }
-
-      setSuccessMessage('Work request submitted and files uploaded.')
-      resetForm()
-      await loadRequests()
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Upload failed.')
-    } finally {
-      setIsSubmitting(false)
+    const newRequest: WorkRequest = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toLocaleString(),
+      requesterName,
+      email,
+      phone,
+      workType,
+      propertyAddress,
+      city,
+      state,
+      zip,
+      urgency,
+      occupancy,
+      timeline,
+      description,
+      photoNames,
+      documentNames,
+      status: 'new',
     }
+
+    setRequests((prev) => [newRequest, ...prev])
+    setSuccessMessage(
+      `Work request submitted${emailAlerts ? ' and email alerts are on' : ''}${smsAlerts ? ' with SMS alerts enabled' : ''}.`
+    )
+    resetForm()
   }
 
-  function handleAdminLogin() {
+  function updateStatus(id: string, status: RequestStatus) {
+    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
+  }
+
+  function doAdminLogin() {
     if (adminPinInput === ADMIN_PIN) {
       setIsAdmin(true)
       setShowLogin(false)
       setAdminPinInput('')
-    } else {
-      setErrorMessage('Wrong admin PIN')
-    }
-  }
-
-  async function updateStatus(id: string, nextStatus: RequestStatus) {
-    const { error } = await supabase
-      .from('work_requests')
-      .update({ status: nextStatus })
-      .eq('id', id)
-
-    if (error) {
-      setErrorMessage('Could not update status.')
+      setActiveTab('dashboard')
       return
     }
-
-    setRequests((prev) =>
-      prev.map((request) =>
-        request.id === id ? { ...request, status: nextStatus } : request
-      )
-    )
+    alert('Wrong admin PIN.')
   }
 
   function exportCsv() {
-    if (requests.length === 0) {
-      setErrorMessage('No requests to export.')
+    if (!requests.length) {
+      alert('No requests to export yet.')
       return
     }
 
     const headers = [
-      'created_at',
+      'createdAt',
       'status',
-      'requester_name',
+      'requesterName',
       'email',
       'phone',
-      'property_address',
+      'workType',
+      'propertyAddress',
       'city',
       'state',
       'zip',
-      'work_type',
       'urgency',
       'occupancy',
       'timeline',
       'description',
-      'photo_urls',
-      'document_urls',
+      'photoNames',
+      'documentNames',
     ]
 
-    const rows = requests.map((request) => {
-      const photoUrls = request.files
-        .filter((file) => file.type === 'photo')
-        .map((file) => file.url)
-        .join(' | ')
-
-      const documentUrls = request.files
-        .filter((file) => file.type === 'document')
-        .map((file) => file.url)
-        .join(' | ')
-
-      return [
-        request.created_at,
-        request.status,
-        request.requester_name,
-        request.email,
-        request.phone,
-        request.property_address,
-        request.city,
-        request.state,
-        request.zip,
-        request.work_type,
-        request.urgency,
-        request.occupancy,
-        request.timeline,
-        request.description,
-        photoUrls,
-        documentUrls,
+    const rows = requests.map((r) =>
+      [
+        r.createdAt,
+        r.status,
+        r.requesterName,
+        r.email,
+        r.phone,
+        r.workType,
+        r.propertyAddress,
+        r.city,
+        r.state,
+        r.zip,
+        r.urgency,
+        r.occupancy,
+        r.timeline,
+        r.description,
+        r.photoNames.join(' | '),
+        r.documentNames.join(' | '),
       ]
         .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
         .join(',')
-    })
+    )
 
     const csv = [headers.join(','), ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'shelter-prep-requests.csv'
-    link.click()
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'shelter-prep-requests.csv'
+    a.click()
     URL.revokeObjectURL(url)
   }
 
-  const filteredRequests = useMemo(() => {
-    return requests.filter((request) => {
-      const matchesFilter = filter === 'all' ? true : request.status === filter
+  function addEstimateItem() {
+    setEstimateItems((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), label: '', qty: 1, unitCost: 0 },
+    ])
+  }
 
-      const haystack = [
-        request.requester_name,
-        request.email,
-        request.phone,
-        request.property_address,
-        request.city,
-        request.state,
-        request.zip,
-        request.work_type,
-        request.description,
-      ]
-        .join(' ')
-        .toLowerCase()
+  function updateEstimateItem(id: string, patch: Partial<EstimateItem>) {
+    setEstimateItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+  }
 
-      const matchesSearch = haystack.includes(search.toLowerCase())
-      return matchesFilter && matchesSearch
-    })
-  }, [requests, filter, search])
+  function removeEstimateItem(id: string) {
+    setEstimateItems((prev) => prev.filter((item) => item.id !== id))
+  }
 
-  const columns: RequestStatus[] = [
-    'new',
-    'needs_info',
-    'estimate_ready',
-    'pending_approval',
-  ]
+  function openPrintableEstimate() {
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    if (!printWindow) return
+
+    const rows = estimateItems
+      .map(
+        (item) => `
+          <tr>
+            <td style="padding:8px;border:1px solid #d7ddd8;">${item.label || 'Line Item'}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">${item.qty}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${item.unitCost.toFixed(2)}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${(item.qty * item.unitCost).toFixed(2)}</td>
+          </tr>`
+      )
+      .join('')
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Shelter Prep Estimate</title>
+        </head>
+        <body style="font-family:Arial,sans-serif;padding:24px;color:#1f2a30;">
+          <h1 style="margin-bottom:4px;">Shelter Prep Estimate</h1>
+          <p style="margin-top:0;color:#52606b;">${estimateClient || 'Client'}${estimateProperty ? ` • ${estimateProperty}` : ''}</p>
+          <table style="width:100%;border-collapse:collapse;margin-top:16px;">
+            <thead>
+              <tr>
+                <th style="padding:8px;border:1px solid #d7ddd8;text-align:left;">Item</th>
+                <th style="padding:8px;border:1px solid #d7ddd8;text-align:right;">Qty</th>
+                <th style="padding:8px;border:1px solid #d7ddd8;text-align:right;">Unit Cost</th>
+                <th style="padding:8px;border:1px solid #d7ddd8;text-align:right;">Line Total</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="margin-top:20px;max-width:320px;margin-left:auto;">
+            <p>Subtotal: <strong>$${subtotal.toFixed(2)}</strong></p>
+            <p>Tax (${estimateTax}%): <strong>$${taxAmount.toFixed(2)}</strong></p>
+            <p>Discount (${estimateDiscount}%): <strong>-$${discountAmount.toFixed(2)}</strong></p>
+            <p style="font-size:20px;">Total: <strong>$${total.toFixed(2)}</strong></p>
+          </div>
+          <script>window.print()</script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  const navButton = (tab: Tab, label: string) => (
+    <button
+      onClick={() => setActiveTab(tab)}
+      style={{
+        ...styles.navButton,
+        ...(activeTab === tab ? styles.navButtonActive : {}),
+      }}
+    >
+      {label}
+    </button>
+  )
 
   return (
-    <div style={pageStyle}>
-      <header style={headerStyle}>
-        <div style={headerInnerStyle}>
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div style={styles.logoWrap}>
+          <div style={styles.logoMark}>│││</div>
           <div>
-            <div style={eyebrowStyle}>SHELTER PREP</div>
-            <h1 style={titleStyle}>Work Request Intake</h1>
-            <p style={subtitleStyle}>
-              Supabase version with real file uploads and admin access.
-            </p>
+            <div style={styles.brand}>SHELTER PREP</div>
+            <div style={styles.brandSub}>HOME SERVICES</div>
           </div>
+        </div>
 
-          <div style={headerActionsStyle}>
-            {isAdmin ? (
-              <>
-                <button style={secondaryButtonStyle} onClick={exportCsv}>
-                  Export CSV
-                </button>
-                <button style={primaryButtonStyle} onClick={() => setIsAdmin(false)}>
-                  Log Out
-                </button>
-              </>
-            ) : (
-              <button style={primaryButtonStyle} onClick={() => setShowLogin(true)}>
-                Admin Login
-              </button>
-            )}
-          </div>
+        <div style={styles.topNav}>
+          {navButton('request', 'New Request')}
+          {navButton('dashboard', 'Dashboard')}
+          {navButton('estimates', 'Estimates')}
+        </div>
+
+        <div style={styles.topActions}>
+          <button style={styles.secondaryBtn} onClick={exportCsv}>Export CSV</button>
+          {isAdmin ? (
+            <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>Log Out</button>
+          ) : (
+            <button style={styles.primaryBtn} onClick={() => setShowLogin(true)}>Admin Login</button>
+          )}
         </div>
       </header>
 
-      <main style={mainStyle}>
-        <section style={heroCardStyle}>
-          <div style={heroBadgeStyle}>Property work intake</div>
-          <h2 style={heroTitleStyle}>Submit a work request in one place.</h2>
-          <p style={heroTextStyle}>
-            Enter the property details, describe the work needed, and upload photos,
-            documents, or video for admin review.
-          </p>
-        </section>
+      <main style={styles.mainGrid}>
+        <div>
+          {activeTab === 'request' && (
+            <>
+              <section style={styles.hero}>
+                <div style={styles.heroBadge}>Property work intake</div>
+                <h1 style={styles.heroTitle}>Submit a work request in one place.</h1>
+                <p style={styles.heroText}>
+                  Enter the property details, describe the work needed, and upload photos,
+                  documents, or video for admin review.
+                </p>
+              </section>
 
-        <section style={cardStyle}>
-          <div style={sectionHeaderStyle}>
-            <div>
-              <h3 style={sectionTitleStyle}>New Work Request</h3>
-              <p style={sectionTextStyle}>Fields marked with * are required.</p>
-            </div>
-          </div>
-
-          {successMessage && <div style={successStyle}>{successMessage}</div>}
-          {errorMessage && <div style={errorStyle}>{errorMessage}</div>}
-
-          <form onSubmit={handleSubmit}>
-            <div style={grid2Style}>
-              <input
-                style={inputStyle}
-                placeholder="Your name *"
-                value={requesterName}
-                onChange={(e) => setRequesterName(e.target.value)}
-              />
-              <input
-                style={inputStyle}
-                placeholder="Your email *"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-
-            <div style={grid2Style}>
-              <input
-                style={inputStyle}
-                placeholder="Phone number"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-              <select
-                style={inputStyle}
-                value={workType}
-                onChange={(e) => setWorkType(e.target.value)}
-              >
-                {WORK_TYPES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <input
-              style={inputStyle}
-              placeholder="Property address *"
-              value={propertyAddress}
-              onChange={(e) => setPropertyAddress(e.target.value)}
-            />
-
-            <div style={grid3Style}>
-              <input
-                style={inputStyle}
-                placeholder="City"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-              />
-              <input
-                style={inputStyle}
-                placeholder="State"
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-              />
-              <input
-                style={inputStyle}
-                placeholder="ZIP code *"
-                value={zip}
-                onChange={(e) => setZip(e.target.value)}
-              />
-            </div>
-
-            <div style={grid3Style}>
-              <select
-                style={inputStyle}
-                value={urgency}
-                onChange={(e) => setUrgency(e.target.value)}
-              >
-                <option value="Standard">Standard</option>
-                <option value="Urgent">Urgent</option>
-                <option value="ASAP">ASAP</option>
-              </select>
-
-              <select
-                style={inputStyle}
-                value={occupancy}
-                onChange={(e) => setOccupancy(e.target.value)}
-              >
-                <option value="Occupied">Occupied</option>
-                <option value="Vacant">Vacant</option>
-                <option value="Unknown">Unknown</option>
-              </select>
-
-              <input
-                style={inputStyle}
-                placeholder="Preferred timeline"
-                value={timeline}
-                onChange={(e) => setTimeline(e.target.value)}
-              />
-            </div>
-
-            <textarea
-              style={{ ...inputStyle, minHeight: 140, resize: 'vertical' }}
-              placeholder="Describe the work needed *"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-
-            <div style={grid2Style}>
-              <div style={uploadBoxStyle}>
-                <label style={uploadLabelStyle}>Photos</label>
-                <input type="file" multiple accept="image/*" onChange={handlePhotoChange} />
-                {photoFiles.length > 0 && (
-                  <div style={fileTextStyle}>
-                    {photoFiles.map((file) => file.name).join(', ')}
+              <section style={styles.card}>
+                <div style={styles.sectionHead}>
+                  <div>
+                    <h2 style={styles.sectionTitle}>New Work Request</h2>
+                    <p style={styles.sectionText}>Fields marked with * are required.</p>
                   </div>
-                )}
-              </div>
+                </div>
 
-              <div style={uploadBoxStyle}>
-                <label style={uploadLabelStyle}>Documents / Video</label>
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.mov"
-                  onChange={handleDocumentChange}
-                />
-                {documentFiles.length > 0 && (
-                  <div style={fileTextStyle}>
-                    {documentFiles.map((file) => file.name).join(', ')}
+                {successMessage ? <div style={styles.success}>{successMessage}</div> : null}
+
+                <form onSubmit={submitRequest}>
+                  <div style={styles.grid2}>
+                    <input style={styles.input} placeholder="Your name *" value={requesterName} onChange={(e) => setRequesterName(e.target.value)} />
+                    <input style={styles.input} placeholder="Your email *" value={email} onChange={(e) => setEmail(e.target.value)} />
                   </div>
-                )}
-              </div>
-            </div>
 
-            <div style={buttonRowStyle}>
-              <button type="submit" style={primaryButtonStyle} disabled={isSubmitting}>
-                {isSubmitting ? 'Uploading...' : 'Submit Request'}
-              </button>
-              <button type="button" style={secondaryButtonStyle} onClick={resetForm}>
-                Clear Form
-              </button>
-            </div>
-          </form>
-        </section>
+                  <div style={styles.grid2}>
+                    <input style={styles.input} placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                    <select style={styles.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
+                      <option value="">Work type *</option>
+                      {WORK_TYPES.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
 
-        {isAdmin && (
-          <>
-            <section style={cardStyle}>
-              <div style={sectionHeaderStyle}>
+                  <input style={styles.input} placeholder="Property address *" value={propertyAddress} onChange={(e) => setPropertyAddress(e.target.value)} />
+
+                  <div style={styles.grid3}>
+                    <input style={styles.input} placeholder="City *" value={city} onChange={(e) => setCity(e.target.value)} />
+                    <input style={styles.input} placeholder="State *" value={state} onChange={(e) => setState(e.target.value)} />
+                    <input style={styles.input} placeholder="ZIP code *" value={zip} onChange={(e) => setZip(e.target.value)} />
+                  </div>
+
+                  <div style={styles.grid3}>
+                    <select style={styles.input} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
+                      <option>Standard</option>
+                      <option>Urgent</option>
+                      <option>ASAP</option>
+                    </select>
+                    <select style={styles.input} value={occupancy} onChange={(e) => setOccupancy(e.target.value)}>
+                      <option>Occupied</option>
+                      <option>Vacant</option>
+                      <option>Tenant Occupied</option>
+                      <option>Unknown</option>
+                    </select>
+                    <input style={styles.input} placeholder="Desired timeline" value={timeline} onChange={(e) => setTimeline(e.target.value)} />
+                  </div>
+
+                  <textarea
+                    style={{ ...styles.input, minHeight: 130, resize: 'vertical' }}
+                    placeholder="Describe the work needed. Please include as much detail as possible. *"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+
+                  <div style={styles.grid2}>
+                    <label style={styles.uploadBox}>
+                      <div style={styles.uploadTitle}>Upload photos / videos</div>
+                      <div style={styles.uploadText}>JPG, PNG, MP4, MOV up to 20MB each</div>
+                      <input
+                        type="file"
+                        accept="image/*,video/mp4,video/quicktime"
+                        multiple
+                        onChange={(e) => setPhotoNames(Array.from(e.target.files || []).map((f) => f.name))}
+                      />
+                      {photoNames.length ? <div style={styles.fileList}>{photoNames.join(', ')}</div> : null}
+                    </label>
+
+                    <label style={styles.uploadBox}>
+                      <div style={styles.uploadTitle}>Upload documents</div>
+                      <div style={styles.uploadText}>PDF, DOC, DOCX up to 20MB each</div>
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx"
+                        multiple
+                        onChange={(e) => setDocumentNames(Array.from(e.target.files || []).map((f) => f.name))}
+                      />
+                      {documentNames.length ? <div style={styles.fileList}>{documentNames.join(', ')}</div> : null}
+                    </label>
+                  </div>
+
+                  <div style={styles.formFooter}>
+                    <button type="submit" style={styles.primarySubmit}>Submit Work Request</button>
+                    <div style={styles.footerNote}>Your request will be reviewed by our team.</div>
+                    <div style={styles.footerNote}>Your information is secure and will not be shared.</div>
+                  </div>
+                </form>
+              </section>
+            </>
+          )}
+
+          {activeTab === 'dashboard' && (
+            <section style={styles.card}>
+              <div style={styles.sectionHead}>
                 <div>
-                  <h3 style={sectionTitleStyle}>Admin Dashboard</h3>
-                  <p style={sectionTextStyle}>
-                    Requests and files are loaded from Supabase.
+                  <h2 style={styles.sectionTitle}>Admin Dashboard</h2>
+                  <p style={styles.sectionText}>
+                    Track every job across new leads, estimate-ready work, approvals, and follow-up.
                   </p>
                 </div>
+                {!isAdmin ? <div style={styles.locked}>Admin login required to manage jobs</div> : null}
               </div>
 
-              <div style={filterBarStyle}>
-                <input
-                  style={{ ...inputStyle, margin: 0 }}
-                  placeholder="Search requests"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <select
-                  style={{ ...inputStyle, margin: 0 }}
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value as 'all' | RequestStatus)}
-                >
-                  <option value="all">All Statuses</option>
-                  {columns.map((status) => (
-                    <option key={status} value={status}>
-                      {STATUS_LABELS[status]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </section>
+              <input
+                style={styles.input}
+                placeholder="Search by name, address, email, work type"
+                value={dashboardSearch}
+                onChange={(e) => setDashboardSearch(e.target.value)}
+              />
 
-            {isLoading ? (
-              <section style={cardStyle}>
-                <div style={sectionTextStyle}>Loading requests...</div>
-              </section>
-            ) : (
-              <section style={kanbanWrapStyle}>
-                {columns.map((status) => {
-                  const items = filteredRequests.filter((request) => request.status === status)
-
-                  return (
-                    <div key={status} style={{ ...columnStyle, ...columnByStatus[status] }}>
-                      <div style={columnHeaderStyle}>
-                        <span>{STATUS_LABELS[status]}</span>
-                        <span style={countBadgeStyle}>{items.length}</span>
+              {!isAdmin ? (
+                <div style={styles.emptyState}>Use the Admin Login button to unlock the dashboard.</div>
+              ) : (
+                <div style={styles.kanban}>
+                  {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map((status) => (
+                    <div
+                      key={status}
+                      style={{
+                        ...styles.column,
+                        background: STATUS_META[status].cardBg,
+                        borderColor: STATUS_META[status].border,
+                      }}
+                    >
+                      <div style={styles.columnHead}>
+                        <span>{STATUS_META[status].label}</span>
+                        <span style={{ ...styles.countPill, background: STATUS_META[status].pillBg }}>
+                          {groupedRequests[status].length}
+                        </span>
                       </div>
 
-                      <div style={columnBodyStyle}>
-                        {items.length === 0 ? (
-                          <div style={emptyColumnStyle}>No requests</div>
+                      <div style={styles.columnBody}>
+                        {groupedRequests[status].length === 0 ? (
+                          <div style={styles.emptyColumn}>No requests</div>
                         ) : (
-                          items.map((request) => {
-                            const photos = request.files.filter((file) => file.type === 'photo')
-                            const documents = request.files.filter(
-                              (file) => file.type === 'document'
-                            )
-
-                            return (
-                              <div key={request.id} style={adminCardStyle}>
-                                <div style={adminAddressStyle}>{request.property_address}</div>
-
-                                <div style={adminMetaStyle}>
-                                  {request.city}
-                                  {request.city && request.state ? ', ' : ''}
-                                  {request.state} {request.zip}
-                                </div>
-
-                                <div style={adminMetaStyle}>
-                                  {request.requester_name} • {request.email}
-                                  {request.phone ? ` • ${request.phone}` : ''}
-                                </div>
-
-                                <div style={adminMetaStyle}>
-                                  {request.work_type} • {request.urgency} • {request.occupancy}
-                                </div>
-
-                                <p style={adminDescriptionStyle}>{request.description}</p>
-
-                                {photos.length > 0 && (
-                                  <div style={adminFilesStyle}>
-                                    <strong>Photos:</strong>
-                                    <div style={thumbGridStyle}>
-                                      {photos.map((file) => (
-                                        <a
-                                          key={file.path}
-                                          href={file.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          style={thumbLinkStyle}
-                                        >
-                                          <img
-                                            src={file.url}
-                                            alt={file.name}
-                                            style={thumbImageStyle}
-                                          />
-                                          <div style={fileNameStyle}>{file.name}</div>
-                                        </a>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {documents.length > 0 && (
-                                  <div style={adminFilesStyle}>
-                                    <strong>Files:</strong>
-                                    <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-                                      {documents.map((file) => (
-                                        <a
-                                          key={file.path}
-                                          href={file.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          style={fileLinkStyle}
-                                        >
-                                          Open {file.name}
-                                        </a>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div style={adminMetaSmallStyle}>
-                                  {new Date(request.created_at).toLocaleString()}
-                                </div>
-
-                                <select
-                                  style={{ ...inputStyle, marginTop: 12, marginBottom: 0 }}
-                                  value={request.status}
-                                  onChange={(e) =>
-                                    updateStatus(request.id, e.target.value as RequestStatus)
-                                  }
-                                >
-                                  {columns.map((nextStatus) => (
-                                    <option key={nextStatus} value={nextStatus}>
-                                      {STATUS_LABELS[nextStatus]}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            )
-                          })
+                          groupedRequests[status].map((request) => (
+                            <div key={request.id} style={styles.leadCard}>
+                              <div style={styles.leadAddress}>{request.propertyAddress}</div>
+                              <div style={styles.leadMeta}>{request.city}, {request.state} {request.zip}</div>
+                              <div style={styles.leadMeta}>{request.requesterName} • {request.email}</div>
+                              <div style={styles.leadMeta}>{request.workType} • {request.urgency}</div>
+                              <p style={styles.leadDesc}>{request.description}</p>
+                              {request.photoNames.length ? <div style={styles.smallText}><strong>Photos:</strong> {request.photoNames.join(', ')}</div> : null}
+                              {request.documentNames.length ? <div style={styles.smallText}><strong>Files:</strong> {request.documentNames.join(', ')}</div> : null}
+                              <div style={styles.smallText}>{request.createdAt}</div>
+                              <select
+                                style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
+                                value={request.status}
+                                onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}
+                              >
+                                <option value="new">New Lead</option>
+                                <option value="estimate_ready">Estimate Ready</option>
+                                <option value="pending_approval">Pending Approval</option>
+                                <option value="needs_info">Needs Info</option>
+                              </select>
+                            </div>
+                          ))
                         )}
                       </div>
                     </div>
-                  )
-                })}
-              </section>
-            )}
-          </>
-        )}
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === 'estimates' && (
+            <section style={styles.card}>
+              <div style={styles.sectionHead}>
+                <div>
+                  <h2 style={styles.sectionTitle}>Estimate Builder</h2>
+                  <p style={styles.sectionText}>Add line items, taxes, and discounts, then print a clean estimate.</p>
+                </div>
+              </div>
+
+              <div style={styles.grid2}>
+                <input style={styles.input} placeholder="Client name" value={estimateClient} onChange={(e) => setEstimateClient(e.target.value)} />
+                <input style={styles.input} placeholder="Property address" value={estimateProperty} onChange={(e) => setEstimateProperty(e.target.value)} />
+              </div>
+
+              {estimateItems.map((item) => (
+                <div key={item.id} style={styles.estimateRow}>
+                  <input
+                    style={{ ...styles.input, marginBottom: 0 }}
+                    placeholder="Line item"
+                    value={item.label}
+                    onChange={(e) => updateEstimateItem(item.id, { label: e.target.value })}
+                  />
+                  <input
+                    style={{ ...styles.input, marginBottom: 0 }}
+                    type="number"
+                    min={1}
+                    value={item.qty}
+                    onChange={(e) => updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })}
+                  />
+                  <input
+                    style={{ ...styles.input, marginBottom: 0 }}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={item.unitCost}
+                    onChange={(e) => updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })}
+                  />
+                  <button style={styles.secondaryBtn} onClick={() => removeEstimateItem(item.id)} type="button">Remove</button>
+                </div>
+              ))}
+
+              <div style={styles.grid2}>
+                <input
+                  style={styles.input}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="Tax %"
+                  value={estimateTax}
+                  onChange={(e) => setEstimateTax(Number(e.target.value) || 0)}
+                />
+                <input
+                  style={styles.input}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="Discount %"
+                  value={estimateDiscount}
+                  onChange={(e) => setEstimateDiscount(Number(e.target.value) || 0)}
+                />
+              </div>
+
+              <div style={styles.estimateTotals}>
+                <div>Subtotal: <strong>${subtotal.toFixed(2)}</strong></div>
+                <div>Tax: <strong>${taxAmount.toFixed(2)}</strong></div>
+                <div>Discount: <strong>-${discountAmount.toFixed(2)}</strong></div>
+                <div style={styles.totalLine}>Total: <strong>${total.toFixed(2)}</strong></div>
+              </div>
+
+              <div style={styles.formFooter}>
+                <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>Add Line Item</button>
+                <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>Print Estimate</button>
+              </div>
+            </section>
+          )}
+        </div>
+
+        <aside style={styles.sidebar}>
+          <section style={styles.sideCard}>
+            <h3 style={styles.sideTitle}>Instant Notifications</h3>
+            <ToggleRow label="Email Alerts" text="Get instant email notifications when new requests come in." checked={emailAlerts} onChange={setEmailAlerts} />
+            <ToggleRow label="Text Message Alerts" text="Receive SMS notifications on your mobile phone." checked={smsAlerts} onChange={setSmsAlerts} />
+            <ToggleRow label="Admin Alerts" text="Stay updated on status changes, new messages, and more." checked={adminAlerts} onChange={setAdminAlerts} />
+          </section>
+
+          <section style={styles.sideCardSoft}>
+            <h3 style={styles.sideTitle}>Estimate Builder</h3>
+            <p style={styles.sideText}>Create professional estimates quickly and send to clients.</p>
+            <ul style={styles.featureList}>
+              <li>Add line items and materials</li>
+              <li>Set labor, taxes, and discounts</li>
+              <li>Professional printable estimates</li>
+              <li>Send and track client approvals</li>
+            </ul>
+            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('estimates')}>Go to Estimate Builder</button>
+          </section>
+
+          <section style={styles.sideCard}>
+            <h3 style={styles.sideTitle}>Need Help?</h3>
+            <p style={styles.sideText}>Contact our support team for assistance.</p>
+            <a href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support" style={styles.supportBtn}>Contact Support</a>
+          </section>
+        </aside>
       </main>
 
-      {showLogin && (
-        <div style={overlayStyle} onClick={() => setShowLogin(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0, color: '#213846' }}>Admin Login</h3>
-            <p style={{ color: '#6b7280', marginTop: 0 }}>Demo PIN: 4242</p>
+      <section style={styles.bottomBand}>
+        <BottomFeature title="Instant Email Alerts" text="Get notified immediately when new work requests are submitted." />
+        <BottomFeature title="Text Message Alerts" text="Receive real-time text notifications so you never miss a request." />
+        <BottomFeature title="Estimate Builder" text="Build, send, and track estimates all in one place." />
+        <BottomFeature title="Track Every Job" text="Manage requests, status updates, and client communication easily." />
+      </section>
 
+      {showLogin ? (
+        <div style={styles.overlay} onClick={() => setShowLogin(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Admin Login</h3>
+            <p style={{ color: '#60706f' }}>Demo PIN: 4242</p>
             <input
-              style={inputStyle}
+              style={styles.input}
               placeholder="Enter admin PIN"
               value={adminPinInput}
               onChange={(e) => setAdminPinInput(e.target.value)}
             />
-
-            <div style={buttonRowStyle}>
-              <button style={primaryButtonStyle} onClick={handleAdminLogin}>
-                Sign In
-              </button>
-              <button style={secondaryButtonStyle} onClick={() => setShowLogin(false)}>
-                Cancel
-              </button>
+            <div style={styles.formFooter}>
+              <button style={styles.primaryBtn} onClick={doAdminLogin}>Sign In</button>
+              <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>Cancel</button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
 
-const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(180deg, #f4efe6 0%, #eef3f6 58%, #f7f4ee 100%)',
-  color: '#1f2a30',
-  fontFamily:
-    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+function ToggleRow({
+  label,
+  text,
+  checked,
+  onChange,
+}: {
+  label: string
+  text: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div style={styles.toggleRow}>
+      <div style={{ flex: 1 }}>
+        <div style={styles.toggleLabel}>{label}</div>
+        <div style={styles.toggleText}>{text}</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        style={{
+          ...styles.toggle,
+          justifyContent: checked ? 'flex-end' : 'flex-start',
+          background: checked ? '#77a66a' : '#ccd6cf',
+        }}
+      >
+        <span style={styles.toggleKnob} />
+      </button>
+    </div>
+  )
 }
 
-const headerStyle: React.CSSProperties = {
-  position: 'sticky',
-  top: 0,
-  zIndex: 20,
-  backdropFilter: 'blur(10px)',
-  background: 'rgba(255,255,255,0.72)',
-  borderBottom: '1px solid rgba(31, 42, 48, 0.08)',
+function BottomFeature({ title, text }: { title: string; text: string }) {
+  return (
+    <div style={styles.bottomFeature}>
+      <div style={styles.bottomFeatureTitle}>{title}</div>
+      <div style={styles.bottomFeatureText}>{text}</div>
+    </div>
+  )
 }
 
-const headerInnerStyle: React.CSSProperties = {
-  maxWidth: 1180,
-  margin: '0 auto',
-  padding: '20px 24px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 16,
-  flexWrap: 'wrap',
-}
-
-const eyebrowStyle: React.CSSProperties = {
-  fontSize: 12,
-  letterSpacing: 2,
-  color: '#6b7280',
-  marginBottom: 6,
-}
-
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 30,
-  color: '#4c3b2f',
-}
-
-const subtitleStyle: React.CSSProperties = {
-  margin: '8px 0 0 0',
-  color: '#6b7280',
-}
-
-const headerActionsStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 12,
-  flexWrap: 'wrap',
-}
-
-const mainStyle: React.CSSProperties = {
-  maxWidth: 1180,
-  margin: '0 auto',
-  padding: '28px 24px 56px',
-}
-
-const heroCardStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #345a73 0%, #213846 100%)',
-  color: 'white',
-  borderRadius: 24,
-  padding: 32,
-  boxShadow: '0 20px 60px rgba(33, 56, 70, 0.25)',
-  marginBottom: 22,
-}
-
-const heroBadgeStyle: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '8px 12px',
-  background: 'rgba(255,255,255,0.12)',
-  borderRadius: 999,
-  fontSize: 12,
-  marginBottom: 16,
-}
-
-const heroTitleStyle: React.CSSProperties = {
-  margin: '0 0 12px 0',
-  fontSize: 40,
-  lineHeight: 1.05,
-}
-
-const heroTextStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 18,
-  lineHeight: 1.6,
-  color: 'rgba(255,255,255,0.88)',
-  maxWidth: 760,
-}
-
-const cardStyle: React.CSSProperties = {
-  background: 'white',
-  borderRadius: 24,
-  padding: 24,
-  border: '1px solid rgba(31, 42, 48, 0.08)',
-  boxShadow: '0 16px 40px rgba(31, 42, 48, 0.08)',
-  marginBottom: 22,
-}
-
-const sectionHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 12,
-  flexWrap: 'wrap',
-  marginBottom: 16,
-}
-
-const sectionTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 28,
-  color: '#4c3b2f',
-}
-
-const sectionTextStyle: React.CSSProperties = {
-  margin: '8px 0 0 0',
-  color: '#6b7280',
-}
-
-const successStyle: React.CSSProperties = {
-  marginBottom: 18,
-  padding: '14px 16px',
-  borderRadius: 14,
-  background: '#e8f7ec',
-  color: '#1f6b3a',
-  fontWeight: 700,
-}
-
-const errorStyle: React.CSSProperties = {
-  marginBottom: 18,
-  padding: '14px 16px',
-  borderRadius: 14,
-  background: '#fdecec',
-  color: '#a12626',
-  fontWeight: 700,
-}
-
-const grid2Style: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-  gap: 12,
-  marginBottom: 12,
-}
-
-const grid3Style: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-  gap: 12,
-  marginBottom: 12,
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '14px 16px',
-  borderRadius: 14,
-  border: '1px solid rgba(31, 42, 48, 0.12)',
-  background: '#fafafa',
-  color: '#1f2a30',
-  fontSize: 14,
-  outline: 'none',
-  marginBottom: 12,
-  boxSizing: 'border-box',
-}
-
-const uploadBoxStyle: React.CSSProperties = {
-  border: '1px solid rgba(31, 42, 48, 0.12)',
-  borderRadius: 16,
-  background: '#fafafa',
-  padding: 16,
-}
-
-const uploadLabelStyle: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 700,
-  marginBottom: 8,
-  color: '#4c3b2f',
-}
-
-const fileTextStyle: React.CSSProperties = {
-  marginTop: 10,
-  fontSize: 12,
-  color: '#6b7280',
-  lineHeight: 1.5,
-}
-
-const buttonRowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 12,
-  flexWrap: 'wrap',
-  marginTop: 8,
-}
-
-const primaryButtonStyle: React.CSSProperties = {
-  border: 'none',
-  background: '#4c3b2f',
-  color: 'white',
-  padding: '12px 16px',
-  borderRadius: 999,
-  cursor: 'pointer',
-  fontWeight: 700,
-}
-
-const secondaryButtonStyle: React.CSSProperties = {
-  border: '1px solid rgba(31, 42, 48, 0.12)',
-  background: 'white',
-  color: '#213846',
-  padding: '12px 16px',
-  borderRadius: 999,
-  cursor: 'pointer',
-  fontWeight: 700,
-}
-
-const filterBarStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '2fr 1fr',
-  gap: 12,
-}
-
-const kanbanWrapStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-  gap: 16,
-}
-
-const columnStyle: React.CSSProperties = {
-  borderRadius: 22,
-  padding: 16,
-  minHeight: 240,
-}
-
-const columnByStatus: Record<RequestStatus, React.CSSProperties> = {
-  new: {
-    background: '#e9f1fb',
-    border: '1px solid #cdddf5',
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: '100vh',
+    background: '#f6f4ef',
+    color: '#1d2a22',
+    fontFamily: 'Inter, Arial, sans-serif',
+    padding: 20,
   },
-  needs_info: {
-    background: '#fdecec',
-    border: '1px solid #f3c7c7',
+  header: {
+    maxWidth: 1440,
+    margin: '0 auto 20px',
+    display: 'grid',
+    gridTemplateColumns: '1.1fr 1fr auto',
+    gap: 16,
+    alignItems: 'center',
   },
-  estimate_ready: {
-    background: '#ebf8ef',
-    border: '1px solid #cce8d4',
+  logoWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
   },
-  pending_approval: {
-    background: '#f7efe7',
-    border: '1px solid #ead8c7',
+  logoMark: {
+    width: 44,
+    height: 58,
+    border: '3px solid #164f2d',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderBottom: 'none',
+    color: '#164f2d',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+    letterSpacing: -2,
   },
-}
-
-const columnHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: 14,
-  fontWeight: 800,
-  color: '#213846',
-}
-
-const countBadgeStyle: React.CSSProperties = {
-  minWidth: 28,
-  height: 28,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 999,
-  background: 'rgba(255,255,255,0.9)',
-  fontSize: 12,
-}
-
-const columnBodyStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 12,
-}
-
-const emptyColumnStyle: React.CSSProperties = {
-  borderRadius: 16,
-  padding: 16,
-  background: 'rgba(255,255,255,0.8)',
-  color: '#6b7280',
-  fontSize: 14,
-}
-
-const adminCardStyle: React.CSSProperties = {
-  background: 'white',
-  borderRadius: 18,
-  padding: 16,
-  boxShadow: '0 10px 24px rgba(31, 42, 48, 0.07)',
-  border: '1px solid rgba(31, 42, 48, 0.06)',
-}
-
-const adminAddressStyle: React.CSSProperties = {
-  fontWeight: 800,
-  color: '#213846',
-  marginBottom: 4,
-}
-
-const adminMetaStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: '#5f6b75',
-  lineHeight: 1.5,
-  marginBottom: 6,
-}
-
-const adminMetaSmallStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#80909c',
-  marginTop: 8,
-}
-
-const adminDescriptionStyle: React.CSSProperties = {
-  margin: '8px 0',
-  color: '#1f2a30',
-  lineHeight: 1.55,
-}
-
-const adminFilesStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#4c5963',
-  marginTop: 8,
-  lineHeight: 1.45,
-}
-
-const thumbGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-  gap: 10,
-  marginTop: 10,
-}
-
-const thumbLinkStyle: React.CSSProperties = {
-  textDecoration: 'none',
-  color: '#213846',
-  display: 'block',
-}
-
-const thumbImageStyle: React.CSSProperties = {
-  width: '100%',
-  height: 90,
-  objectFit: 'cover',
-  borderRadius: 10,
-  border: '1px solid rgba(31, 42, 48, 0.08)',
-  display: 'block',
-}
-
-const fileNameStyle: React.CSSProperties = {
-  marginTop: 6,
-  fontSize: 11,
-  wordBreak: 'break-word',
-}
-
-const fileLinkStyle: React.CSSProperties = {
-  color: '#1d4f91',
-  textDecoration: 'underline',
-}
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(0,0,0,0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 20,
-  zIndex: 1000,
-}
-
-const modalStyle: React.CSSProperties = {
-  width: '100%',
-  maxWidth: 420,
-  background: 'white',
-  borderRadius: 20,
-  padding: 24,
-  boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+  brand: {
+    fontSize: 36,
+    fontWeight: 800,
+    color: '#113c22',
+    letterSpacing: 1,
+  },
+  brandSub: {
+    fontSize: 16,
+    letterSpacing: 4,
+    color: '#2e6b3f',
+    fontWeight: 700,
+  },
+  topNav: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  navButton: {
+    border: 'none',
+    background: 'transparent',
+    padding: '12px 14px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 700,
+    color: '#24352b',
+  },
+  navButtonActive: {
+    boxShadow: 'inset 0 -3px 0 #295f36',
+    color: '#123a21',
+  },
+  topActions: {
+    display: 'flex',
+    gap: 12,
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  primaryBtn: {
+    border: 'none',
+    background: '#134b26',
+    color: '#fff',
+    padding: '14px 20px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  secondaryBtn: {
+    border: '1px solid #c7d0c9',
+    background: '#fff',
+    color: '#24352b',
+    padding: '14px 18px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 700,
+  },
+  mainGrid: {
+    maxWidth: 1440,
+    margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 380px',
+    gap: 18,
+    alignItems: 'start',
+  },
+  hero: {
+    background: 'linear-gradient(135deg, #103c21 0%, #0a2e1a 55%, #204c30 100%)',
+    color: '#fff',
+    borderRadius: 24,
+    padding: 36,
+    marginBottom: 16,
+    boxShadow: '0 20px 50px rgba(16,60,33,0.18)',
+  },
+  heroBadge: {
+    display: 'inline-block',
+    padding: '8px 14px',
+    background: 'rgba(255,255,255,0.14)',
+    borderRadius: 999,
+    marginBottom: 16,
+    fontSize: 14,
+    fontWeight: 700,
+  },
+  heroTitle: {
+    margin: '0 0 12px',
+    fontSize: 34,
+    lineHeight: 1.12,
+  },
+  heroText: {
+    margin: 0,
+    fontSize: 18,
+    lineHeight: 1.6,
+    maxWidth: 720,
+    color: 'rgba(255,255,255,0.92)',
+  },
+  card: {
+    background: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    border: '1px solid #dde3dd',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.06)',
+  },
+  sideCard: {
+    background: '#fff',
+    borderRadius: 22,
+    padding: 22,
+    border: '1px solid #dde3dd',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
+    marginBottom: 14,
+  },
+  sideCardSoft: {
+    background: '#edf0e8',
+    borderRadius: 22,
+    padding: 22,
+    border: '1px solid #d8ded6',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
+    marginBottom: 14,
+  },
+  sidebar: {
+    position: 'sticky',
+    top: 16,
+  },
+  sideTitle: {
+    marginTop: 0,
+    marginBottom: 14,
+    fontSize: 20,
+    color: '#213428',
+  },
+  sideText: {
+    marginTop: 0,
+    color: '#5f6d63',
+    lineHeight: 1.55,
+  },
+  sectionHead: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 16,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: 34,
+    color: '#213428',
+  },
+  sectionText: {
+    margin: '8px 0 0',
+    color: '#66756c',
+  },
+  success: {
+    background: '#e7f7ea',
+    border: '1px solid #cce4d0',
+    color: '#1b6a37',
+    borderRadius: 14,
+    padding: '14px 16px',
+    fontWeight: 700,
+    marginBottom: 14,
+  },
+  grid2: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: 12,
+  },
+  grid3: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: 12,
+  },
+  input: {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 12,
+    border: '1px solid #d5ddd6',
+    background: '#fff',
+    boxSizing: 'border-box',
+    fontSize: 15,
+    marginBottom: 12,
+  },
+  uploadBox: {
+    display: 'block',
+    border: '1px dashed #cfd7d1',
+    borderRadius: 14,
+    padding: 18,
+    background: '#fcfcfa',
+    cursor: 'pointer',
+  },
+  uploadTitle: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  uploadText: {
+    color: '#6a776f',
+    fontSize: 14,
+    marginBottom: 10,
+  },
+  fileList: {
+    marginTop: 10,
+    color: '#415148',
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
+  formFooter: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 14,
+  },
+  primarySubmit: {
+    border: 'none',
+    background: '#0e5424',
+    color: '#fff',
+    padding: '16px 22px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  footerNote: {
+    color: '#627066',
+    fontSize: 14,
+  },
+  toggleRow: {
+    display: 'flex',
+    gap: 14,
+    alignItems: 'center',
+    padding: '14px 0',
+    borderTop: '1px solid #e6ebe6',
+  },
+  toggleLabel: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  toggleText: {
+    color: '#66756c',
+    lineHeight: 1.45,
+    fontSize: 14,
+  },
+  toggle: {
+    width: 48,
+    height: 28,
+    borderRadius: 999,
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 3,
+    cursor: 'pointer',
+  },
+  toggleKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: '50%',
+    background: '#fff',
+    display: 'block',
+  },
+  featureList: {
+    paddingLeft: 18,
+    color: '#435248',
+    lineHeight: 1.8,
+  },
+  secondaryWideBtn: {
+    width: '100%',
+    border: '1px solid #8aa18d',
+    background: '#fff',
+    color: '#1a3423',
+    padding: '14px 16px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+    marginTop: 10,
+  },
+  supportBtn: {
+    display: 'inline-block',
+    textDecoration: 'none',
+    border: '1px solid #263a2e',
+    color: '#263a2e',
+    background: '#fff',
+    padding: '12px 16px',
+    borderRadius: 12,
+    fontWeight: 800,
+  },
+  kanban: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 14,
+    marginTop: 8,
+  },
+  column: {
+    border: '1px solid',
+    borderRadius: 18,
+    padding: 14,
+    minHeight: 260,
+  },
+  columnHead: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    fontWeight: 800,
+    color: '#203128',
+  },
+  countPill: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 999,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+  },
+  columnBody: {
+    display: 'grid',
+    gap: 12,
+  },
+  emptyColumn: {
+    background: 'rgba(255,255,255,0.7)',
+    borderRadius: 12,
+    padding: 14,
+    color: '#627066',
+  },
+  emptyState: {
+    marginTop: 8,
+    border: '1px dashed #cfd7d1',
+    borderRadius: 16,
+    padding: 18,
+    color: '#5f6d63',
+  },
+  leadCard: {
+    background: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    border: '1px solid rgba(0,0,0,0.05)',
+    boxShadow: '0 8px 18px rgba(25,40,31,0.05)',
+  },
+  leadAddress: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  leadMeta: {
+    fontSize: 13,
+    color: '#5f6d63',
+    marginBottom: 4,
+    lineHeight: 1.45,
+  },
+  leadDesc: {
+    fontSize: 14,
+    lineHeight: 1.5,
+    color: '#213428',
+  },
+  smallText: {
+    fontSize: 12,
+    color: '#5e6a62',
+    lineHeight: 1.45,
+    marginTop: 6,
+  },
+  locked: {
+    padding: '10px 12px',
+    background: '#f3f0ea',
+    borderRadius: 999,
+    color: '#6b655d',
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  estimateRow: {
+    display: 'grid',
+    gridTemplateColumns: '2fr 0.7fr 0.9fr auto',
+    gap: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  estimateTotals: {
+    marginTop: 6,
+    display: 'grid',
+    gap: 8,
+    color: '#324139',
+  },
+  totalLine: {
+    fontSize: 20,
+    marginTop: 4,
+  },
+  bottomBand: {
+    maxWidth: 1440,
+    margin: '16px auto 0',
+    background: '#eee8df',
+    border: '1px solid #ddd5ca',
+    borderRadius: 20,
+    padding: 18,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 12,
+  },
+  bottomFeature: {
+    padding: '8px 12px',
+    borderRight: '1px solid #d8d0c4',
+  },
+  bottomFeatureTitle: {
+    fontWeight: 800,
+    marginBottom: 6,
+  },
+  bottomFeatureText: {
+    color: '#5f6d63',
+    lineHeight: 1.45,
+    fontSize: 14,
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.35)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modal: {
+    width: '100%',
+    maxWidth: 420,
+    background: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    boxShadow: '0 24px 48px rgba(0,0,0,0.18)',
+  },
 }
