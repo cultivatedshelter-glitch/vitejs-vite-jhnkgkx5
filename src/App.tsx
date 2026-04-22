@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
+
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 type Tab = 'request' | 'dashboard' | 'estimates'
+
+type StoredFile = {
+  name: string
+  path: string
+  url: string
+  type: 'photo' | 'document'
+}
 
 type WorkRequest = {
   id: string
@@ -18,8 +26,8 @@ type WorkRequest = {
   occupancy: string
   timeline: string
   description: string
-  photoNames: string[]
-  documentNames: string[]
+  photos: StoredFile[]
+  documents: StoredFile[]
   status: RequestStatus
 }
 
@@ -30,9 +38,29 @@ type EstimateItem = {
   unitCost: number
 }
 
-const STORAGE_KEY = 'shelter-prep-requests-v2'
-const SETTINGS_KEY = 'shelter-prep-settings-v2'
+type DbLeadRow = {
+  id: string
+  created_at: string
+  requester_name: string
+  email: string
+  phone: string | null
+  work_type: string
+  property_address: string
+  city: string
+  state: string
+  zip: string
+  urgency: string
+  occupancy: string
+  timeline: string | null
+  description: string
+  photos: StoredFile[] | null
+  documents: StoredFile[] | null
+  status: RequestStatus
+}
+
+const SETTINGS_KEY = 'shelter-prep-settings-v3'
 const ADMIN_PIN = '4242'
+const STORAGE_BUCKET = 'request-files'
 
 const WORK_TYPES = [
   'General Repair',
@@ -104,10 +132,12 @@ export default function App() {
   const [occupancy, setOccupancy] = useState('Occupied')
   const [timeline, setTimeline] = useState('')
   const [description, setDescription] = useState('')
-  const [photoNames, setPhotoNames] = useState<string[]>([])
-  const [documentNames, setDocumentNames] = useState<string[]>([])
+  const [photoFiles, setPhotoFiles] = useState<File[]>([])
+  const [documentFiles, setDocumentFiles] = useState<File[]>([])
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [successMessage, setSuccessMessage] = useState('')
+  const [loadingRequests, setLoadingRequests] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
 
   const [dashboardSearch, setDashboardSearch] = useState('')
   const [estimateClient, setEstimateClient] = useState('')
@@ -117,25 +147,18 @@ export default function App() {
   const [estimateItems, setEstimateItems] = useState<EstimateItem[]>(initialEstimateItems)
 
   useEffect(() => {
-    try {
-      const rawRequests = localStorage.getItem(STORAGE_KEY)
-      if (rawRequests) setRequests(JSON.parse(rawRequests))
+    const rawSettings = localStorage.getItem(SETTINGS_KEY)
+    if (!rawSettings) return
 
-      const rawSettings = localStorage.getItem(SETTINGS_KEY)
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings)
-        setEmailAlerts(Boolean(parsed.emailAlerts))
-        setSmsAlerts(Boolean(parsed.smsAlerts))
-        setAdminAlerts(Boolean(parsed.adminAlerts))
-      }
+    try {
+      const parsed = JSON.parse(rawSettings)
+      setEmailAlerts(Boolean(parsed.emailAlerts))
+      setSmsAlerts(Boolean(parsed.smsAlerts))
+      setAdminAlerts(Boolean(parsed.adminAlerts))
     } catch {
-      // ignore malformed local storage
+      // ignore malformed settings
     }
   }, [])
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(requests))
-  }, [requests])
 
   useEffect(() => {
     localStorage.setItem(
@@ -143,6 +166,28 @@ export default function App() {
       JSON.stringify({ emailAlerts, smsAlerts, adminAlerts })
     )
   }, [emailAlerts, smsAlerts, adminAlerts])
+
+  useEffect(() => {
+    loadRequests()
+  }, [])
+
+  async function loadRequests() {
+    setLoadingRequests(true)
+    const { data, error } = await supabase
+      .from('work_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error(error)
+      alert('Could not load requests from Supabase.')
+      setLoadingRequests(false)
+      return
+    }
+
+    setRequests((data || []).map(mapDbRowToRequest))
+    setLoadingRequests(false)
+  }
 
   const filteredRequests = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase()
@@ -196,11 +241,39 @@ export default function App() {
     setOccupancy('Occupied')
     setTimeline('')
     setDescription('')
-    setPhotoNames([])
-    setDocumentNames([])
+    setPhotoFiles([])
+    setDocumentFiles([])
   }
 
-  function submitRequest(e: React.FormEvent) {
+  async function uploadFiles(files: File[], category: 'photo' | 'document') {
+    const uploaded: StoredFile[] = []
+
+    for (const file of files) {
+      const safeName = `${Date.now()}-${crypto.randomUUID()}-${file.name.replace(/\s+/g, '-')}`
+      const path = `${category}s/${safeName}`
+
+      const { error: uploadError } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(path, file, { upsert: false })
+
+      if (uploadError) {
+        throw uploadError
+      }
+
+      const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
+
+      uploaded.push({
+        name: file.name,
+        path,
+        url: data.publicUrl,
+        type: category,
+      })
+    }
+
+    return uploaded
+  }
+
+  async function submitRequest(e: React.FormEvent) {
     e.preventDefault()
     setSuccessMessage('')
 
@@ -209,35 +282,65 @@ export default function App() {
       return
     }
 
-    const newRequest: WorkRequest = {
-      id: crypto.randomUUID(),
-      createdAt: new Date().toLocaleString(),
-      requesterName,
-      email,
-      phone,
-      workType,
-      propertyAddress,
-      city,
-      state,
-      zip,
-      urgency,
-      occupancy,
-      timeline,
-      description,
-      photoNames,
-      documentNames,
-      status: 'new',
-    }
+    try {
+      setSubmitting(true)
 
-    setRequests((prev) => [newRequest, ...prev])
-    setSuccessMessage(
-      `Work request submitted${emailAlerts ? ' and email alerts are on' : ''}${smsAlerts ? ' with SMS alerts enabled' : ''}.`
-    )
-    resetForm()
+      const photos = await uploadFiles(photoFiles, 'photo')
+      const documents = await uploadFiles(documentFiles, 'document')
+
+      const payload = {
+        requester_name: requesterName,
+        email,
+        phone: phone || null,
+        work_type: workType,
+        property_address: propertyAddress,
+        city,
+        state,
+        zip,
+        urgency,
+        occupancy,
+        timeline: timeline || null,
+        description,
+        photos,
+        documents,
+        status: 'new' as RequestStatus,
+      }
+
+      const { data, error } = await supabase
+        .from('work_requests')
+        .insert(payload)
+        .select('*')
+        .single()
+
+      if (error) {
+        throw error
+      }
+
+      setRequests((prev) => [mapDbRowToRequest(data), ...prev])
+      setSuccessMessage('Work request submitted and files uploaded successfully.')
+      resetForm()
+    } catch (error) {
+      console.error(error)
+      alert('Could not submit request. Check Supabase table, bucket, and policies.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  function updateStatus(id: string, status: RequestStatus) {
+  async function updateStatus(id: string, status: RequestStatus) {
+    const previous = requests
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
+
+    const { error } = await supabase
+      .from('work_requests')
+      .update({ status })
+      .eq('id', id)
+
+    if (error) {
+      console.error(error)
+      setRequests(previous)
+      alert('Could not update status.')
+    }
   }
 
   function doAdminLogin() {
@@ -272,8 +375,8 @@ export default function App() {
       'occupancy',
       'timeline',
       'description',
-      'photoNames',
-      'documentNames',
+      'photos',
+      'documents',
     ]
 
     const rows = requests.map((r) =>
@@ -292,8 +395,8 @@ export default function App() {
         r.occupancy,
         r.timeline,
         r.description,
-        r.photoNames.join(' | '),
-        r.documentNames.join(' | '),
+        r.photos.map((file) => file.url).join(' | '),
+        r.documents.map((file) => file.url).join(' | '),
       ]
         .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
         .join(',')
@@ -488,9 +591,9 @@ export default function App() {
                         type="file"
                         accept="image/*,video/mp4,video/quicktime"
                         multiple
-                        onChange={(e) => setPhotoNames(Array.from(e.target.files || []).map((f) => f.name))}
+                        onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
                       />
-                      {photoNames.length ? <div style={styles.fileList}>{photoNames.join(', ')}</div> : null}
+                      {photoFiles.length ? <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div> : null}
                     </label>
 
                     <label style={styles.uploadBox}>
@@ -500,14 +603,16 @@ export default function App() {
                         type="file"
                         accept=".pdf,.doc,.docx"
                         multiple
-                        onChange={(e) => setDocumentNames(Array.from(e.target.files || []).map((f) => f.name))}
+                        onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
                       />
-                      {documentNames.length ? <div style={styles.fileList}>{documentNames.join(', ')}</div> : null}
+                      {documentFiles.length ? <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div> : null}
                     </label>
                   </div>
 
                   <div style={styles.formFooter}>
-                    <button type="submit" style={styles.primarySubmit}>Submit Work Request</button>
+                    <button type="submit" style={styles.primarySubmit} disabled={submitting}>
+                      {submitting ? 'Uploading...' : 'Submit Work Request'}
+                    </button>
                     <div style={styles.footerNote}>Your request will be reviewed by our team.</div>
                     <div style={styles.footerNote}>Your information is secure and will not be shared.</div>
                   </div>
@@ -537,6 +642,8 @@ export default function App() {
 
               {!isAdmin ? (
                 <div style={styles.emptyState}>Use the Admin Login button to unlock the dashboard.</div>
+              ) : loadingRequests ? (
+                <div style={styles.emptyState}>Loading requests...</div>
               ) : (
                 <div style={styles.kanban}>
                   {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map((status) => (
@@ -566,8 +673,33 @@ export default function App() {
                               <div style={styles.leadMeta}>{request.requesterName} • {request.email}</div>
                               <div style={styles.leadMeta}>{request.workType} • {request.urgency}</div>
                               <p style={styles.leadDesc}>{request.description}</p>
-                              {request.photoNames.length ? <div style={styles.smallText}><strong>Photos:</strong> {request.photoNames.join(', ')}</div> : null}
-                              {request.documentNames.length ? <div style={styles.smallText}><strong>Files:</strong> {request.documentNames.join(', ')}</div> : null}
+
+                              {request.photos.length > 0 ? (
+                                <div style={styles.fileSection}>
+                                  <strong>Photos:</strong>
+                                  <div style={styles.linkList}>
+                                    {request.photos.map((file) => (
+                                      <a key={file.path} href={file.url} target="_blank" rel="noreferrer" style={styles.fileLink}>
+                                        {file.name}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {request.documents.length > 0 ? (
+                                <div style={styles.fileSection}>
+                                  <strong>Files:</strong>
+                                  <div style={styles.linkList}>
+                                    {request.documents.map((file) => (
+                                      <a key={file.path} href={file.url} target="_blank" rel="noreferrer" style={styles.fileLink}>
+                                        {file.name}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
                               <div style={styles.smallText}>{request.createdAt}</div>
                               <select
                                 style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
@@ -722,6 +854,28 @@ export default function App() {
       ) : null}
     </div>
   )
+}
+
+function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
+  return {
+    id: row.id,
+    createdAt: new Date(row.created_at).toLocaleString(),
+    requesterName: row.requester_name,
+    email: row.email,
+    phone: row.phone || '',
+    workType: row.work_type,
+    propertyAddress: row.property_address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    urgency: row.urgency,
+    occupancy: row.occupancy,
+    timeline: row.timeline || '',
+    description: row.description,
+    photos: row.photos || [],
+    documents: row.documents || [],
+    status: row.status,
+  }
 }
 
 function ToggleRow({
@@ -1151,6 +1305,21 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#5e6a62',
     lineHeight: 1.45,
     marginTop: 6,
+  },
+  fileSection: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#435248',
+  },
+  linkList: {
+    display: 'grid',
+    gap: 6,
+    marginTop: 6,
+  },
+  fileLink: {
+    color: '#0d5b7a',
+    textDecoration: 'underline',
+    wordBreak: 'break-word',
   },
   locked: {
     padding: '10px 12px',
