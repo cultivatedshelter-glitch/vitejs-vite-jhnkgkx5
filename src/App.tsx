@@ -60,7 +60,7 @@ type DbLeadRow = {
 
 const SETTINGS_KEY = 'shelter-prep-settings-v3'
 const ADMIN_PIN = '4242'
-const STORAGE_BUCKET = 'request-files'
+const STORAGE_BUCKET ='request-files'
 
 const WORK_TYPES = [
   'General Repair',
