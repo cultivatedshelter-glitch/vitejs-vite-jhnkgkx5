@@ -53,8 +53,8 @@ type DbLeadRow = {
   occupancy: string
   timeline: string | null
   description: string
-  photos: unknown
-  documents: unknown
+  photos: StoredFile[] | null
+  documents: StoredFile[] | null
   status: RequestStatus
 }
 
@@ -110,101 +110,6 @@ const initialEstimateItems: EstimateItem[] = [
   { id: crypto.randomUUID(), label: 'Materials', qty: 1, unitCost: 150 },
 ]
 
-function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): StoredFile[] {
-  if (!Array.isArray(value)) return []
-
-  return value
-    .map((item) => {
-      if (typeof item === 'string') {
-        return {
-          name: item,
-          path: item,
-          url: item.startsWith('http') ? item : '',
-          type,
-        } satisfies StoredFile
-      }
-
-      if (item && typeof item === 'object') {
-        const record = item as Record<string, unknown>
-        return {
-          name: String(record.name ?? 'file'),
-          path: String(record.path ?? record.name ?? crypto.randomUUID()),
-          url: typeof record.url === 'string' ? record.url : '',
-          type:
-            record.type === 'photo' || record.type === 'document'
-              ? record.type
-              : type,
-        } satisfies StoredFile
-      }
-
-      return null
-    })
-    .filter(Boolean) as StoredFile[]
-}
-
-function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
-  return {
-    id: row.id,
-    createdAt: row.created_at ? new Date(row.created_at).toLocaleString() : '',
-    requesterName: row.requester_name ?? '',
-    email: row.email ?? '',
-    phone: row.phone || '',
-    workType: row.work_type ?? '',
-    propertyAddress: row.property_address ?? '',
-    city: row.city ?? '',
-    state: row.state ?? '',
-    zip: row.zip ?? '',
-    urgency: row.urgency ?? 'Standard',
-    occupancy: row.occupancy ?? 'Occupied',
-    timeline: row.timeline || '',
-    description: row.description ?? '',
-    photos: normalizeStoredFiles(row.photos, 'photo'),
-    documents: normalizeStoredFiles(row.documents, 'document'),
-    status: row.status ?? 'new',
-  }
-}
-
-function ToggleRow({
-  label,
-  text,
-  checked,
-  onChange,
-}: {
-  label: string
-  text: string
-  checked: boolean
-  onChange: (value: boolean) => void
-}) {
-  return (
-    <div style={styles.toggleRow}>
-      <div style={{ flex: 1 }}>
-        <div style={styles.toggleLabel}>{label}</div>
-        <div style={styles.toggleText}>{text}</div>
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        style={{
-          ...styles.toggle,
-          justifyContent: checked ? 'flex-end' : 'flex-start',
-          background: checked ? '#77a66a' : '#ccd6cf',
-        }}
-      >
-        <span style={styles.toggleKnob} />
-      </button>
-    </div>
-  )
-}
-
-function BottomFeature({ title, text }: { title: string; text: string }) {
-  return (
-    <div style={styles.bottomFeature}>
-      <div style={styles.bottomFeatureTitle}>{title}</div>
-      <div style={styles.bottomFeatureText}>{text}</div>
-    </div>
-  )
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('request')
   const [showLogin, setShowLogin] = useState(false)
@@ -251,7 +156,7 @@ export default function App() {
       setSmsAlerts(Boolean(parsed.smsAlerts))
       setAdminAlerts(Boolean(parsed.adminAlerts))
     } catch {
-      // ignore bad local settings
+      // ignore malformed settings
     }
   }, [])
 
@@ -268,24 +173,20 @@ export default function App() {
 
   async function loadRequests() {
     setLoadingRequests(true)
+    const { data, error } = await supabase
+      .from('work_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-    try {
-      const { data, error } = await supabase
-        .from('work_requests')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (error) {
-        throw new Error(`load failed: ${error.message}`)
-      }
-
-      setRequests((data || []).map((row) => mapDbRowToRequest(row as DbLeadRow)))
-    } catch (error: any) {
-      console.error('LOAD REQUESTS ERROR:', error)
-      alert(error?.message || 'Could not load requests from Supabase.')
-    } finally {
+    if (error) {
+      console.error(error)
+      alert('Could not load requests from Supabase.')
       setLoadingRequests(false)
+      return
     }
+
+    setRequests((data || []).map(mapDbRowToRequest))
+    setLoadingRequests(false)
   }
 
   const filteredRequests = useMemo(() => {
@@ -379,16 +280,7 @@ export default function App() {
     e.preventDefault()
     setSuccessMessage('')
 
-    if (
-      !requesterName ||
-      !email ||
-      !workType ||
-      !propertyAddress ||
-      !city ||
-      !state ||
-      !zip ||
-      !description
-    ) {
+    if (!requesterName || !email || !workType || !propertyAddress || !city || !state || !zip || !description) {
       alert('Please complete all required fields.')
       return
     }
@@ -427,7 +319,7 @@ export default function App() {
         throw new Error(`insert failed: ${error.message}`)
       }
 
-      setRequests((prev) => [mapDbRowToRequest(data as DbLeadRow), ...prev])
+      setRequests((prev) => [mapDbRowToRequest(data), ...prev])
       setSuccessMessage('Work request submitted and files uploaded successfully.')
       resetForm()
     } catch (error: any) {
@@ -450,7 +342,7 @@ export default function App() {
     if (error) {
       console.error(error)
       setRequests(previous)
-      alert(`Could not update status: ${error.message}`)
+      alert('Could not update status.')
     }
   }
 
@@ -531,9 +423,7 @@ export default function App() {
   }
 
   function updateEstimateItem(id: string, patch: Partial<EstimateItem>) {
-    setEstimateItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
-    )
+    setEstimateItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }
 
   function removeEstimateItem(id: string) {
@@ -588,35 +478,6 @@ export default function App() {
     printWindow.document.close()
   }
 
-  function renderFiles(files: StoredFile[], label: string) {
-    if (!files.length) return null
-
-    return (
-      <div style={styles.fileSection}>
-        <strong>{label}:</strong>
-        <div style={styles.linkList}>
-          {files.map((file) =>
-            file.url ? (
-              <a
-                key={file.path}
-                href={file.url}
-                target="_blank"
-                rel="noreferrer"
-                style={styles.fileLink}
-              >
-                {file.name}
-              </a>
-            ) : (
-              <div key={file.path} style={styles.smallText}>
-                {file.name} (old entry with no saved URL)
-              </div>
-            )
-          )}
-        </div>
-      </div>
-    )
-  }
-
   const navButton = (tab: Tab, label: string) => (
     <button
       onClick={() => setActiveTab(tab)}
@@ -647,17 +508,11 @@ export default function App() {
         </div>
 
         <div style={styles.topActions}>
-          <button style={styles.secondaryBtn} onClick={exportCsv}>
-            Export CSV
-          </button>
+          <button style={styles.secondaryBtn} onClick={exportCsv}>Export CSV</button>
           {isAdmin ? (
-            <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>
-              Log Out
-            </button>
+            <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>Log Out</button>
           ) : (
-            <button style={styles.primaryBtn} onClick={() => setShowLogin(true)}>
-              Admin Login
-            </button>
+            <button style={styles.primaryBtn} onClick={() => setShowLogin(true)}>Admin Login</button>
           )}
         </div>
       </header>
@@ -687,97 +542,41 @@ export default function App() {
 
                 <form onSubmit={submitRequest}>
                   <div style={styles.grid2}>
-                    <input
-                      style={styles.input}
-                      placeholder="Your name *"
-                      value={requesterName}
-                      onChange={(e) => setRequesterName(e.target.value)}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Your email *"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
+                    <input style={styles.input} placeholder="Your name *" value={requesterName} onChange={(e) => setRequesterName(e.target.value)} />
+                    <input style={styles.input} placeholder="Your email *" value={email} onChange={(e) => setEmail(e.target.value)} />
                   </div>
 
                   <div style={styles.grid2}>
-                    <input
-                      style={styles.input}
-                      placeholder="Phone number"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                    />
-                    <select
-                      style={styles.input}
-                      value={workType}
-                      onChange={(e) => setWorkType(e.target.value)}
-                    >
+                    <input style={styles.input} placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                    <select style={styles.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
                       <option value="">Work type *</option>
                       {WORK_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
+                        <option key={type} value={type}>{type}</option>
                       ))}
                     </select>
                   </div>
 
-                  <input
-                    style={styles.input}
-                    placeholder="Property address *"
-                    value={propertyAddress}
-                    onChange={(e) => setPropertyAddress(e.target.value)}
-                  />
+                  <input style={styles.input} placeholder="Property address *" value={propertyAddress} onChange={(e) => setPropertyAddress(e.target.value)} />
 
                   <div style={styles.grid3}>
-                    <input
-                      style={styles.input}
-                      placeholder="City *"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="State *"
-                      value={state}
-                      onChange={(e) => setState(e.target.value)}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="ZIP code *"
-                      value={zip}
-                      onChange={(e) => setZip(e.target.value)}
-                    />
+                    <input style={styles.input} placeholder="City *" value={city} onChange={(e) => setCity(e.target.value)} />
+                    <input style={styles.input} placeholder="State *" value={state} onChange={(e) => setState(e.target.value)} />
+                    <input style={styles.input} placeholder="ZIP code *" value={zip} onChange={(e) => setZip(e.target.value)} />
                   </div>
 
                   <div style={styles.grid3}>
-                    <select
-                      style={styles.input}
-                      value={urgency}
-                      onChange={(e) => setUrgency(e.target.value)}
-                    >
+                    <select style={styles.input} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
                       <option>Standard</option>
                       <option>Urgent</option>
                       <option>ASAP</option>
                     </select>
-
-                    <select
-                      style={styles.input}
-                      value={occupancy}
-                      onChange={(e) => setOccupancy(e.target.value)}
-                    >
+                    <select style={styles.input} value={occupancy} onChange={(e) => setOccupancy(e.target.value)}>
                       <option>Occupied</option>
                       <option>Vacant</option>
                       <option>Tenant Occupied</option>
                       <option>Unknown</option>
                     </select>
-
-                    <input
-                      style={styles.input}
-                      placeholder="Desired timeline"
-                      value={timeline}
-                      onChange={(e) => setTimeline(e.target.value)}
-                    />
+                    <input style={styles.input} placeholder="Desired timeline" value={timeline} onChange={(e) => setTimeline(e.target.value)} />
                   </div>
 
                   <textarea
@@ -797,9 +596,7 @@ export default function App() {
                         multiple
                         onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
                       />
-                      {photoFiles.length ? (
-                        <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div>
-                      ) : null}
+                      {photoFiles.length ? <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div> : null}
                     </label>
 
                     <label style={styles.uploadBox}>
@@ -811,9 +608,7 @@ export default function App() {
                         multiple
                         onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
                       />
-                      {documentFiles.length ? (
-                        <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div>
-                      ) : null}
+                      {documentFiles.length ? <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div> : null}
                     </label>
                   </div>
 
@@ -822,9 +617,7 @@ export default function App() {
                       {submitting ? 'Uploading...' : 'Submit Work Request'}
                     </button>
                     <div style={styles.footerNote}>Your request will be reviewed by our team.</div>
-                    <div style={styles.footerNote}>
-                      Your information is secure and will not be shared.
-                    </div>
+                    <div style={styles.footerNote}>Your information is secure and will not be shared.</div>
                   </div>
                 </form>
               </section>
@@ -840,9 +633,7 @@ export default function App() {
                     Track every job across new leads, estimate-ready work, approvals, and follow-up.
                   </p>
                 </div>
-                {!isAdmin ? (
-                  <div style={styles.locked}>Admin login required to manage jobs</div>
-                ) : null}
+                {!isAdmin ? <div style={styles.locked}>Admin login required to manage jobs</div> : null}
               </div>
 
               <input
@@ -853,77 +644,82 @@ export default function App() {
               />
 
               {!isAdmin ? (
-                <div style={styles.emptyState}>
-                  Use the Admin Login button to unlock the dashboard.
-                </div>
+                <div style={styles.emptyState}>Use the Admin Login button to unlock the dashboard.</div>
               ) : loadingRequests ? (
                 <div style={styles.emptyState}>Loading requests...</div>
               ) : (
                 <div style={styles.kanban}>
-                  {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map(
-                    (status) => (
-                      <div
-                        key={status}
-                        style={{
-                          ...styles.column,
-                          background: STATUS_META[status].cardBg,
-                          borderColor: STATUS_META[status].border,
-                        }}
-                      >
-                        <div style={styles.columnHead}>
-                          <span>{STATUS_META[status].label}</span>
-                          <span
-                            style={{
-                              ...styles.countPill,
-                              background: STATUS_META[status].pillBg,
-                            }}
-                          >
-                            {groupedRequests[status].length}
-                          </span>
-                        </div>
-
-                        <div style={styles.columnBody}>
-                          {groupedRequests[status].length === 0 ? (
-                            <div style={styles.emptyColumn}>No requests</div>
-                          ) : (
-                            groupedRequests[status].map((request) => (
-                              <div key={request.id} style={styles.leadCard}>
-                                <div style={styles.leadAddress}>{request.propertyAddress}</div>
-                                <div style={styles.leadMeta}>
-                                  {request.city}, {request.state} {request.zip}
-                                </div>
-                                <div style={styles.leadMeta}>
-                                  {request.requesterName} • {request.email}
-                                </div>
-                                <div style={styles.leadMeta}>
-                                  {request.workType} • {request.urgency}
-                                </div>
-                                <p style={styles.leadDesc}>{request.description}</p>
-
-                                {renderFiles(request.photos, 'Photos')}
-                                {renderFiles(request.documents, 'Files')}
-
-                                <div style={styles.smallText}>{request.createdAt}</div>
-
-                                <select
-                                  style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
-                                  value={request.status}
-                                  onChange={(e) =>
-                                    updateStatus(request.id, e.target.value as RequestStatus)
-                                  }
-                                >
-                                  <option value="new">New Lead</option>
-                                  <option value="estimate_ready">Estimate Ready</option>
-                                  <option value="pending_approval">Pending Approval</option>
-                                  <option value="needs_info">Needs Info</option>
-                                </select>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                  {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map((status) => (
+                    <div
+                      key={status}
+                      style={{
+                        ...styles.column,
+                        background: STATUS_META[status].cardBg,
+                        borderColor: STATUS_META[status].border,
+                      }}
+                    >
+                      <div style={styles.columnHead}>
+                        <span>{STATUS_META[status].label}</span>
+                        <span style={{ ...styles.countPill, background: STATUS_META[status].pillBg }}>
+                          {groupedRequests[status].length}
+                        </span>
                       </div>
-                    )
-                  )}
+
+                      <div style={styles.columnBody}>
+                        {groupedRequests[status].length === 0 ? (
+                          <div style={styles.emptyColumn}>No requests</div>
+                        ) : (
+                          groupedRequests[status].map((request) => (
+                            <div key={request.id} style={styles.leadCard}>
+                              <div style={styles.leadAddress}>{request.propertyAddress}</div>
+                              <div style={styles.leadMeta}>{request.city}, {request.state} {request.zip}</div>
+                              <div style={styles.leadMeta}>{request.requesterName} • {request.email}</div>
+                              <div style={styles.leadMeta}>{request.workType} • {request.urgency}</div>
+                              <p style={styles.leadDesc}>{request.description}</p>
+
+                              {request.photos.length > 0 ? (
+                                <div style={styles.fileSection}>
+                                  <strong>Photos:</strong>
+                                  <div style={styles.linkList}>
+                                    {request.photos.map((file) => (
+                                      <a key={file.path} href={file.url} target="_blank" rel="noreferrer" style={styles.fileLink}>
+                                        {file.name}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {request.documents.length > 0 ? (
+                                <div style={styles.fileSection}>
+                                  <strong>Files:</strong>
+                                  <div style={styles.linkList}>
+                                    {request.documents.map((file) => (
+                                      <a key={file.path} href={file.url} target="_blank" rel="noreferrer" style={styles.fileLink}>
+                                        {file.name}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div style={styles.smallText}>{request.createdAt}</div>
+                              <select
+                                style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
+                                value={request.status}
+                                onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}
+                              >
+                                <option value="new">New Lead</option>
+                                <option value="estimate_ready">Estimate Ready</option>
+                                <option value="pending_approval">Pending Approval</option>
+                                <option value="needs_info">Needs Info</option>
+                              </select>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
@@ -934,25 +730,13 @@ export default function App() {
               <div style={styles.sectionHead}>
                 <div>
                   <h2 style={styles.sectionTitle}>Estimate Builder</h2>
-                  <p style={styles.sectionText}>
-                    Add line items, taxes, and discounts, then print a clean estimate.
-                  </p>
+                  <p style={styles.sectionText}>Add line items, taxes, and discounts, then print a clean estimate.</p>
                 </div>
               </div>
 
               <div style={styles.grid2}>
-                <input
-                  style={styles.input}
-                  placeholder="Client name"
-                  value={estimateClient}
-                  onChange={(e) => setEstimateClient(e.target.value)}
-                />
-                <input
-                  style={styles.input}
-                  placeholder="Property address"
-                  value={estimateProperty}
-                  onChange={(e) => setEstimateProperty(e.target.value)}
-                />
+                <input style={styles.input} placeholder="Client name" value={estimateClient} onChange={(e) => setEstimateClient(e.target.value)} />
+                <input style={styles.input} placeholder="Property address" value={estimateProperty} onChange={(e) => setEstimateProperty(e.target.value)} />
               </div>
 
               {estimateItems.map((item) => (
@@ -968,9 +752,7 @@ export default function App() {
                     type="number"
                     min={1}
                     value={item.qty}
-                    onChange={(e) =>
-                      updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })
-                    }
+                    onChange={(e) => updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })}
                   />
                   <input
                     style={{ ...styles.input, marginBottom: 0 }}
@@ -978,17 +760,9 @@ export default function App() {
                     min={0}
                     step="0.01"
                     value={item.unitCost}
-                    onChange={(e) =>
-                      updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })
-                    }
+                    onChange={(e) => updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })}
                   />
-                  <button
-                    style={styles.secondaryBtn}
-                    onClick={() => removeEstimateItem(item.id)}
-                    type="button"
-                  >
-                    Remove
-                  </button>
+                  <button style={styles.secondaryBtn} onClick={() => removeEstimateItem(item.id)} type="button">Remove</button>
                 </div>
               ))}
 
@@ -1014,27 +788,15 @@ export default function App() {
               </div>
 
               <div style={styles.estimateTotals}>
-                <div>
-                  Subtotal: <strong>${subtotal.toFixed(2)}</strong>
-                </div>
-                <div>
-                  Tax: <strong>${taxAmount.toFixed(2)}</strong>
-                </div>
-                <div>
-                  Discount: <strong>-${discountAmount.toFixed(2)}</strong>
-                </div>
-                <div style={styles.totalLine}>
-                  Total: <strong>${total.toFixed(2)}</strong>
-                </div>
+                <div>Subtotal: <strong>${subtotal.toFixed(2)}</strong></div>
+                <div>Tax: <strong>${taxAmount.toFixed(2)}</strong></div>
+                <div>Discount: <strong>-${discountAmount.toFixed(2)}</strong></div>
+                <div style={styles.totalLine}>Total: <strong>${total.toFixed(2)}</strong></div>
               </div>
 
               <div style={styles.formFooter}>
-                <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>
-                  Add Line Item
-                </button>
-                <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>
-                  Print Estimate
-                </button>
+                <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>Add Line Item</button>
+                <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>Print Estimate</button>
               </div>
             </section>
           )}
@@ -1043,24 +805,9 @@ export default function App() {
         <aside style={styles.sidebar}>
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Instant Notifications</h3>
-            <ToggleRow
-              label="Email Alerts"
-              text="Get instant email notifications when new requests come in."
-              checked={emailAlerts}
-              onChange={setEmailAlerts}
-            />
-            <ToggleRow
-              label="Text Message Alerts"
-              text="Receive SMS notifications on your mobile phone."
-              checked={smsAlerts}
-              onChange={setSmsAlerts}
-            />
-            <ToggleRow
-              label="Admin Alerts"
-              text="Stay updated on status changes, new messages, and more."
-              checked={adminAlerts}
-              onChange={setAdminAlerts}
-            />
+            <ToggleRow label="Email Alerts" text="Get instant email notifications when new requests come in." checked={emailAlerts} onChange={setEmailAlerts} />
+            <ToggleRow label="Text Message Alerts" text="Receive SMS notifications on your mobile phone." checked={smsAlerts} onChange={setSmsAlerts} />
+            <ToggleRow label="Admin Alerts" text="Stay updated on status changes, new messages, and more." checked={adminAlerts} onChange={setAdminAlerts} />
           </section>
 
           <section style={styles.sideCardSoft}>
@@ -1072,44 +819,22 @@ export default function App() {
               <li>Professional printable estimates</li>
               <li>Send and track client approvals</li>
             </ul>
-            <button
-              style={styles.secondaryWideBtn}
-              onClick={() => setActiveTab('estimates')}
-            >
-              Go to Estimate Builder
-            </button>
+            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('estimates')}>Go to Estimate Builder</button>
           </section>
 
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Need Help?</h3>
             <p style={styles.sideText}>Contact our support team for assistance.</p>
-            <a
-              href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support"
-              style={styles.supportBtn}
-            >
-              Contact Support
-            </a>
+            <a href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support" style={styles.supportBtn}>Contact Support</a>
           </section>
         </aside>
       </main>
 
       <section style={styles.bottomBand}>
-        <BottomFeature
-          title="Instant Email Alerts"
-          text="Get notified immediately when new work requests are submitted."
-        />
-        <BottomFeature
-          title="Text Message Alerts"
-          text="Receive real-time text notifications so you never miss a request."
-        />
-        <BottomFeature
-          title="Estimate Builder"
-          text="Build, send, and track estimates all in one place."
-        />
-        <BottomFeature
-          title="Track Every Job"
-          text="Manage requests, status updates, and client communication easily."
-        />
+        <BottomFeature title="Instant Email Alerts" text="Get notified immediately when new work requests are submitted." />
+        <BottomFeature title="Text Message Alerts" text="Receive real-time text notifications so you never miss a request." />
+        <BottomFeature title="Estimate Builder" text="Build, send, and track estimates all in one place." />
+        <BottomFeature title="Track Every Job" text="Manage requests, status updates, and client communication easily." />
       </section>
 
       {showLogin ? (
@@ -1124,16 +849,75 @@ export default function App() {
               onChange={(e) => setAdminPinInput(e.target.value)}
             />
             <div style={styles.formFooter}>
-              <button style={styles.primaryBtn} onClick={doAdminLogin}>
-                Sign In
-              </button>
-              <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>
-                Cancel
-              </button>
+              <button style={styles.primaryBtn} onClick={doAdminLogin}>Sign In</button>
+              <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>Cancel</button>
             </div>
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
+  return {
+    id: row.id,
+    createdAt: new Date(row.created_at).toLocaleString(),
+    requesterName: row.requester_name,
+    email: row.email,
+    phone: row.phone || '',
+    workType: row.work_type,
+    propertyAddress: row.property_address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    urgency: row.urgency,
+    occupancy: row.occupancy,
+    timeline: row.timeline || '',
+    description: row.description,
+    photos: row.photos || [],
+    documents: row.documents || [],
+    status: row.status,
+  }
+}
+
+function ToggleRow({
+  label,
+  text,
+  checked,
+  onChange,
+}: {
+  label: string
+  text: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div style={styles.toggleRow}>
+      <div style={{ flex: 1 }}>
+        <div style={styles.toggleLabel}>{label}</div>
+        <div style={styles.toggleText}>{text}</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        style={{
+          ...styles.toggle,
+          justifyContent: checked ? 'flex-end' : 'flex-start',
+          background: checked ? '#77a66a' : '#ccd6cf',
+        }}
+      >
+        <span style={styles.toggleKnob} />
+      </button>
+    </div>
+  )
+}
+
+function BottomFeature({ title, text }: { title: string; text: string }) {
+  return (
+    <div style={styles.bottomFeature}>
+      <div style={styles.bottomFeatureTitle}>{title}</div>
+      <div style={styles.bottomFeatureText}>{text}</div>
     </div>
   )
 }
@@ -1510,7 +1294,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   leadMeta: {
     fontSize: 13,
-    color: '#5f6d63',x
+    color: '#5f6d63',
     marginBottom: 4,
     lineHeight: 1.45,
   },
