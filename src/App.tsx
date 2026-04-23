@@ -31,6 +31,13 @@ type WorkRequest = {
   status: RequestStatus
 }
 
+type EstimateItem = {
+  id: string
+  label: string
+  qty: number
+  unitCost: number
+}
+
 type DbLeadRow = {
   id: string
   created_at: string
@@ -51,13 +58,7 @@ type DbLeadRow = {
   status: RequestStatus
 }
 
-type EstimateItem = {
-  id: string
-  label: string
-  qty: number
-  unitCost: number
-}
-
+const SETTINGS_KEY = 'shelter-prep-settings-v3'
 const ADMIN_PIN = '4242'
 const STORAGE_BUCKET = 'request-files'
 
@@ -74,18 +75,34 @@ const WORK_TYPES = [
   'Home Services',
 ]
 
-const STATUS_LABELS: Record<RequestStatus, string> = {
-  new: 'New Lead',
-  estimate_ready: 'Estimate Ready',
-  pending_approval: 'Pending Approval',
-  needs_info: 'Needs Info',
-}
-
-const STATUS_COLORS: Record<RequestStatus, React.CSSProperties> = {
-  new: { background: '#eaf1fb', border: '1px solid #cddcf1' },
-  estimate_ready: { background: '#eef8ef', border: '1px solid #cfe4d1' },
-  pending_approval: { background: '#f7f1e8', border: '1px solid #e5d4c1' },
-  needs_info: { background: '#fdeeee', border: '1px solid #f0cccc' },
+const STATUS_META: Record<
+  RequestStatus,
+  { label: string; pillBg: string; cardBg: string; border: string }
+> = {
+  new: {
+    label: 'New Lead',
+    pillBg: '#e8f1fb',
+    cardBg: '#eef5ff',
+    border: '#c8d9f2',
+  },
+  needs_info: {
+    label: 'Needs Info',
+    pillBg: '#fdeaea',
+    cardBg: '#fff3f3',
+    border: '#efc5c5',
+  },
+  estimate_ready: {
+    label: 'Estimate Ready',
+    pillBg: '#e8f6ea',
+    cardBg: '#f1fbf2',
+    border: '#c9e3ce',
+  },
+  pending_approval: {
+    label: 'Pending Approval',
+    pillBg: '#f3ece3',
+    cardBg: '#fbf6f0',
+    border: '#e2d0bc',
+  },
 }
 
 const initialEstimateItems: EstimateItem[] = [
@@ -93,7 +110,7 @@ const initialEstimateItems: EstimateItem[] = [
   { id: crypto.randomUUID(), label: 'Materials', qty: 1, unitCost: 150 },
 ]
 
-function normalizeStoredFiles(value: unknown, fallbackType: 'photo' | 'document'): StoredFile[] {
+function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): StoredFile[] {
   if (!Array.isArray(value)) return []
 
   return value
@@ -103,7 +120,7 @@ function normalizeStoredFiles(value: unknown, fallbackType: 'photo' | 'document'
           name: item,
           path: item,
           url: item.startsWith('http') ? item : '',
-          type: fallbackType,
+          type,
         } satisfies StoredFile
       }
 
@@ -116,7 +133,7 @@ function normalizeStoredFiles(value: unknown, fallbackType: 'photo' | 'document'
           type:
             record.type === 'photo' || record.type === 'document'
               ? record.type
-              : fallbackType,
+              : type,
         } satisfies StoredFile
       }
 
@@ -131,7 +148,7 @@ function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
     createdAt: row.created_at ? new Date(row.created_at).toLocaleString() : '',
     requesterName: row.requester_name ?? '',
     email: row.email ?? '',
-    phone: row.phone ?? '',
+    phone: row.phone || '',
     workType: row.work_type ?? '',
     propertyAddress: row.property_address ?? '',
     city: row.city ?? '',
@@ -139,7 +156,7 @@ function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
     zip: row.zip ?? '',
     urgency: row.urgency ?? 'Standard',
     occupancy: row.occupancy ?? 'Occupied',
-    timeline: row.timeline ?? '',
+    timeline: row.timeline || '',
     description: row.description ?? '',
     photos: normalizeStoredFiles(row.photos, 'photo'),
     documents: normalizeStoredFiles(row.documents, 'document'),
@@ -147,40 +164,44 @@ function mapDbRowToRequest(row: DbLeadRow): WorkRequest {
   }
 }
 
-function Toggle({
+function ToggleRow({
+  label,
+  text,
   checked,
   onChange,
 }: {
+  label: string
+  text: string
   checked: boolean
   onChange: (value: boolean) => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      style={{
-        width: 54,
-        height: 30,
-        borderRadius: 999,
-        border: 'none',
-        padding: 4,
-        background: checked ? '#7aa66d' : '#cfd8d2',
-        display: 'flex',
-        justifyContent: checked ? 'flex-end' : 'flex-start',
-        alignItems: 'center',
-        cursor: 'pointer',
-      }}
-    >
-      <span
+    <div style={styles.toggleRow}>
+      <div style={{ flex: 1 }}>
+        <div style={styles.toggleLabel}>{label}</div>
+        <div style={styles.toggleText}>{text}</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
         style={{
-          width: 22,
-          height: 22,
-          borderRadius: 999,
-          background: '#fff',
-          display: 'block',
+          ...styles.toggle,
+          justifyContent: checked ? 'flex-end' : 'flex-start',
+          background: checked ? '#77a66a' : '#ccd6cf',
         }}
-      />
-    </button>
+      >
+        <span style={styles.toggleKnob} />
+      </button>
+    </div>
+  )
+}
+
+function BottomFeature({ title, text }: { title: string; text: string }) {
+  return (
+    <div style={styles.bottomFeature}>
+      <div style={styles.bottomFeatureTitle}>{title}</div>
+      <div style={styles.bottomFeatureText}>{text}</div>
+    </div>
   )
 }
 
@@ -208,19 +229,38 @@ export default function App() {
   const [description, setDescription] = useState('')
   const [photoFiles, setPhotoFiles] = useState<File[]>([])
   const [documentFiles, setDocumentFiles] = useState<File[]>([])
-
   const [requests, setRequests] = useState<WorkRequest[]>([])
-  const [loadingRequests, setLoadingRequests] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
+  const [loadingRequests, setLoadingRequests] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
 
   const [dashboardSearch, setDashboardSearch] = useState('')
-
   const [estimateClient, setEstimateClient] = useState('')
   const [estimateProperty, setEstimateProperty] = useState('')
   const [estimateTax, setEstimateTax] = useState(0)
   const [estimateDiscount, setEstimateDiscount] = useState(0)
   const [estimateItems, setEstimateItems] = useState<EstimateItem[]>(initialEstimateItems)
+
+  useEffect(() => {
+    const rawSettings = localStorage.getItem(SETTINGS_KEY)
+    if (!rawSettings) return
+
+    try {
+      const parsed = JSON.parse(rawSettings)
+      setEmailAlerts(Boolean(parsed.emailAlerts))
+      setSmsAlerts(Boolean(parsed.smsAlerts))
+      setAdminAlerts(Boolean(parsed.adminAlerts))
+    } catch {
+      // ignore bad local settings
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ emailAlerts, smsAlerts, adminAlerts })
+    )
+  }, [emailAlerts, smsAlerts, adminAlerts])
 
   useEffect(() => {
     loadRequests()
@@ -229,21 +269,63 @@ export default function App() {
   async function loadRequests() {
     setLoadingRequests(true)
 
-    const { data, error } = await supabase
-      .from('work_requests')
-      .select('*')
-      .order('created_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('work_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      console.error(error)
-      alert('Could not load requests from Supabase.')
+      if (error) {
+        throw new Error(`load failed: ${error.message}`)
+      }
+
+      setRequests((data || []).map((row) => mapDbRowToRequest(row as DbLeadRow)))
+    } catch (error: any) {
+      console.error('LOAD REQUESTS ERROR:', error)
+      alert(error?.message || 'Could not load requests from Supabase.')
+    } finally {
       setLoadingRequests(false)
-      return
     }
-
-    setRequests((data ?? []).map((row) => mapDbRowToRequest(row as DbLeadRow)))
-    setLoadingRequests(false)
   }
+
+  const filteredRequests = useMemo(() => {
+    const q = dashboardSearch.trim().toLowerCase()
+    if (!q) return requests
+
+    return requests.filter((request) =>
+      [
+        request.requesterName,
+        request.email,
+        request.phone,
+        request.workType,
+        request.propertyAddress,
+        request.city,
+        request.state,
+        request.zip,
+        request.description,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    )
+  }, [dashboardSearch, requests])
+
+  const groupedRequests = useMemo(() => {
+    return {
+      new: filteredRequests.filter((r) => r.status === 'new'),
+      needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
+      estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
+      pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
+    }
+  }, [filteredRequests])
+
+  const subtotal = useMemo(
+    () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
+    [estimateItems]
+  )
+  const taxAmount = subtotal * (estimateTax / 100)
+  const discountAmount = subtotal * (estimateDiscount / 100)
+  const total = subtotal + taxAmount - discountAmount
 
   function resetForm() {
     setRequesterName('')
@@ -266,14 +348,19 @@ export default function App() {
     const uploaded: StoredFile[] = []
 
     for (const file of files) {
-      const cleanedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-')
-      const path = `${category}s/${Date.now()}-${crypto.randomUUID()}-${cleanedName}`
+      const safeName = `${Date.now()}-${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
+      const path = `${category}s/${safeName}`
 
       const { error: uploadError } = await supabase.storage
         .from(STORAGE_BUCKET)
-        .upload(path, file, { upsert: false })
+        .upload(path, file, {
+          upsert: false,
+          contentType: file.type || undefined,
+        })
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        throw new Error(`${category} upload failed: ${uploadError.message}`)
+      }
 
       const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
 
@@ -309,8 +396,8 @@ export default function App() {
     try {
       setSubmitting(true)
 
-      const uploadedPhotos = await uploadFiles(photoFiles, 'photo')
-      const uploadedDocuments = await uploadFiles(documentFiles, 'document')
+      const photos = await uploadFiles(photoFiles, 'photo')
+      const documents = await uploadFiles(documentFiles, 'document')
 
       const payload = {
         requester_name: requesterName,
@@ -325,8 +412,8 @@ export default function App() {
         occupancy,
         timeline: timeline || null,
         description,
-        photos: uploadedPhotos,
-        documents: uploadedDocuments,
+        photos,
+        documents,
         status: 'new' as RequestStatus,
       }
 
@@ -336,14 +423,16 @@ export default function App() {
         .select('*')
         .single()
 
-      if (error) throw error
+      if (error) {
+        throw new Error(`insert failed: ${error.message}`)
+      }
 
       setRequests((prev) => [mapDbRowToRequest(data as DbLeadRow), ...prev])
-      setSuccessMessage('Work request submitted successfully.')
+      setSuccessMessage('Work request submitted and files uploaded successfully.')
       resetForm()
-    } catch (error) {
-      console.error(error)
-      alert('Could not submit request. Check your Supabase table columns and storage policies.')
+    } catch (error: any) {
+      console.error('SUBMIT ERROR:', error)
+      alert(error?.message || JSON.stringify(error))
     } finally {
       setSubmitting(false)
     }
@@ -361,7 +450,7 @@ export default function App() {
     if (error) {
       console.error(error)
       setRequests(previous)
-      alert('Could not update status.')
+      alert(`Could not update status: ${error.message}`)
     }
   }
 
@@ -373,13 +462,12 @@ export default function App() {
       setActiveTab('dashboard')
       return
     }
-
     alert('Wrong admin PIN.')
   }
 
   function exportCsv() {
     if (!requests.length) {
-      alert('No requests to export.')
+      alert('No requests to export yet.')
       return
     }
 
@@ -398,8 +486,8 @@ export default function App() {
       'occupancy',
       'timeline',
       'description',
-      'photoUrls',
-      'documentUrls',
+      'photos',
+      'documents',
     ]
 
     const rows = requests.map((r) =>
@@ -418,8 +506,8 @@ export default function App() {
         r.occupancy,
         r.timeline,
         r.description,
-        r.photos.map((f) => f.url).join(' | '),
-        r.documents.map((f) => f.url).join(' | '),
+        r.photos.map((file) => file.url).join(' | '),
+        r.documents.map((file) => file.url).join(' | '),
       ]
         .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
         .join(',')
@@ -435,46 +523,6 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
-  const filteredRequests = useMemo(() => {
-    const q = dashboardSearch.trim().toLowerCase()
-    if (!q) return requests
-
-    return requests.filter((request) =>
-      [
-        request.requesterName,
-        request.email,
-        request.phone,
-        request.workType,
-        request.propertyAddress,
-        request.city,
-        request.state,
-        request.zip,
-        request.description,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    )
-  }, [dashboardSearch, requests])
-
-  const groupedRequests = useMemo(
-    () => ({
-      new: filteredRequests.filter((r) => r.status === 'new'),
-      estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
-      pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
-      needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
-    }),
-    [filteredRequests]
-  )
-
-  const subtotal = useMemo(
-    () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
-    [estimateItems]
-  )
-  const taxAmount = subtotal * (estimateTax / 100)
-  const discountAmount = subtotal * (estimateDiscount / 100)
-  const total = subtotal + taxAmount - discountAmount
-
   function addEstimateItem() {
     setEstimateItems((prev) => [
       ...prev,
@@ -483,7 +531,9 @@ export default function App() {
   }
 
   function updateEstimateItem(id: string, patch: Partial<EstimateItem>) {
-    setEstimateItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+    setEstimateItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    )
   }
 
   function removeEstimateItem(id: string) {
@@ -491,28 +541,29 @@ export default function App() {
   }
 
   function openPrintableEstimate() {
-    const w = window.open('', '_blank', 'width=900,height=700')
-    if (!w) return
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    if (!printWindow) return
 
     const rows = estimateItems
       .map(
         (item) => `
-        <tr>
-          <td style="padding:8px;border:1px solid #d7ddd8;">${item.label || 'Line Item'}</td>
-          <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">${item.qty}</td>
-          <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${item.unitCost.toFixed(2)}</td>
-          <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${(item.qty * item.unitCost).toFixed(2)}</td>
-        </tr>
-      `
+          <tr>
+            <td style="padding:8px;border:1px solid #d7ddd8;">${item.label || 'Line Item'}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">${item.qty}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${item.unitCost.toFixed(2)}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${(item.qty * item.unitCost).toFixed(2)}</td>
+          </tr>`
       )
       .join('')
 
-    w.document.write(`
+    printWindow.document.write(`
       <html>
-        <head><title>Shelter Prep Estimate</title></head>
+        <head>
+          <title>Shelter Prep Estimate</title>
+        </head>
         <body style="font-family:Arial,sans-serif;padding:24px;color:#1f2a30;">
-          <h1>Shelter Prep Estimate</h1>
-          <p>${estimateClient || 'Client'}${estimateProperty ? ` • ${estimateProperty}` : ''}</p>
+          <h1 style="margin-bottom:4px;">Shelter Prep Estimate</h1>
+          <p style="margin-top:0;color:#52606b;">${estimateClient || 'Client'}${estimateProperty ? ` • ${estimateProperty}` : ''}</p>
           <table style="width:100%;border-collapse:collapse;margin-top:16px;">
             <thead>
               <tr>
@@ -534,16 +585,16 @@ export default function App() {
         </body>
       </html>
     `)
-    w.document.close()
+    printWindow.document.close()
   }
 
   function renderFiles(files: StoredFile[], label: string) {
     if (!files.length) return null
 
     return (
-      <div style={{ marginTop: 10 }}>
+      <div style={styles.fileSection}>
         <strong>{label}:</strong>
-        <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+        <div style={styles.linkList}>
           {files.map((file) =>
             file.url ? (
               <a
@@ -551,12 +602,12 @@ export default function App() {
                 href={file.url}
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: '#0f5ea8', textDecoration: 'underline', wordBreak: 'break-all' }}
+                style={styles.fileLink}
               >
                 {file.name}
               </a>
             ) : (
-              <div key={file.path} style={{ color: '#7a5c33' }}>
+              <div key={file.path} style={styles.smallText}>
                 {file.name} (old entry with no saved URL)
               </div>
             )
@@ -566,36 +617,36 @@ export default function App() {
     )
   }
 
+  const navButton = (tab: Tab, label: string) => (
+    <button
+      onClick={() => setActiveTab(tab)}
+      style={{
+        ...styles.navButton,
+        ...(activeTab === tab ? styles.navButtonActive : {}),
+      }}
+    >
+      {label}
+    </button>
+  )
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <div>
-          <div style={styles.brand}>SHELTER PREP</div>
-          <div style={styles.subBrand}>HOME SERVICES</div>
+        <div style={styles.logoWrap}>
+          <div style={styles.logoMark}>│││</div>
+          <div>
+            <div style={styles.brand}>SHELTER PREP</div>
+            <div style={styles.brandSub}>HOME SERVICES</div>
+          </div>
         </div>
 
-        <div style={styles.nav}>
-          <button
-            onClick={() => setActiveTab('request')}
-            style={{ ...styles.navBtn, ...(activeTab === 'request' ? styles.navBtnActive : {}) }}
-          >
-            New Request
-          </button>
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            style={{ ...styles.navBtn, ...(activeTab === 'dashboard' ? styles.navBtnActive : {}) }}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => setActiveTab('estimates')}
-            style={{ ...styles.navBtn, ...(activeTab === 'estimates' ? styles.navBtnActive : {}) }}
-          >
-            Estimates
-          </button>
+        <div style={styles.topNav}>
+          {navButton('request', 'New Request')}
+          {navButton('dashboard', 'Dashboard')}
+          {navButton('estimates', 'Estimates')}
         </div>
 
-        <div style={styles.headerActions}>
+        <div style={styles.topActions}>
           <button style={styles.secondaryBtn} onClick={exportCsv}>
             Export CSV
           </button>
@@ -625,8 +676,12 @@ export default function App() {
               </section>
 
               <section style={styles.card}>
-                <h2 style={styles.sectionTitle}>New Work Request</h2>
-                <p style={styles.sectionText}>Fields marked with * are required.</p>
+                <div style={styles.sectionHead}>
+                  <div>
+                    <h2 style={styles.sectionTitle}>New Work Request</h2>
+                    <p style={styles.sectionText}>Fields marked with * are required.</p>
+                  </div>
+                </div>
 
                 {successMessage ? <div style={styles.success}>{successMessage}</div> : null}
 
@@ -726,8 +781,8 @@ export default function App() {
                   </div>
 
                   <textarea
-                    style={{ ...styles.input, minHeight: 140, resize: 'vertical' }}
-                    placeholder="Describe the work needed *"
+                    style={{ ...styles.input, minHeight: 130, resize: 'vertical' }}
+                    placeholder="Describe the work needed. Please include as much detail as possible. *"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                   />
@@ -735,40 +790,41 @@ export default function App() {
                   <div style={styles.grid2}>
                     <label style={styles.uploadBox}>
                       <div style={styles.uploadTitle}>Upload photos / videos</div>
-                      <div style={styles.uploadText}>JPG, PNG, MP4, MOV</div>
+                      <div style={styles.uploadText}>JPG, PNG, MP4, MOV up to 20MB each</div>
                       <input
                         type="file"
-                        multiple
                         accept="image/*,video/mp4,video/quicktime"
+                        multiple
                         onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
                       />
-                      {photoFiles.length > 0 ? (
+                      {photoFiles.length ? (
                         <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div>
                       ) : null}
                     </label>
 
                     <label style={styles.uploadBox}>
                       <div style={styles.uploadTitle}>Upload documents</div>
-                      <div style={styles.uploadText}>PDF, DOC, DOCX</div>
+                      <div style={styles.uploadText}>PDF, DOC, DOCX up to 20MB each</div>
                       <input
                         type="file"
-                        multiple
                         accept=".pdf,.doc,.docx"
+                        multiple
                         onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
                       />
-                      {documentFiles.length > 0 ? (
+                      {documentFiles.length ? (
                         <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div>
                       ) : null}
                     </label>
                   </div>
 
                   <div style={styles.formFooter}>
-                    <button type="submit" style={styles.primaryBtn} disabled={submitting}>
+                    <button type="submit" style={styles.primarySubmit} disabled={submitting}>
                       {submitting ? 'Uploading...' : 'Submit Work Request'}
                     </button>
-                    <button type="button" style={styles.secondaryBtn} onClick={resetForm}>
-                      Clear Form
-                    </button>
+                    <div style={styles.footerNote}>Your request will be reviewed by our team.</div>
+                    <div style={styles.footerNote}>
+                      Your information is secure and will not be shared.
+                    </div>
                   </div>
                 </form>
               </section>
@@ -780,9 +836,13 @@ export default function App() {
               <div style={styles.sectionHead}>
                 <div>
                   <h2 style={styles.sectionTitle}>Admin Dashboard</h2>
-                  <p style={styles.sectionText}>Open documents and photos directly from each request.</p>
+                  <p style={styles.sectionText}>
+                    Track every job across new leads, estimate-ready work, approvals, and follow-up.
+                  </p>
                 </div>
-                {!isAdmin ? <div style={styles.locked}>Admin login required</div> : null}
+                {!isAdmin ? (
+                  <div style={styles.locked}>Admin login required to manage jobs</div>
+                ) : null}
               </div>
 
               <input
@@ -793,17 +853,33 @@ export default function App() {
               />
 
               {!isAdmin ? (
-                <div style={styles.emptyState}>Use Admin Login to unlock the dashboard.</div>
+                <div style={styles.emptyState}>
+                  Use the Admin Login button to unlock the dashboard.
+                </div>
               ) : loadingRequests ? (
                 <div style={styles.emptyState}>Loading requests...</div>
               ) : (
                 <div style={styles.kanban}>
                   {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map(
                     (status) => (
-                      <div key={status} style={{ ...styles.column, ...STATUS_COLORS[status] }}>
+                      <div
+                        key={status}
+                        style={{
+                          ...styles.column,
+                          background: STATUS_META[status].cardBg,
+                          borderColor: STATUS_META[status].border,
+                        }}
+                      >
                         <div style={styles.columnHead}>
-                          <span>{STATUS_LABELS[status]}</span>
-                          <span style={styles.countPill}>{groupedRequests[status].length}</span>
+                          <span>{STATUS_META[status].label}</span>
+                          <span
+                            style={{
+                              ...styles.countPill,
+                              background: STATUS_META[status].pillBg,
+                            }}
+                          >
+                            {groupedRequests[status].length}
+                          </span>
                         </div>
 
                         <div style={styles.columnBody}>
@@ -818,10 +894,9 @@ export default function App() {
                                 </div>
                                 <div style={styles.leadMeta}>
                                   {request.requesterName} • {request.email}
-                                  {request.phone ? ` • ${request.phone}` : ''}
                                 </div>
                                 <div style={styles.leadMeta}>
-                                  {request.workType} • {request.urgency} • {request.occupancy}
+                                  {request.workType} • {request.urgency}
                                 </div>
                                 <p style={styles.leadDesc}>{request.description}</p>
 
@@ -856,8 +931,14 @@ export default function App() {
 
           {activeTab === 'estimates' && (
             <section style={styles.card}>
-              <h2 style={styles.sectionTitle}>Estimate Builder</h2>
-              <p style={styles.sectionText}>Build and print a simple estimate.</p>
+              <div style={styles.sectionHead}>
+                <div>
+                  <h2 style={styles.sectionTitle}>Estimate Builder</h2>
+                  <p style={styles.sectionText}>
+                    Add line items, taxes, and discounts, then print a clean estimate.
+                  </p>
+                </div>
+              </div>
 
               <div style={styles.grid2}>
                 <input
@@ -902,9 +983,9 @@ export default function App() {
                     }
                   />
                   <button
-                    type="button"
                     style={styles.secondaryBtn}
                     onClick={() => removeEstimateItem(item.id)}
+                    type="button"
                   >
                     Remove
                   </button>
@@ -933,17 +1014,25 @@ export default function App() {
               </div>
 
               <div style={styles.estimateTotals}>
-                <div>Subtotal: <strong>${subtotal.toFixed(2)}</strong></div>
-                <div>Tax: <strong>${taxAmount.toFixed(2)}</strong></div>
-                <div>Discount: <strong>-${discountAmount.toFixed(2)}</strong></div>
-                <div style={styles.totalLine}>Total: <strong>${total.toFixed(2)}</strong></div>
+                <div>
+                  Subtotal: <strong>${subtotal.toFixed(2)}</strong>
+                </div>
+                <div>
+                  Tax: <strong>${taxAmount.toFixed(2)}</strong>
+                </div>
+                <div>
+                  Discount: <strong>-${discountAmount.toFixed(2)}</strong>
+                </div>
+                <div style={styles.totalLine}>
+                  Total: <strong>${total.toFixed(2)}</strong>
+                </div>
               </div>
 
               <div style={styles.formFooter}>
                 <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>
                   Add Line Item
                 </button>
-                <button type="button" style={styles.primaryBtn} onClick={openPrintableEstimate}>
+                <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>
                   Print Estimate
                 </button>
               </div>
@@ -953,36 +1042,47 @@ export default function App() {
 
         <aside style={styles.sidebar}>
           <section style={styles.sideCard}>
-            <h3 style={styles.sideTitle}>Notifications</h3>
+            <h3 style={styles.sideTitle}>Instant Notifications</h3>
+            <ToggleRow
+              label="Email Alerts"
+              text="Get instant email notifications when new requests come in."
+              checked={emailAlerts}
+              onChange={setEmailAlerts}
+            />
+            <ToggleRow
+              label="Text Message Alerts"
+              text="Receive SMS notifications on your mobile phone."
+              checked={smsAlerts}
+              onChange={setSmsAlerts}
+            />
+            <ToggleRow
+              label="Admin Alerts"
+              text="Stay updated on status changes, new messages, and more."
+              checked={adminAlerts}
+              onChange={setAdminAlerts}
+            />
+          </section>
 
-            <div style={styles.toggleRow}>
-              <div>
-                <div style={styles.toggleLabel}>Email Alerts</div>
-                <div style={styles.toggleText}>Get notified when new requests come in.</div>
-              </div>
-              <Toggle checked={emailAlerts} onChange={setEmailAlerts} />
-            </div>
-
-            <div style={styles.toggleRow}>
-              <div>
-                <div style={styles.toggleLabel}>Text Message Alerts</div>
-                <div style={styles.toggleText}>Receive SMS-style status notifications.</div>
-              </div>
-              <Toggle checked={smsAlerts} onChange={setSmsAlerts} />
-            </div>
-
-            <div style={styles.toggleRow}>
-              <div>
-                <div style={styles.toggleLabel}>Admin Alerts</div>
-                <div style={styles.toggleText}>Stay updated on changes and follow-ups.</div>
-              </div>
-              <Toggle checked={adminAlerts} onChange={setAdminAlerts} />
-            </div>
+          <section style={styles.sideCardSoft}>
+            <h3 style={styles.sideTitle}>Estimate Builder</h3>
+            <p style={styles.sideText}>Create professional estimates quickly and send to clients.</p>
+            <ul style={styles.featureList}>
+              <li>Add line items and materials</li>
+              <li>Set labor, taxes, and discounts</li>
+              <li>Professional printable estimates</li>
+              <li>Send and track client approvals</li>
+            </ul>
+            <button
+              style={styles.secondaryWideBtn}
+              onClick={() => setActiveTab('estimates')}
+            >
+              Go to Estimate Builder
+            </button>
           </section>
 
           <section style={styles.sideCard}>
-            <h3 style={styles.sideTitle}>Help</h3>
-            <p style={styles.sideText}>Need support with a request or estimate?</p>
+            <h3 style={styles.sideTitle}>Need Help?</h3>
+            <p style={styles.sideText}>Contact our support team for assistance.</p>
             <a
               href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support"
               style={styles.supportBtn}
@@ -992,6 +1092,25 @@ export default function App() {
           </section>
         </aside>
       </main>
+
+      <section style={styles.bottomBand}>
+        <BottomFeature
+          title="Instant Email Alerts"
+          text="Get notified immediately when new work requests are submitted."
+        />
+        <BottomFeature
+          title="Text Message Alerts"
+          text="Receive real-time text notifications so you never miss a request."
+        />
+        <BottomFeature
+          title="Estimate Builder"
+          text="Build, send, and track estimates all in one place."
+        />
+        <BottomFeature
+          title="Track Every Job"
+          text="Manage requests, status updates, and client communication easily."
+        />
+      </section>
 
       {showLogin ? (
         <div style={styles.overlay} onClick={() => setShowLogin(false)}>
@@ -1035,25 +1154,44 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 16,
     alignItems: 'center',
   },
+  logoWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+  },
+  logoMark: {
+    width: 44,
+    height: 58,
+    border: '3px solid #164f2d',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderBottom: 'none',
+    color: '#164f2d',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+    letterSpacing: -2,
+  },
   brand: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: 800,
     color: '#113c22',
     letterSpacing: 1,
   },
-  subBrand: {
-    fontSize: 14,
+  brandSub: {
+    fontSize: 16,
     letterSpacing: 4,
     color: '#2e6b3f',
     fontWeight: 700,
   },
-  nav: {
+  topNav: {
     display: 'flex',
     justifyContent: 'center',
     gap: 10,
     flexWrap: 'wrap',
   },
-  navBtn: {
+  navButton: {
     border: 'none',
     background: 'transparent',
     padding: '12px 14px',
@@ -1062,11 +1200,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: '#24352b',
   },
-  navBtnActive: {
+  navButtonActive: {
     boxShadow: 'inset 0 -3px 0 #295f36',
     color: '#123a21',
   },
-  headerActions: {
+  topActions: {
     display: 'flex',
     gap: 12,
     justifyContent: 'flex-end',
@@ -1076,7 +1214,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     background: '#134b26',
     color: '#fff',
-    padding: '14px 18px',
+    padding: '14px 20px',
     borderRadius: 12,
     cursor: 'pointer',
     fontWeight: 800,
@@ -1094,142 +1232,236 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 1440,
     margin: '0 auto',
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) 340px',
+    gridTemplateColumns: 'minmax(0, 1fr) 380px',
     gap: 18,
     alignItems: 'start',
   },
   hero: {
-    background: 'linear-gradient(135deg, #204e31 0%, #15361f 100%)',
+    background: 'linear-gradient(135deg, #103c21 0%, #0a2e1a 55%, #204c30 100%)',
     color: '#fff',
     borderRadius: 24,
-    padding: 28,
-    marginBottom: 18,
+    padding: 36,
+    marginBottom: 16,
+    boxShadow: '0 20px 50px rgba(16,60,33,0.18)',
   },
   heroBadge: {
     display: 'inline-block',
+    padding: '8px 14px',
     background: 'rgba(255,255,255,0.14)',
     borderRadius: 999,
-    padding: '8px 12px',
-    fontSize: 12,
-    marginBottom: 14,
+    marginBottom: 16,
+    fontSize: 14,
+    fontWeight: 700,
   },
   heroTitle: {
-    fontSize: 38,
-    lineHeight: 1.08,
-    margin: '0 0 10px 0',
+    margin: '0 0 12px',
+    fontSize: 34,
+    lineHeight: 1.12,
   },
   heroText: {
     margin: 0,
+    fontSize: 18,
     lineHeight: 1.6,
+    maxWidth: 720,
     color: 'rgba(255,255,255,0.92)',
   },
   card: {
     background: '#fff',
     borderRadius: 24,
+    padding: 24,
+    border: '1px solid #dde3dd',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.06)',
+  },
+  sideCard: {
+    background: '#fff',
+    borderRadius: 22,
     padding: 22,
-    border: '1px solid #e2e7e3',
-    boxShadow: '0 10px 28px rgba(0,0,0,0.05)',
+    border: '1px solid #dde3dd',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
+    marginBottom: 14,
+  },
+  sideCardSoft: {
+    background: '#edf0e8',
+    borderRadius: 22,
+    padding: 22,
+    border: '1px solid #d8ded6',
+    boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
+    marginBottom: 14,
+  },
+  sidebar: {
+    position: 'sticky',
+    top: 16,
+  },
+  sideTitle: {
+    marginTop: 0,
+    marginBottom: 14,
+    fontSize: 20,
+    color: '#213428',
+  },
+  sideText: {
+    marginTop: 0,
+    color: '#5f6d63',
+    lineHeight: 1.55,
   },
   sectionHead: {
     display: 'flex',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 16,
     flexWrap: 'wrap',
-    marginBottom: 10,
+    alignItems: 'center',
+    marginBottom: 16,
   },
   sectionTitle: {
     margin: 0,
-    fontSize: 28,
-    color: '#173522',
+    fontSize: 34,
+    color: '#213428',
   },
   sectionText: {
-    margin: '6px 0 14px 0',
+    margin: '8px 0 0',
     color: '#66756c',
   },
   success: {
-    marginBottom: 16,
-    padding: '14px 16px',
-    borderRadius: 12,
-    background: '#e8f7ec',
-    color: '#205f37',
-    fontWeight: 700,
-  },
-  input: {
-    width: '100%',
-    padding: '14px 16px',
+    background: '#e7f7ea',
+    border: '1px solid #cce4d0',
+    color: '#1b6a37',
     borderRadius: 14,
-    border: '1px solid #d5ddd8',
-    background: '#fafbfa',
-    fontSize: 14,
-    outline: 'none',
-    marginBottom: 12,
-    boxSizing: 'border-box',
+    padding: '14px 16px',
+    fontWeight: 700,
+    marginBottom: 14,
   },
   grid2: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: 12,
   },
   grid3: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     gap: 12,
+  },
+  input: {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 12,
+    border: '1px solid #d5ddd6',
+    background: '#fff',
+    boxSizing: 'border-box',
+    fontSize: 15,
+    marginBottom: 12,
   },
   uploadBox: {
     display: 'block',
-    border: '1px solid #d5ddd8',
-    borderRadius: 16,
-    background: '#fafbfa',
-    padding: 16,
-    marginBottom: 12,
+    border: '1px dashed #cfd7d1',
+    borderRadius: 14,
+    padding: 18,
+    background: '#fcfcfa',
+    cursor: 'pointer',
   },
   uploadTitle: {
     fontWeight: 800,
-    color: '#173522',
     marginBottom: 4,
   },
   uploadText: {
-    fontSize: 12,
-    color: '#6d7a72',
+    color: '#6a776f',
+    fontSize: 14,
     marginBottom: 10,
   },
   fileList: {
     marginTop: 10,
-    fontSize: 12,
-    color: '#4d5b53',
+    color: '#415148',
+    fontSize: 13,
     lineHeight: 1.5,
-    wordBreak: 'break-word',
   },
   formFooter: {
     display: 'flex',
     gap: 12,
-    flexWrap: 'wrap',
     alignItems: 'center',
-    marginTop: 8,
-  },
-  locked: {
-    padding: '10px 12px',
-    borderRadius: 12,
-    background: '#fff7df',
-    color: '#7a6314',
-    fontWeight: 700,
-    fontSize: 13,
-  },
-  emptyState: {
+    flexWrap: 'wrap',
     marginTop: 14,
-    padding: 16,
-    borderRadius: 16,
-    background: '#f7f8f7',
+  },
+  primarySubmit: {
+    border: 'none',
+    background: '#0e5424',
+    color: '#fff',
+    padding: '16px 22px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  footerNote: {
+    color: '#627066',
+    fontSize: 14,
+  },
+  toggleRow: {
+    display: 'flex',
+    gap: 14,
+    alignItems: 'center',
+    padding: '14px 0',
+    borderTop: '1px solid #e6ebe6',
+  },
+  toggleLabel: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  toggleText: {
     color: '#66756c',
+    lineHeight: 1.45,
+    fontSize: 14,
+  },
+  toggle: {
+    width: 48,
+    height: 28,
+    borderRadius: 999,
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 3,
+    cursor: 'pointer',
+  },
+  toggleKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: '50%',
+    background: '#fff',
+    display: 'block',
+  },
+  featureList: {
+    paddingLeft: 18,
+    color: '#435248',
+    lineHeight: 1.8,
+  },
+  secondaryWideBtn: {
+    width: '100%',
+    border: '1px solid #8aa18d',
+    background: '#fff',
+    color: '#1a3423',
+    padding: '14px 16px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+    marginTop: 10,
+  },
+  supportBtn: {
+    display: 'inline-block',
+    textDecoration: 'none',
+    border: '1px solid #263a2e',
+    color: '#263a2e',
+    background: '#fff',
+    padding: '12px 16px',
+    borderRadius: 12,
+    fontWeight: 800,
   },
   kanban: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-    gap: 16,
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 14,
+    marginTop: 8,
   },
   column: {
-    borderRadius: 22,
-    padding: 16,
+    border: '1px solid',
+    borderRadius: 18,
+    padding: 14,
+    minHeight: 260,
   },
   columnHead: {
     display: 'flex',
@@ -1237,131 +1469,134 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     marginBottom: 12,
     fontWeight: 800,
+    color: '#203128',
   },
   countPill: {
-    minWidth: 30,
-    height: 30,
+    minWidth: 28,
+    height: 28,
     borderRadius: 999,
-    background: '#fff',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: 12,
-    fontWeight: 800,
   },
   columnBody: {
     display: 'grid',
     gap: 12,
   },
   emptyColumn: {
-    borderRadius: 16,
-    background: 'rgba(255,255,255,0.78)',
+    background: 'rgba(255,255,255,0.7)',
+    borderRadius: 12,
     padding: 14,
-    color: '#66756c',
+    color: '#627066',
+  },
+  emptyState: {
+    marginTop: 8,
+    border: '1px dashed #cfd7d1',
+    borderRadius: 16,
+    padding: 18,
+    color: '#5f6d63',
   },
   leadCard: {
     background: '#fff',
-    borderRadius: 18,
-    padding: 16,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.05)',
+    borderRadius: 14,
+    padding: 14,
     border: '1px solid rgba(0,0,0,0.05)',
+    boxShadow: '0 8px 18px rgba(25,40,31,0.05)',
   },
   leadAddress: {
     fontWeight: 800,
-    color: '#173522',
     marginBottom: 4,
   },
   leadMeta: {
     fontSize: 13,
-    color: '#59685f',
-    lineHeight: 1.5,
-    marginBottom: 5,
+    color: '#5f6d63',
+    marginBottom: 4,
+    lineHeight: 1.45,
   },
   leadDesc: {
-    margin: '8px 0',
-    color: '#223128',
-    lineHeight: 1.55,
+    fontSize: 14,
+    lineHeight: 1.5,
+    color: '#213428',
   },
   smallText: {
     fontSize: 12,
-    color: '#809086',
-    marginTop: 10,
+    color: '#5e6a62',
+    lineHeight: 1.45,
+    marginTop: 6,
+  },
+  fileSection: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#435248',
+  },
+  linkList: {
+    display: 'grid',
+    gap: 6,
+    marginTop: 6,
+  },
+  fileLink: {
+    color: '#0d5b7a',
+    textDecoration: 'underline',
+    wordBreak: 'break-word',
+  },
+  locked: {
+    padding: '10px 12px',
+    background: '#f3f0ea',
+    borderRadius: 999,
+    color: '#6b655d',
+    fontSize: 13,
+    fontWeight: 700,
   },
   estimateRow: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) 110px 140px auto',
+    gridTemplateColumns: '2fr 0.7fr 0.9fr auto',
     gap: 12,
-    marginBottom: 12,
     alignItems: 'center',
+    marginBottom: 12,
   },
   estimateTotals: {
+    marginTop: 6,
     display: 'grid',
-    gap: 6,
-    marginTop: 10,
-    marginBottom: 16,
+    gap: 8,
+    color: '#324139',
   },
   totalLine: {
     fontSize: 20,
-    color: '#173522',
+    marginTop: 4,
   },
-  sidebar: {
+  bottomBand: {
+    maxWidth: 1440,
+    margin: '16px auto 0',
+    background: '#eee8df',
+    border: '1px solid #ddd5ca',
+    borderRadius: 20,
+    padding: 18,
     display: 'grid',
-    gap: 18,
-  },
-  sideCard: {
-    background: '#fff',
-    borderRadius: 22,
-    padding: 20,
-    border: '1px solid #e2e7e3',
-    boxShadow: '0 10px 28px rgba(0,0,0,0.05)',
-  },
-  sideTitle: {
-    marginTop: 0,
-    marginBottom: 14,
-    fontSize: 28,
-    color: '#173522',
-  },
-  sideText: {
-    color: '#66756c',
-    lineHeight: 1.5,
-  },
-  supportBtn: {
-    display: 'inline-block',
-    marginTop: 8,
-    border: '1px solid #173522',
-    color: '#173522',
-    padding: '12px 16px',
-    borderRadius: 12,
-    textDecoration: 'none',
-    fontWeight: 700,
-  },
-  toggleRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr auto',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
     gap: 12,
-    alignItems: 'center',
-    padding: '12px 0',
-    borderTop: '1px solid #edf0ee',
   },
-  toggleLabel: {
+  bottomFeature: {
+    padding: '8px 12px',
+    borderRight: '1px solid #d8d0c4',
+  },
+  bottomFeatureTitle: {
     fontWeight: 800,
-    color: '#173522',
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  toggleText: {
-    color: '#66756c',
-    lineHeight: 1.5,
+  bottomFeatureText: {
+    color: '#5f6d63',
+    lineHeight: 1.45,
     fontSize: 14,
   },
   overlay: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.45)',
+    background: 'rgba(0,0,0,0.35)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
-    zIndex: 1000,
   },
   modal: {
     width: '100%',
@@ -1369,6 +1604,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#fff',
     borderRadius: 20,
     padding: 24,
-    boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+    boxShadow: '0 24px 48px rgba(0,0,0,0.18)',
   },
 }
