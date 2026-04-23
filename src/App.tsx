@@ -1510,7 +1510,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   leadMeta: {
     fontSize: 13,
-    color: '#5f6d63',
+    color: '#5f6d63',x
     marginBottom: 4,
     lineHeight: 1.45,
   },
