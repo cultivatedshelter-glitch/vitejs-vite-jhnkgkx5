@@ -58,7 +58,7 @@ type EstimateItem = {
   unitCost: number
 }
 
-const ADMIN_PIN = '4242'
+const ADMIN_PIN = '2750'
 const STORAGE_BUCKET = 'request-files'
 
 const WORK_TYPES = [
