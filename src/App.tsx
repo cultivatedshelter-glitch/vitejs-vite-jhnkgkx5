@@ -341,14 +341,13 @@ export default function App() {
       setRequests((prev) => [mapDbRowToRequest(data as DbLeadRow), ...prev])
       setSuccessMessage('Work request submitted successfully.')
       resetForm()
-    } catch (error) {
-      console.error(error)
-      alert('Could not submit request. Check your Supabase table columns and storage policies.')
+    } catch (error: any) {
+      console.error('SUBMIT ERROR:', error)
+      alert(error?.message || JSON.stringify(error))
     } finally {
       setSubmitting(false)
     }
   }
-
   async function updateStatus(id: string, status: RequestStatus) {
     const previous = requests
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
