@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
-type Tab = 'request' | 'dashboard' | 'estimates'
+type Tab = 'request' | 'dashboard' | 'estimates' | 'projects'
 
 type StoredFile = {
   name: string
@@ -58,6 +58,19 @@ type EstimateItem = {
   unitCost: number
 }
 
+type ProjectSample = {
+  id: string
+  title: string
+  location: string
+  workType: string
+  summary: string
+  turnaround: string
+  tags: string[]
+  beforeUrl?: string
+  afterUrl?: string
+}
+
+const SETTINGS_KEY = 'shelter-prep-settings-v4'
 const ADMIN_PIN = '2750'
 const STORAGE_BUCKET = 'request-files'
 
@@ -109,6 +122,51 @@ const initialEstimateItems: EstimateItem[] = [
   { id: crypto.randomUUID(), label: 'Materials', qty: 1, unitCost: 150 },
 ]
 
+const PROJECTS: ProjectSample[] = [
+  {
+    id: '1',
+    title: 'Pre-Listing Refresh',
+    location: 'Lake Oswego',
+    workType: 'Paint, punch list, cleanup',
+    summary:
+      'Quick cosmetic refresh to help a listing show clean, bright, and move-in ready before photos and open house.',
+    turnaround: '5 days',
+    tags: ['Before & After', 'Listing Prep', 'Fast Turnaround'],
+    beforeUrl: 'https://YOUR-IMAGE-LINK-HERE/before.jpg',
+    afterUrl: 'https://YOUR-IMAGE-LINK-HERE/after.jpg',
+  },
+  {
+    id: '2',
+    title: 'Turnover Repair Package',
+    location: 'Portland',
+    workType: 'Drywall, flooring, deep clean',
+    summary:
+      'Vacant unit turnover completed with patching, flooring touch-ups, cleaning, and final walk-through photos.',
+    turnaround: '4 days',
+    tags: ['Turnover Work', 'Property Management', 'Vacant Unit'],
+  },
+  {
+    id: '3',
+    title: 'Inspection Repair Closeout',
+    location: 'Beaverton',
+    workType: 'Electrical, plumbing, safety fixes',
+    summary:
+      'Handled inspection items quickly with clear scope notes, photo proof, and final status updates for the agent.',
+    turnaround: '3 days',
+    tags: ['Inspection Repairs', 'Agent Friendly', 'Clear Updates'],
+  },
+  {
+    id: '4',
+    title: 'Curb Appeal Upgrade',
+    location: 'West Linn',
+    workType: 'Exterior paint, landscape cleanup',
+    summary:
+      'Exterior refresh focused on first impression with front entry touch-ups, cleanup, and listing-ready presentation.',
+    turnaround: '1 week',
+    tags: ['Exterior', 'Curb Appeal', 'Seller Ready'],
+  },
+]
+
 function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): StoredFile[] {
   if (!Array.isArray(value)) return []
 
@@ -120,7 +178,7 @@ function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): Store
           path: item,
           url: item.startsWith('http') ? item : '',
           type,
-        } satisfies StoredFile
+        } as StoredFile
       }
 
       if (item && typeof item === 'object') {
@@ -133,7 +191,7 @@ function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): Store
             record.type === 'photo' || record.type === 'document'
               ? record.type
               : type,
-        } satisfies StoredFile
+        } as StoredFile
       }
 
       return null
@@ -175,38 +233,79 @@ function ToggleRow({
   onChange: (value: boolean) => void
 }) {
   return (
-    <div style={baseStyles.toggleRow}>
+    <div style={styles.toggleRow}>
       <div style={{ flex: 1 }}>
-        <div style={baseStyles.toggleLabel}>{label}</div>
-        <div style={baseStyles.toggleText}>{text}</div>
+        <div style={styles.toggleLabel}>{label}</div>
+        <div style={styles.toggleText}>{text}</div>
       </div>
       <button
         type="button"
         onClick={() => onChange(!checked)}
         style={{
-          ...baseStyles.toggle,
+          ...styles.toggle,
           justifyContent: checked ? 'flex-end' : 'flex-start',
           background: checked ? '#77a66a' : '#ccd6cf',
         }}
       >
-        <span style={baseStyles.toggleKnob} />
+        <span style={styles.toggleKnob} />
       </button>
     </div>
   )
 }
 
-function BottomFeature({ title, text }: { title: string; text: string }) {
+function ProjectCard({ project }: { project: ProjectSample }) {
   return (
-    <div style={baseStyles.bottomFeature}>
-      <div style={baseStyles.bottomFeatureTitle}>{title}</div>
-      <div style={baseStyles.bottomFeatureText}>{text}</div>
+    <div style={styles.projectCard}>
+      <div style={styles.projectImageGrid}>
+        <div
+          style={{
+            ...styles.projectImageBox,
+            ...(project.beforeUrl
+              ? {
+                  backgroundImage: `url(${project.beforeUrl})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }
+              : {}),
+          }}
+        >
+          {!project.beforeUrl ? <span style={styles.projectImageLabel}>BEFORE</span> : null}
+        </div>
+        <div
+          style={{
+            ...styles.projectImageBox,
+            ...(project.afterUrl
+              ? {
+                  backgroundImage: `url(${project.afterUrl})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }
+              : {}),
+          }}
+        >
+          {!project.afterUrl ? <span style={styles.projectImageLabel}>AFTER</span> : null}
+        </div>
+      </div>
+
+      <div style={styles.projectCardBody}>
+        <div style={styles.projectTitle}>{project.title}</div>
+        <div style={styles.projectMeta}>
+          {project.location} • {project.workType} • {project.turnaround}
+        </div>
+        <p style={styles.projectSummary}>{project.summary}</p>
+        <div style={styles.tagWrap}>
+          {project.tags.map((tag) => (
+            <span key={tag} style={styles.tag}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
 
 export default function App() {
-  const [viewportWidth, setViewportWidth] = useState<number>(typeof window !== 'undefined' ? window.innerWidth : 1280)
-
   const [activeTab, setActiveTab] = useState<Tab>('request')
   const [showLogin, setShowLogin] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')
@@ -237,6 +336,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
 
   const [dashboardSearch, setDashboardSearch] = useState('')
+
   const [estimateClient, setEstimateClient] = useState('')
   const [estimateProperty, setEstimateProperty] = useState('')
   const [estimateTax, setEstimateTax] = useState(0)
@@ -244,17 +344,29 @@ export default function App() {
   const [estimateItems, setEstimateItems] = useState<EstimateItem[]>(initialEstimateItems)
 
   useEffect(() => {
-    const handleResize = () => setViewportWidth(window.innerWidth)
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    const rawSettings = localStorage.getItem(SETTINGS_KEY)
+    if (!rawSettings) return
+
+    try {
+      const parsed = JSON.parse(rawSettings)
+      setEmailAlerts(Boolean(parsed.emailAlerts))
+      setSmsAlerts(Boolean(parsed.smsAlerts))
+      setAdminAlerts(Boolean(parsed.adminAlerts))
+    } catch {
+      // ignore
+    }
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ emailAlerts, smsAlerts, adminAlerts })
+    )
+  }, [emailAlerts, smsAlerts, adminAlerts])
 
   useEffect(() => {
     loadRequests()
   }, [])
-
-  const isMobile = viewportWidth < 768
-  const isTablet = viewportWidth < 1100
 
   async function loadRequests() {
     setLoadingRequests(true)
@@ -277,46 +389,6 @@ export default function App() {
       setLoadingRequests(false)
     }
   }
-
-  const filteredRequests = useMemo(() => {
-    const q = dashboardSearch.trim().toLowerCase()
-    if (!q) return requests
-
-    return requests.filter((request) =>
-      [
-        request.requesterName,
-        request.email,
-        request.phone,
-        request.workType,
-        request.propertyAddress,
-        request.city,
-        request.state,
-        request.zip,
-        request.description,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    )
-  }, [dashboardSearch, requests])
-
-  const groupedRequests = useMemo(
-    () => ({
-      new: filteredRequests.filter((r) => r.status === 'new'),
-      needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
-      estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
-      pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
-    }),
-    [filteredRequests]
-  )
-
-  const subtotal = useMemo(
-    () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
-    [estimateItems]
-  )
-  const taxAmount = subtotal * (estimateTax / 100)
-  const discountAmount = subtotal * (estimateDiscount / 100)
-  const total = subtotal + taxAmount - discountAmount
 
   function resetForm() {
     setRequesterName('')
@@ -350,7 +422,7 @@ export default function App() {
         })
 
       if (uploadError) {
-        throw new Error(uploadError.message)
+        throw new Error(`${category} upload failed: ${uploadError.message}`)
       }
 
       const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
@@ -415,7 +487,7 @@ export default function App() {
         .single()
 
       if (error) {
-        throw new Error(error.message)
+        throw new Error(`insert failed: ${error.message}`)
       }
 
       setRequests((prev) => [mapDbRowToRequest(data as DbLeadRow), ...prev])
@@ -433,7 +505,10 @@ export default function App() {
     const previous = requests
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
 
-    const { error } = await supabase.from('work_requests').update({ status }).eq('id', id)
+    const { error } = await supabase
+      .from('work_requests')
+      .update({ status })
+      .eq('id', id)
 
     if (error) {
       console.error(error)
@@ -450,6 +525,7 @@ export default function App() {
       setActiveTab('dashboard')
       return
     }
+
     alert('Wrong admin PIN.')
   }
 
@@ -511,6 +587,46 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
+  const filteredRequests = useMemo(() => {
+    const q = dashboardSearch.trim().toLowerCase()
+    if (!q) return requests
+
+    return requests.filter((request) =>
+      [
+        request.requesterName,
+        request.email,
+        request.phone,
+        request.workType,
+        request.propertyAddress,
+        request.city,
+        request.state,
+        request.zip,
+        request.description,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    )
+  }, [dashboardSearch, requests])
+
+  const groupedRequests = useMemo(
+    () => ({
+      new: filteredRequests.filter((r) => r.status === 'new'),
+      needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
+      estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
+      pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
+    }),
+    [filteredRequests]
+  )
+
+  const subtotal = useMemo(
+    () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
+    [estimateItems]
+  )
+  const taxAmount = subtotal * (estimateTax / 100)
+  const discountAmount = subtotal * (estimateDiscount / 100)
+  const total = subtotal + taxAmount - discountAmount
+
   function addEstimateItem() {
     setEstimateItems((prev) => [
       ...prev,
@@ -519,7 +635,9 @@ export default function App() {
   }
 
   function updateEstimateItem(id: string, patch: Partial<EstimateItem>) {
-    setEstimateItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+    setEstimateItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    )
   }
 
   function removeEstimateItem(id: string) {
@@ -578,9 +696,9 @@ export default function App() {
     if (!files.length) return null
 
     return (
-      <div style={baseStyles.fileSection}>
+      <div style={styles.fileSection}>
         <strong>{label}:</strong>
-        <div style={baseStyles.linkList}>
+        <div style={styles.linkList}>
           {files.map((file) =>
             file.url ? (
               <a
@@ -588,12 +706,12 @@ export default function App() {
                 href={file.url}
                 target="_blank"
                 rel="noreferrer"
-                style={baseStyles.fileLink}
+                style={styles.fileLink}
               >
                 {file.name}
               </a>
             ) : (
-              <div key={file.path} style={baseStyles.smallText}>
+              <div key={file.path} style={styles.smallText}>
                 {file.name} (old entry with no saved URL)
               </div>
             )
@@ -603,7 +721,432 @@ export default function App() {
     )
   }
 
-  const styles = getStyles(isMobile, isTablet)
+  function renderRequestTab() {
+    return (
+      <>
+        <section style={styles.hero}>
+          <div style={styles.heroBadge}>Property work intake</div>
+          <h1 style={styles.heroTitle}>Submit a work request in one place.</h1>
+          <p style={styles.heroText}>
+            Enter the property details, describe the work needed, and upload photos,
+            documents, or video for admin review.
+          </p>
+        </section>
+
+        <section style={styles.card}>
+          <div style={styles.sectionHead}>
+            <div>
+              <h2 style={styles.sectionTitle}>New Work Request</h2>
+              <p style={styles.sectionText}>Fields marked with * are required.</p>
+            </div>
+          </div>
+
+          {successMessage ? <div style={styles.success}>{successMessage}</div> : null}
+
+          <form onSubmit={submitRequest}>
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Your name *"
+                value={requesterName}
+                onChange={(e) => setRequesterName(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                placeholder="Your email *"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Phone number"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+              <select
+                style={styles.input}
+                value={workType}
+                onChange={(e) => setWorkType(e.target.value)}
+              >
+                <option value="">Work type *</option>
+                {WORK_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <input
+              style={styles.input}
+              placeholder="Property address *"
+              value={propertyAddress}
+              onChange={(e) => setPropertyAddress(e.target.value)}
+            />
+
+            <div style={styles.grid3}>
+              <input
+                style={styles.input}
+                placeholder="City *"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                placeholder="State *"
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                placeholder="ZIP code *"
+                value={zip}
+                onChange={(e) => setZip(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.grid3}>
+              <select
+                style={styles.input}
+                value={urgency}
+                onChange={(e) => setUrgency(e.target.value)}
+              >
+                <option>Standard</option>
+                <option>Urgent</option>
+                <option>ASAP</option>
+              </select>
+
+              <select
+                style={styles.input}
+                value={occupancy}
+                onChange={(e) => setOccupancy(e.target.value)}
+              >
+                <option>Occupied</option>
+                <option>Vacant</option>
+                <option>Tenant Occupied</option>
+                <option>Unknown</option>
+              </select>
+
+              <input
+                style={styles.input}
+                placeholder="Desired timeline"
+                value={timeline}
+                onChange={(e) => setTimeline(e.target.value)}
+              />
+            </div>
+
+            <textarea
+              style={{ ...styles.input, minHeight: 130, resize: 'vertical' }}
+              placeholder="Describe the work needed. Please include as much detail as possible. *"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+
+            <div style={styles.grid2}>
+              <label style={styles.uploadBox}>
+                <div style={styles.uploadTitle}>Upload photos / videos</div>
+                <div style={styles.uploadText}>JPG, PNG, MP4, MOV up to 20MB each</div>
+                <input
+                  type="file"
+                  accept="image/*,video/mp4,video/quicktime"
+                  multiple
+                  onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
+                />
+                {photoFiles.length ? (
+                  <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div>
+                ) : null}
+              </label>
+
+              <label style={styles.uploadBox}>
+                <div style={styles.uploadTitle}>Upload documents</div>
+                <div style={styles.uploadText}>PDF, DOC, DOCX up to 20MB each</div>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  multiple
+                  onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
+                />
+                {documentFiles.length ? (
+                  <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div>
+                ) : null}
+              </label>
+            </div>
+
+            <div style={styles.formFooter}>
+              <button type="submit" style={styles.primarySubmit} disabled={submitting}>
+                {submitting ? 'Uploading...' : 'Submit Work Request'}
+              </button>
+              <button type="button" style={styles.secondaryBtn} onClick={resetForm}>
+                Clear Form
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section style={styles.card}>
+          <div style={styles.sectionHead}>
+            <div>
+              <h2 style={styles.sectionTitle}>Featured Projects</h2>
+              <p style={styles.sectionText}>
+                Add your best before/after examples here to build trust with clients.
+              </p>
+            </div>
+            <button
+              type="button"
+              style={styles.secondaryBtn}
+              onClick={() => setActiveTab('projects')}
+            >
+              View Full Gallery
+            </button>
+          </div>
+
+          <div style={styles.galleryGrid}>
+            {PROJECTS.slice(0, 2).map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        </section>
+      </>
+    )
+  }
+
+  function renderDashboardTab() {
+    return (
+      <section style={styles.card}>
+        <div style={styles.sectionHead}>
+          <div>
+            <h2 style={styles.sectionTitle}>Admin Dashboard</h2>
+            <p style={styles.sectionText}>
+              Track every job across new leads, estimate-ready work, approvals, and follow-up.
+            </p>
+          </div>
+          {!isAdmin ? <div style={styles.locked}>Admin login required to manage jobs</div> : null}
+        </div>
+
+        <input
+          style={styles.input}
+          placeholder="Search by name, address, email, work type"
+          value={dashboardSearch}
+          onChange={(e) => setDashboardSearch(e.target.value)}
+        />
+
+        {!isAdmin ? (
+          <div style={styles.emptyState}>Use the Admin Login button to unlock the dashboard.</div>
+        ) : loadingRequests ? (
+          <div style={styles.emptyState}>Loading requests...</div>
+        ) : (
+          <div style={styles.kanban}>
+            {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map(
+              (status) => (
+                <div
+                  key={status}
+                  style={{
+                    ...styles.column,
+                    background: STATUS_META[status].cardBg,
+                    borderColor: STATUS_META[status].border,
+                  }}
+                >
+                  <div style={styles.columnHead}>
+                    <span>{STATUS_META[status].label}</span>
+                    <span
+                      style={{
+                        ...styles.countPill,
+                        background: STATUS_META[status].pillBg,
+                      }}
+                    >
+                      {groupedRequests[status].length}
+                    </span>
+                  </div>
+
+                  <div style={styles.columnBody}>
+                    {groupedRequests[status].length === 0 ? (
+                      <div style={styles.emptyColumn}>No requests</div>
+                    ) : (
+                      groupedRequests[status].map((request) => (
+                        <div key={request.id} style={styles.leadCard}>
+                          <div style={styles.leadAddress}>{request.propertyAddress}</div>
+                          <div style={styles.leadMeta}>
+                            {request.city}, {request.state} {request.zip}
+                          </div>
+                          <div style={styles.leadMeta}>
+                            {request.requesterName} • {request.email}
+                            {request.phone ? ` • ${request.phone}` : ''}
+                          </div>
+                          <div style={styles.leadMeta}>
+                            {request.workType} • {request.urgency} • {request.occupancy}
+                          </div>
+                          <p style={styles.leadDesc}>{request.description}</p>
+
+                          {renderFiles(request.photos, 'Photos')}
+                          {renderFiles(request.documents, 'Files')}
+
+                          <div style={styles.smallText}>{request.createdAt}</div>
+
+                          <select
+                            style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
+                            value={request.status}
+                            onChange={(e) =>
+                              updateStatus(request.id, e.target.value as RequestStatus)
+                            }
+                          >
+                            <option value="new">New Lead</option>
+                            <option value="estimate_ready">Estimate Ready</option>
+                            <option value="pending_approval">Pending Approval</option>
+                            <option value="needs_info">Needs Info</option>
+                          </select>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  function renderEstimatesTab() {
+    return (
+      <section style={styles.card}>
+        <div style={styles.sectionHead}>
+          <div>
+            <h2 style={styles.sectionTitle}>Estimate Builder</h2>
+            <p style={styles.sectionText}>
+              Add line items, taxes, and discounts, then print a clean estimate.
+            </p>
+          </div>
+        </div>
+
+        <div style={styles.grid2}>
+          <input
+            style={styles.input}
+            placeholder="Client name"
+            value={estimateClient}
+            onChange={(e) => setEstimateClient(e.target.value)}
+          />
+          <input
+            style={styles.input}
+            placeholder="Property address"
+            value={estimateProperty}
+            onChange={(e) => setEstimateProperty(e.target.value)}
+          />
+        </div>
+
+        {estimateItems.map((item) => (
+          <div key={item.id} style={styles.estimateRow}>
+            <input
+              style={{ ...styles.input, marginBottom: 0 }}
+              placeholder="Line item"
+              value={item.label}
+              onChange={(e) => updateEstimateItem(item.id, { label: e.target.value })}
+            />
+            <input
+              style={{ ...styles.input, marginBottom: 0 }}
+              type="number"
+              min={1}
+              value={item.qty}
+              onChange={(e) =>
+                updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })
+              }
+            />
+            <input
+              style={{ ...styles.input, marginBottom: 0 }}
+              type="number"
+              min={0}
+              step="0.01"
+              value={item.unitCost}
+              onChange={(e) =>
+                updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })
+              }
+            />
+            <button
+              type="button"
+              style={styles.secondaryBtn}
+              onClick={() => removeEstimateItem(item.id)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
+        <div style={styles.grid2}>
+          <input
+            style={styles.input}
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="Tax %"
+            value={estimateTax}
+            onChange={(e) => setEstimateTax(Number(e.target.value) || 0)}
+          />
+          <input
+            style={styles.input}
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="Discount %"
+            value={estimateDiscount}
+            onChange={(e) => setEstimateDiscount(Number(e.target.value) || 0)}
+          />
+        </div>
+
+        <div style={styles.estimateTotals}>
+          <div>
+            Subtotal: <strong>${subtotal.toFixed(2)}</strong>
+          </div>
+          <div>
+            Tax: <strong>${taxAmount.toFixed(2)}</strong>
+          </div>
+          <div>
+            Discount: <strong>-${discountAmount.toFixed(2)}</strong>
+          </div>
+          <div style={styles.totalLine}>
+            Total: <strong>${total.toFixed(2)}</strong>
+          </div>
+        </div>
+
+        <div style={styles.formFooter}>
+          <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>
+            Add Line Item
+          </button>
+          <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>
+            Print Estimate
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  function renderProjectsTab() {
+    return (
+      <section style={styles.card}>
+        <div style={styles.sectionHead}>
+          <div>
+            <h2 style={styles.sectionTitle}>Projects Gallery</h2>
+            <p style={styles.sectionText}>
+              Showcase finished work, before/after examples, and the kinds of projects you handle best.
+            </p>
+          </div>
+        </div>
+
+        <div style={styles.galleryIntro}>
+          Tip: replace the placeholder before/after boxes by adding your real image URLs
+          to the PROJECTS array at the top of this file.
+        </div>
+
+        <div style={styles.galleryGrid}>
+          {PROJECTS.map((project) => (
+            <ProjectCard key={project.id} project={project} />
+          ))}
+        </div>
+      </section>
+    )
+  }
 
   const navButton = (tab: Tab, label: string) => (
     <button
@@ -632,288 +1175,54 @@ export default function App() {
           {navButton('request', 'New Request')}
           {navButton('dashboard', 'Dashboard')}
           {navButton('estimates', 'Estimates')}
+          {navButton('projects', 'Projects')}
         </div>
 
         <div style={styles.topActions}>
-          <button style={styles.secondaryBtn} onClick={exportCsv}>Export CSV</button>
+          <button style={styles.secondaryBtn} onClick={exportCsv}>
+            Export CSV
+          </button>
           {isAdmin ? (
-            <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>Log Out</button>
+            <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>
+              Log Out
+            </button>
           ) : (
-            <button style={styles.primaryBtn} onClick={() => setShowLogin(true)}>Admin Login</button>
+            <button style={styles.primaryBtn} onClick={() => setShowLogin(true)}>
+              Admin Login
+            </button>
           )}
         </div>
       </header>
 
       <main style={styles.mainGrid}>
         <div>
-          {activeTab === 'request' && (
-            <>
-              <section style={styles.hero}>
-                <div style={styles.heroBadge}>Property work intake</div>
-                <h1 style={styles.heroTitle}>Submit a work request in one place.</h1>
-                <p style={styles.heroText}>
-                  Enter the property details, describe the work needed, and upload photos,
-                  documents, or video for admin review.
-                </p>
-              </section>
-
-              <section style={styles.card}>
-                <div style={styles.sectionHead}>
-                  <div>
-                    <h2 style={styles.sectionTitle}>New Work Request</h2>
-                    <p style={styles.sectionText}>Fields marked with * are required.</p>
-                  </div>
-                </div>
-
-                {successMessage ? <div style={styles.success}>{successMessage}</div> : null}
-
-                <form onSubmit={submitRequest}>
-                  <div style={styles.grid2}>
-                    <input style={styles.input} placeholder="Your name *" value={requesterName} onChange={(e) => setRequesterName(e.target.value)} />
-                    <input style={styles.input} placeholder="Your email *" value={email} onChange={(e) => setEmail(e.target.value)} />
-                  </div>
-
-                  <div style={styles.grid2}>
-                    <input style={styles.input} placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                    <select style={styles.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
-                      <option value="">Work type *</option>
-                      {WORK_TYPES.map((type) => (
-                        <option key={type} value={type}>{type}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <input style={styles.input} placeholder="Property address *" value={propertyAddress} onChange={(e) => setPropertyAddress(e.target.value)} />
-
-                  <div style={styles.grid3}>
-                    <input style={styles.input} placeholder="City *" value={city} onChange={(e) => setCity(e.target.value)} />
-                    <input style={styles.input} placeholder="State *" value={state} onChange={(e) => setState(e.target.value)} />
-                    <input style={styles.input} placeholder="ZIP code *" value={zip} onChange={(e) => setZip(e.target.value)} />
-                  </div>
-
-                  <div style={styles.grid3}>
-                    <select style={styles.input} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
-                      <option>Standard</option>
-                      <option>Urgent</option>
-                      <option>ASAP</option>
-                    </select>
-                    <select style={styles.input} value={occupancy} onChange={(e) => setOccupancy(e.target.value)}>
-                      <option>Occupied</option>
-                      <option>Vacant</option>
-                      <option>Tenant Occupied</option>
-                      <option>Unknown</option>
-                    </select>
-                    <input style={styles.input} placeholder="Desired timeline" value={timeline} onChange={(e) => setTimeline(e.target.value)} />
-                  </div>
-
-                  <textarea
-                    style={{ ...styles.input, minHeight: 130, resize: 'vertical' }}
-                    placeholder="Describe the work needed. Please include as much detail as possible. *"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                  />
-
-                  <div style={styles.grid2}>
-                    <label style={styles.uploadBox}>
-                      <div style={styles.uploadTitle}>Upload photos / videos</div>
-                      <div style={styles.uploadText}>JPG, PNG, MP4, MOV up to 20MB each</div>
-                      <input
-                        type="file"
-                        accept="image/*,video/mp4,video/quicktime"
-                        multiple
-                        onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
-                      />
-                      {photoFiles.length ? <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div> : null}
-                    </label>
-
-                    <label style={styles.uploadBox}>
-                      <div style={styles.uploadTitle}>Upload documents</div>
-                      <div style={styles.uploadText}>PDF, DOC, DOCX up to 20MB each</div>
-                      <input
-                        type="file"
-                        accept=".pdf,.doc,.docx"
-                        multiple
-                        onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
-                      />
-                      {documentFiles.length ? <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div> : null}
-                    </label>
-                  </div>
-
-                  <div style={styles.formFooter}>
-                    <button type="submit" style={styles.primarySubmit} disabled={submitting}>
-                      {submitting ? 'Uploading...' : 'Submit Work Request'}
-                    </button>
-                    <div style={styles.footerNote}>Your request will be reviewed by our team.</div>
-                    {!isMobile ? <div style={styles.footerNote}>Your information is secure and will not be shared.</div> : null}
-                  </div>
-                </form>
-              </section>
-            </>
-          )}
-
-          {activeTab === 'dashboard' && (
-            <section style={styles.card}>
-              <div style={styles.sectionHead}>
-                <div>
-                  <h2 style={styles.sectionTitle}>Admin Dashboard</h2>
-                  <p style={styles.sectionText}>
-                    Track every job across new leads, estimate-ready work, approvals, and follow-up.
-                  </p>
-                </div>
-                {!isAdmin ? <div style={styles.locked}>Admin login required to manage jobs</div> : null}
-              </div>
-
-              <input
-                style={styles.input}
-                placeholder="Search by name, address, email, work type"
-                value={dashboardSearch}
-                onChange={(e) => setDashboardSearch(e.target.value)}
-              />
-
-              {!isAdmin ? (
-                <div style={styles.emptyState}>Use the Admin Login button to unlock the dashboard.</div>
-              ) : loadingRequests ? (
-                <div style={styles.emptyState}>Loading requests...</div>
-              ) : (
-                <div style={styles.kanban}>
-                  {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map((status) => (
-                    <div
-                      key={status}
-                      style={{
-                        ...styles.column,
-                        background: STATUS_META[status].cardBg,
-                        borderColor: STATUS_META[status].border,
-                      }}
-                    >
-                      <div style={styles.columnHead}>
-                        <span>{STATUS_META[status].label}</span>
-                        <span style={{ ...styles.countPill, background: STATUS_META[status].pillBg }}>
-                          {groupedRequests[status].length}
-                        </span>
-                      </div>
-
-                      <div style={styles.columnBody}>
-                        {groupedRequests[status].length === 0 ? (
-                          <div style={styles.emptyColumn}>No requests</div>
-                        ) : (
-                          groupedRequests[status].map((request) => (
-                            <div key={request.id} style={styles.leadCard}>
-                              <div style={styles.leadAddress}>{request.propertyAddress}</div>
-                              <div style={styles.leadMeta}>{request.city}, {request.state} {request.zip}</div>
-                              <div style={styles.leadMeta}>{request.requesterName} • {request.email}</div>
-                              <div style={styles.leadMeta}>{request.workType} • {request.urgency}</div>
-                              <p style={styles.leadDesc}>{request.description}</p>
-
-                              {renderFiles(request.photos, 'Photos')}
-                              {renderFiles(request.documents, 'Files')}
-
-                              <div style={baseStyles.smallText}>{request.createdAt}</div>
-                              <select
-                                style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
-                                value={request.status}
-                                onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}
-                              >
-                                <option value="new">New Lead</option>
-                                <option value="estimate_ready">Estimate Ready</option>
-                                <option value="pending_approval">Pending Approval</option>
-                                <option value="needs_info">Needs Info</option>
-                              </select>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          {activeTab === 'estimates' && (
-            <section style={styles.card}>
-              <div style={styles.sectionHead}>
-                <div>
-                  <h2 style={styles.sectionTitle}>Estimate Builder</h2>
-                  <p style={styles.sectionText}>
-                    Add line items, taxes, and discounts, then print a clean estimate.
-                  </p>
-                </div>
-              </div>
-
-              <div style={styles.grid2}>
-                <input style={styles.input} placeholder="Client name" value={estimateClient} onChange={(e) => setEstimateClient(e.target.value)} />
-                <input style={styles.input} placeholder="Property address" value={estimateProperty} onChange={(e) => setEstimateProperty(e.target.value)} />
-              </div>
-
-              {estimateItems.map((item) => (
-                <div key={item.id} style={styles.estimateRow}>
-                  <input
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    placeholder="Line item"
-                    value={item.label}
-                    onChange={(e) => updateEstimateItem(item.id, { label: e.target.value })}
-                  />
-                  <input
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    type="number"
-                    min={1}
-                    value={item.qty}
-                    onChange={(e) => updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })}
-                  />
-                  <input
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={item.unitCost}
-                    onChange={(e) => updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })}
-                  />
-                  <button style={styles.secondaryBtn} onClick={() => removeEstimateItem(item.id)} type="button">Remove</button>
-                </div>
-              ))}
-
-              <div style={styles.grid2}>
-                <input
-                  style={styles.input}
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  placeholder="Tax %"
-                  value={estimateTax}
-                  onChange={(e) => setEstimateTax(Number(e.target.value) || 0)}
-                />
-                <input
-                  style={styles.input}
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  placeholder="Discount %"
-                  value={estimateDiscount}
-                  onChange={(e) => setEstimateDiscount(Number(e.target.value) || 0)}
-                />
-              </div>
-
-              <div style={styles.estimateTotals}>
-                <div>Subtotal: <strong>${subtotal.toFixed(2)}</strong></div>
-                <div>Tax: <strong>${taxAmount.toFixed(2)}</strong></div>
-                <div>Discount: <strong>-${discountAmount.toFixed(2)}</strong></div>
-                <div style={styles.totalLine}>Total: <strong>${total.toFixed(2)}</strong></div>
-              </div>
-
-              <div style={styles.formFooter}>
-                <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>Add Line Item</button>
-                <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>Print Estimate</button>
-              </div>
-            </section>
-          )}
+          {activeTab === 'request' && renderRequestTab()}
+          {activeTab === 'dashboard' && renderDashboardTab()}
+          {activeTab === 'estimates' && renderEstimatesTab()}
+          {activeTab === 'projects' && renderProjectsTab()}
         </div>
 
         <aside style={styles.sidebar}>
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Instant Notifications</h3>
-            <ToggleRow label="Email Alerts" text="Get instant email notifications when new requests come in." checked={emailAlerts} onChange={setEmailAlerts} />
-            <ToggleRow label="Text Message Alerts" text="Receive SMS notifications on your mobile phone." checked={smsAlerts} onChange={setSmsAlerts} />
-            <ToggleRow label="Admin Alerts" text="Stay updated on status changes, new messages, and more." checked={adminAlerts} onChange={setAdminAlerts} />
+            <ToggleRow
+              label="Email Alerts"
+              text="Get instant email notifications when new requests come in."
+              checked={emailAlerts}
+              onChange={setEmailAlerts}
+            />
+            <ToggleRow
+              label="Text Message Alerts"
+              text="Receive SMS notifications on your mobile phone."
+              checked={smsAlerts}
+              onChange={setSmsAlerts}
+            />
+            <ToggleRow
+              label="Admin Alerts"
+              text="Stay updated on status changes, new messages, and more."
+              checked={adminAlerts}
+              onChange={setAdminAlerts}
+            />
           </section>
 
           <section style={styles.sideCardSoft}>
@@ -925,29 +1234,72 @@ export default function App() {
               <li>Professional printable estimates</li>
               <li>Send and track client approvals</li>
             </ul>
-            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('estimates')}>Go to Estimate Builder</button>
+            <button
+              style={styles.secondaryWideBtn}
+              onClick={() => setActiveTab('estimates')}
+            >
+              Go to Estimate Builder
+            </button>
+          </section>
+
+          <section style={styles.sideCard}>
+            <h3 style={styles.sideTitle}>Projects Gallery</h3>
+            <p style={styles.sideText}>
+              Use the gallery to show pre-listing refreshes, turnovers, and before/after examples.
+            </p>
+            <button
+              style={styles.secondaryWideBtn}
+              onClick={() => setActiveTab('projects')}
+            >
+              Open Projects Gallery
+            </button>
           </section>
 
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Need Help?</h3>
             <p style={styles.sideText}>Contact our support team for assistance.</p>
-            <a href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support" style={styles.supportBtn}>Contact Support</a>
+            <a
+              href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support"
+              style={styles.supportBtn}
+            >
+              Contact Support
+            </a>
           </section>
         </aside>
       </main>
 
       <section style={styles.bottomBand}>
-        <BottomFeature title="Instant Email Alerts" text="Get notified immediately when new work requests are submitted." />
-        <BottomFeature title="Text Message Alerts" text="Receive real-time text notifications so you never miss a request." />
-        <BottomFeature title="Estimate Builder" text="Build, send, and track estimates all in one place." />
-        <BottomFeature title="Track Every Job" text="Manage requests, status updates, and client communication easily." />
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>Instant Email Alerts</div>
+          <div style={styles.bottomFeatureText}>
+            Get notified immediately when new work requests are submitted.
+          </div>
+        </div>
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>Text Message Alerts</div>
+          <div style={styles.bottomFeatureText}>
+            Receive real-time text notifications so you never miss a request.
+          </div>
+        </div>
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>Estimate Builder</div>
+          <div style={styles.bottomFeatureText}>
+            Build, send, and track estimates all in one place.
+          </div>
+        </div>
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>Projects Gallery</div>
+          <div style={styles.bottomFeatureText}>
+            Show off before/after work and build trust with future clients.
+          </div>
+        </div>
       </section>
 
       {showLogin ? (
         <div style={styles.overlay} onClick={() => setShowLogin(false)}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>Admin Login</h3>
-            <p style={{ color: '#60706f' }}>Demo PIN: 4242</p>
+            <p style={{ color: '#60706f' }}>Enter your admin PIN</p>
             <input
               style={styles.input}
               placeholder="Enter admin PIN"
@@ -955,8 +1307,12 @@ export default function App() {
               onChange={(e) => setAdminPinInput(e.target.value)}
             />
             <div style={styles.formFooter}>
-              <button style={styles.primaryBtn} onClick={doAdminLogin}>Sign In</button>
-              <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>Cancel</button>
+              <button style={styles.primaryBtn} onClick={doAdminLogin}>
+                Sign In
+              </button>
+              <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -965,416 +1321,256 @@ export default function App() {
   )
 }
 
-function getStyles(isMobile: boolean, isTablet: boolean): Record<string, React.CSSProperties> {
-  return {
-    page: {
-      minHeight: '100vh',
-      background: '#f6f4ef',
-      color: '#1d2a22',
-      fontFamily: 'Inter, Arial, sans-serif',
-      padding: isMobile ? 12 : 20,
-    },
-    header: {
-      maxWidth: 1440,
-      margin: '0 auto 20px',
-      display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))',
-      gap: 16,
-      alignItems: 'center',
-    },
-    logoWrap: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 14,
-      justifyContent: isMobile ? 'center' : 'flex-start',
-      textAlign: isMobile ? 'center' : 'left',
-    },
-    logoMark: {
-      width: isMobile ? 38 : 44,
-      height: isMobile ? 50 : 58,
-      border: '3px solid #164f2d',
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      borderBottom: 'none',
-      color: '#164f2d',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 700,
-      letterSpacing: -2,
-      flexShrink: 0,
-    },
-    brand: {
-      fontSize: isMobile ? 28 : 36,
-      fontWeight: 800,
-      color: '#113c22',
-      letterSpacing: 1,
-    },
-    brandSub: {
-      fontSize: isMobile ? 12 : 16,
-      letterSpacing: isMobile ? 3 : 4,
-      color: '#2e6b3f',
-      fontWeight: 700,
-    },
-    topNav: {
-      display: 'flex',
-      justifyContent: 'center',
-      gap: 10,
-      flexWrap: 'wrap',
-    },
-    navButton: {
-      border: 'none',
-      background: 'transparent',
-      padding: '12px 14px',
-      borderRadius: 12,
-      cursor: 'pointer',
-      fontWeight: 700,
-      color: '#24352b',
-    },
-    navButtonActive: {
-      boxShadow: 'inset 0 -3px 0 #295f36',
-      color: '#123a21',
-    },
-    topActions: {
-      display: 'flex',
-      gap: 12,
-      justifyContent: isMobile ? 'center' : 'flex-end',
-      flexWrap: 'wrap',
-    },
-    primaryBtn: {
-      border: 'none',
-      background: '#134b26',
-      color: '#fff',
-      padding: '14px 20px',
-      borderRadius: 12,
-      cursor: 'pointer',
-      fontWeight: 800,
-    },
-    secondaryBtn: {
-      border: '1px solid #c7d0c9',
-      background: '#fff',
-      color: '#24352b',
-      padding: '14px 18px',
-      borderRadius: 12,
-      cursor: 'pointer',
-      fontWeight: 700,
-    },
-    mainGrid: {
-      maxWidth: 1440,
-      margin: '0 auto',
-      display: 'grid',
-      gridTemplateColumns: isTablet ? '1fr' : 'minmax(0, 1fr) 340px',
-      gap: 18,
-      alignItems: 'start',
-    },
-    hero: {
-      background: 'linear-gradient(135deg, #103c21 0%, #0a2e1a 55%, #204c30 100%)',
-      color: '#fff',
-      borderRadius: 24,
-      padding: isMobile ? 22 : 36,
-      marginBottom: 16,
-      boxShadow: '0 20px 50px rgba(16,60,33,0.18)',
-    },
-    heroBadge: {
-      display: 'inline-block',
-      padding: '8px 14px',
-      background: 'rgba(255,255,255,0.14)',
-      borderRadius: 999,
-      marginBottom: 16,
-      fontSize: 14,
-      fontWeight: 700,
-    },
-    heroTitle: {
-      margin: '0 0 12px',
-      fontSize: isMobile ? 30 : 34,
-      lineHeight: 1.12,
-    },
-    heroText: {
-      margin: 0,
-      fontSize: isMobile ? 16 : 18,
-      lineHeight: 1.6,
-      maxWidth: 720,
-      color: 'rgba(255,255,255,0.92)',
-    },
-    card: {
-      background: '#fff',
-      borderRadius: isMobile ? 20 : 24,
-      padding: isMobile ? 18 : 24,
-      border: '1px solid #dde3dd',
-      boxShadow: '0 12px 28px rgba(27,46,35,0.06)',
-    },
-    sideCard: {
-      background: '#fff',
-      borderRadius: 22,
-      padding: 22,
-      border: '1px solid #dde3dd',
-      boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
-      marginBottom: 14,
-    },
-    sideCardSoft: {
-      background: '#edf0e8',
-      borderRadius: 22,
-      padding: 22,
-      border: '1px solid #d8ded6',
-      boxShadow: '0 12px 28px rgba(27,46,35,0.05)',
-      marginBottom: 14,
-    },
-    sidebar: {
-      position: 'static',
-    },
-    sideTitle: {
-      marginTop: 0,
-      marginBottom: 14,
-      fontSize: 20,
-      color: '#213428',
-    },
-    sideText: {
-      marginTop: 0,
-      color: '#5f6d63',
-      lineHeight: 1.55,
-    },
-    sectionHead: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      gap: 16,
-      flexWrap: 'wrap',
-      alignItems: 'center',
-      marginBottom: 16,
-    },
-    sectionTitle: {
-      margin: 0,
-      fontSize: isMobile ? 26 : 34,
-      color: '#213428',
-    },
-    sectionText: {
-      margin: '8px 0 0',
-      color: '#66756c',
-    },
-    success: {
-      background: '#e7f7ea',
-      border: '1px solid #cce4d0',
-      color: '#1b6a37',
-      borderRadius: 14,
-      padding: '14px 16px',
-      fontWeight: 700,
-      marginBottom: 14,
-    },
-    grid2: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-      gap: 12,
-    },
-    grid3: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-      gap: 12,
-    },
-    input: {
-      width: '100%',
-      padding: '14px 16px',
-      borderRadius: 12,
-      border: '1px solid #d5ddd6',
-      background: '#fff',
-      boxSizing: 'border-box',
-      fontSize: 15,
-      marginBottom: 12,
-    },
-    uploadBox: {
-      display: 'block',
-      border: '1px dashed #cfd7d1',
-      borderRadius: 14,
-      padding: 18,
-      background: '#fcfcfa',
-      cursor: 'pointer',
-    },
-    uploadTitle: {
-      fontWeight: 800,
-      marginBottom: 4,
-    },
-    uploadText: {
-      color: '#6a776f',
-      fontSize: 14,
-      marginBottom: 10,
-    },
-    fileList: {
-      marginTop: 10,
-      color: '#415148',
-      fontSize: 13,
-      lineHeight: 1.5,
-      wordBreak: 'break-word',
-    },
-    formFooter: {
-      display: 'flex',
-      gap: 12,
-      alignItems: 'center',
-      flexWrap: 'wrap',
-      marginTop: 14,
-    },
-    primarySubmit: {
-      border: 'none',
-      background: '#0e5424',
-      color: '#fff',
-      padding: '16px 22px',
-      borderRadius: 12,
-      cursor: 'pointer',
-      fontWeight: 800,
-    },
-    footerNote: {
-      color: '#627066',
-      fontSize: 14,
-    },
-    featureList: {
-      paddingLeft: 18,
-      color: '#435248',
-      lineHeight: 1.8,
-    },
-    secondaryWideBtn: {
-      width: '100%',
-      border: '1px solid #8aa18d',
-      background: '#fff',
-      color: '#1a3423',
-      padding: '14px 16px',
-      borderRadius: 12,
-      cursor: 'pointer',
-      fontWeight: 800,
-      marginTop: 10,
-    },
-    supportBtn: {
-      display: 'inline-block',
-      textDecoration: 'none',
-      border: '1px solid #263a2e',
-      color: '#263a2e',
-      background: '#fff',
-      padding: '12px 16px',
-      borderRadius: 12,
-      fontWeight: 800,
-    },
-    kanban: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-      gap: 14,
-      marginTop: 8,
-    },
-    column: {
-      border: '1px solid',
-      borderRadius: 18,
-      padding: 14,
-      minHeight: 260,
-    },
-    columnHead: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 12,
-      fontWeight: 800,
-      color: '#203128',
-    },
-    countPill: {
-      minWidth: 28,
-      height: 28,
-      borderRadius: 999,
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: 12,
-    },
-    columnBody: {
-      display: 'grid',
-      gap: 12,
-    },
-    emptyColumn: {
-      background: 'rgba(255,255,255,0.7)',
-      borderRadius: 12,
-      padding: 14,
-      color: '#627066',
-    },
-    emptyState: {
-      marginTop: 8,
-      border: '1px dashed #cfd7d1',
-      borderRadius: 16,
-      padding: 18,
-      color: '#5f6d63',
-    },
-    leadCard: {
-      background: '#fff',
-      borderRadius: 14,
-      padding: 14,
-      border: '1px solid rgba(0,0,0,0.05)',
-      boxShadow: '0 8px 18px rgba(25,40,31,0.05)',
-    },
-    leadAddress: {
-      fontWeight: 800,
-      marginBottom: 4,
-    },
-    leadMeta: {
-      fontSize: 13,
-      color: '#5f6d63',
-      marginBottom: 4,
-      lineHeight: 1.45,
-    },
-    leadDesc: {
-      fontSize: 14,
-      lineHeight: 1.5,
-      color: '#213428',
-    },
-    locked: {
-      padding: '10px 12px',
-      background: '#f3f0ea',
-      borderRadius: 999,
-      color: '#6b655d',
-      fontSize: 13,
-      fontWeight: 700,
-    },
-    estimateRow: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-      gap: 12,
-      alignItems: 'center',
-      marginBottom: 12,
-    },
-    estimateTotals: {
-      marginTop: 6,
-      display: 'grid',
-      gap: 8,
-      color: '#324139',
-    },
-    totalLine: {
-      fontSize: 20,
-      marginTop: 4,
-    },
-    bottomBand: {
-      maxWidth: 1440,
-      margin: '16px auto 0',
-      background: '#eee8df',
-      border: '1px solid #ddd5ca',
-      borderRadius: 20,
-      padding: 18,
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-      gap: 12,
-    },
-    overlay: {
-      position: 'fixed',
-      inset: 0,
-      background: 'rgba(0,0,0,0.35)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 20,
-      zIndex: 1000,
-    },
-    modal: {
-      width: '100%',
-      maxWidth: 420,
-      background: '#fff',
-      borderRadius: 20,
-      padding: 24,
-      boxShadow: '0 24px 48px rgba(0,0,0,0.18)',
-    },
-  }
-}
-
-const baseStyles: Record<string, React.CSSProperties> = {
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: '100vh',
+    background: '#f6f4ef',
+    color: '#1d2a22',
+    fontFamily: 'Inter, Arial, sans-serif',
+    padding: 16,
+  },
+  header: {
+    maxWidth: 1440,
+    margin: '0 auto 20px',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 16,
+    alignItems: 'center',
+  },
+  logoWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+  },
+  logoMark: {
+    width: 44,
+    height: 58,
+    border: '3px solid #164f2d',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderBottom: 'none',
+    color: '#164f2d',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+    letterSpacing: -2,
+  },
+  brand: {
+    fontSize: 28,
+    fontWeight: 800,
+    color: '#113c22',
+    letterSpacing: 1,
+  },
+  brandSub: {
+    fontSize: 12,
+    letterSpacing: 3,
+    color: '#2e6b3f',
+    fontWeight: 700,
+  },
+  topNav: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  navButton: {
+    border: 'none',
+    background: 'transparent',
+    padding: '12px 14px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 700,
+    color: '#24352b',
+  },
+  navButtonActive: {
+    boxShadow: 'inset 0 -3px 0 #295f36',
+    color: '#123a21',
+  },
+  topActions: {
+    display: 'flex',
+    gap: 12,
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  primaryBtn: {
+    border: 'none',
+    background: '#134b26',
+    color: '#fff',
+    padding: '14px 18px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  primarySubmit: {
+    border: 'none',
+    background: '#0e5424',
+    color: '#fff',
+    padding: '16px 22px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  secondaryBtn: {
+    border: '1px solid #c7d0c9',
+    background: '#fff',
+    color: '#24352b',
+    padding: '14px 18px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 700,
+  },
+  mainGrid: {
+    maxWidth: 1440,
+    margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+    gap: 18,
+    alignItems: 'start',
+  },
+  hero: {
+    background: 'linear-gradient(135deg, #103c21 0%, #0a2e1a 55%, #204c30 100%)',
+    color: '#fff',
+    borderRadius: 24,
+    padding: 28,
+    marginBottom: 18,
+    boxShadow: '0 20px 50px rgba(16,60,33,0.18)',
+  },
+  heroBadge: {
+    display: 'inline-block',
+    padding: '8px 14px',
+    background: 'rgba(255,255,255,0.14)',
+    borderRadius: 999,
+    marginBottom: 16,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  heroTitle: {
+    fontSize: 30,
+    lineHeight: 1.12,
+    margin: '0 0 10px 0',
+  },
+  heroText: {
+    margin: 0,
+    lineHeight: 1.6,
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.92)',
+  },
+  card: {
+    background: '#fff',
+    borderRadius: 20,
+    padding: 18,
+    border: '1px solid #e2e7e3',
+    boxShadow: '0 10px 28px rgba(0,0,0,0.05)',
+    marginBottom: 18,
+  },
+  sideCard: {
+    background: '#fff',
+    borderRadius: 22,
+    padding: 20,
+    border: '1px solid #e2e7e3',
+    boxShadow: '0 10px 28px rgba(0,0,0,0.05)',
+    marginBottom: 14,
+  },
+  sideCardSoft: {
+    background: '#edf0e8',
+    borderRadius: 22,
+    padding: 20,
+    border: '1px solid #d8ded6',
+    boxShadow: '0 10px 28px rgba(0,0,0,0.05)',
+    marginBottom: 14,
+  },
+  sidebar: {
+    position: 'static',
+  },
+  sideTitle: {
+    marginTop: 0,
+    marginBottom: 14,
+    fontSize: 20,
+    color: '#213428',
+  },
+  sideText: {
+    marginTop: 0,
+    color: '#5f6d63',
+    lineHeight: 1.55,
+  },
+  sectionHead: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: 28,
+    color: '#213428',
+  },
+  sectionText: {
+    margin: '8px 0 0',
+    color: '#66756c',
+  },
+  success: {
+    background: '#e7f7ea',
+    border: '1px solid #cce4d0',
+    color: '#1b6a37',
+    borderRadius: 14,
+    padding: '14px 16px',
+    fontWeight: 700,
+    marginBottom: 14,
+  },
+  grid2: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: 12,
+  },
+  grid3: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 12,
+  },
+  input: {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 12,
+    border: '1px solid #d5ddd6',
+    background: '#fff',
+    boxSizing: 'border-box',
+    fontSize: 15,
+    marginBottom: 12,
+  },
+  uploadBox: {
+    display: 'block',
+    border: '1px dashed #cfd7d1',
+    borderRadius: 14,
+    padding: 18,
+    background: '#fcfcfa',
+    cursor: 'pointer',
+    marginBottom: 12,
+  },
+  uploadTitle: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  uploadText: {
+    color: '#6a776f',
+    fontSize: 14,
+    marginBottom: 10,
+  },
+  fileList: {
+    marginTop: 10,
+    color: '#415148',
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
+  formFooter: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 14,
+  },
   toggleRow: {
     display: 'flex',
     gap: 14,
@@ -1408,6 +1604,100 @@ const baseStyles: Record<string, React.CSSProperties> = {
     background: '#fff',
     display: 'block',
   },
+  featureList: {
+    paddingLeft: 18,
+    color: '#435248',
+    lineHeight: 1.8,
+  },
+  secondaryWideBtn: {
+    width: '100%',
+    border: '1px solid #8aa18d',
+    background: '#fff',
+    color: '#1a3423',
+    padding: '14px 16px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+    marginTop: 10,
+  },
+  supportBtn: {
+    display: 'inline-block',
+    textDecoration: 'none',
+    border: '1px solid #263a2e',
+    color: '#263a2e',
+    background: '#fff',
+    padding: '12px 16px',
+    borderRadius: 12,
+    fontWeight: 800,
+  },
+  kanban: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+    gap: 14,
+    marginTop: 8,
+  },
+  column: {
+    border: '1px solid',
+    borderRadius: 18,
+    padding: 14,
+    minHeight: 260,
+  },
+  columnHead: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    fontWeight: 800,
+    color: '#203128',
+  },
+  countPill: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 999,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+  },
+  columnBody: {
+    display: 'grid',
+    gap: 12,
+  },
+  emptyColumn: {
+    background: 'rgba(255,255,255,0.7)',
+    borderRadius: 12,
+    padding: 14,
+    color: '#627066',
+  },
+  emptyState: {
+    marginTop: 8,
+    border: '1px dashed #cfd7d1',
+    borderRadius: 16,
+    padding: 18,
+    color: '#5f6d63',
+  },
+  leadCard: {
+    background: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    border: '1px solid rgba(0,0,0,0.05)',
+    boxShadow: '0 8px 18px rgba(25,40,31,0.05)',
+  },
+  leadAddress: {
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  leadMeta: {
+    fontSize: 13,
+    color: '#5f6d63',
+    marginBottom: 4,
+    lineHeight: 1.45,
+  },
+  leadDesc: {
+    fontSize: 14,
+    lineHeight: 1.5,
+    color: '#213428',
+  },
   fileSection: {
     marginTop: 8,
     fontSize: 12,
@@ -1429,9 +1719,124 @@ const baseStyles: Record<string, React.CSSProperties> = {
     lineHeight: 1.45,
     marginTop: 6,
   },
+  locked: {
+    padding: '10px 12px',
+    background: '#f3f0ea',
+    borderRadius: 999,
+    color: '#6b655d',
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  estimateRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  estimateTotals: {
+    marginTop: 6,
+    display: 'grid',
+    gap: 8,
+    color: '#324139',
+  },
+  totalLine: {
+    fontSize: 20,
+    marginTop: 4,
+  },
+  galleryIntro: {
+    background: '#f5f3ed',
+    border: '1px solid #e0d9ce',
+    color: '#5f6d63',
+    borderRadius: 14,
+    padding: '14px 16px',
+    marginBottom: 14,
+    lineHeight: 1.5,
+  },
+  galleryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: 16,
+  },
+  projectCard: {
+    background: '#fff',
+    borderRadius: 18,
+    overflow: 'hidden',
+    border: '1px solid #dde3dd',
+    boxShadow: '0 10px 24px rgba(25,40,31,0.05)',
+  },
+  projectImageGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+    gap: 8,
+    padding: 8,
+    background: '#f2efe8',
+  },
+  projectImageBox: {
+    minHeight: 170,
+    borderRadius: 12,
+    background: 'linear-gradient(135deg, #d8e0d5 0%, #eef1ec 100%)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  projectImageLabel: {
+    display: 'inline-block',
+    padding: '8px 10px',
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.86)',
+    color: '#24352b',
+    fontWeight: 800,
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+  projectCardBody: {
+    padding: 16,
+  },
+  projectTitle: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: '#173522',
+    marginBottom: 6,
+  },
+  projectMeta: {
+    fontSize: 13,
+    color: '#5f6d63',
+    lineHeight: 1.45,
+    marginBottom: 8,
+  },
+  projectSummary: {
+    marginTop: 0,
+    color: '#25342b',
+    lineHeight: 1.55,
+  },
+  tagWrap: {
+    display: 'flex',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  tag: {
+    display: 'inline-block',
+    padding: '7px 10px',
+    borderRadius: 999,
+    background: '#f1ede6',
+    color: '#5e5148',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  bottomBand: {
+    maxWidth: 1440,
+    margin: '16px auto 0',
+    background: '#eee8df',
+    border: '1px solid #ddd5ca',
+    borderRadius: 20,
+    padding: 18,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 12,
+  },
   bottomFeature: {
     padding: '8px 12px',
-    borderRight: 'none',
   },
   bottomFeatureTitle: {
     fontWeight: 800,
@@ -1441,5 +1846,23 @@ const baseStyles: Record<string, React.CSSProperties> = {
     color: '#5f6d63',
     lineHeight: 1.45,
     fontSize: 14,
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.35)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    zIndex: 1000,
+  },
+  modal: {
+    width: '100%',
+    maxWidth: 420,
+    background: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    boxShadow: '0 24px 48px rgba(0,0,0,0.18)',
   },
 }
