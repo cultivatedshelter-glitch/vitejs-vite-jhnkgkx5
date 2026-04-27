@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 
-type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
+type RequestStatus =
+  | 'new'
+  | 'needs_info'
+  | 'estimate_ready'
+  | 'pending_approval'
+  | 'completed'
+
 type Tab = 'request' | 'dashboard' | 'estimates' | 'projects'
 
 type StoredFile = {
@@ -70,9 +76,25 @@ type ProjectSample = {
   afterUrl?: string
 }
 
-const SETTINGS_KEY = 'shelter-prep-settings-v4'
+type NotificationPayload = {
+  event: 'new_request' | 'status_changed'
+  request: WorkRequest
+  oldStatus?: RequestStatus
+  newStatus?: RequestStatus
+  adminPreferences: {
+    emailAlerts: boolean
+    adminAlerts: boolean
+  }
+  clientPreferences: {
+    emailUpdates: boolean
+  }
+}
+
+const SETTINGS_KEY = 'shelter-prep-settings-v5'
+const PROJECTS_KEY = 'shelter-prep-projects-v1'
 const ADMIN_PIN = '2750'
 const STORAGE_BUCKET = 'request-files'
+const NOTIFICATION_FUNCTION = 'send-notification'
 
 const WORK_TYPES = [
   'General Repair',
@@ -85,6 +107,14 @@ const WORK_TYPES = [
   'Inspection Repairs',
   'Turnover Work',
   'Home Services',
+]
+
+const STATUS_ORDER: RequestStatus[] = [
+  'new',
+  'estimate_ready',
+  'pending_approval',
+  'completed',
+  'needs_info',
 ]
 
 const STATUS_META: Record<
@@ -115,6 +145,12 @@ const STATUS_META: Record<
     cardBg: '#fbf6f0',
     border: '#e2d0bc',
   },
+  completed: {
+    label: 'Completed',
+    pillBg: '#e6f4ef',
+    cardBg: '#f2fbf7',
+    border: '#b7dfcf',
+  },
 }
 
 const initialEstimateItems: EstimateItem[] = [
@@ -122,7 +158,7 @@ const initialEstimateItems: EstimateItem[] = [
   { id: crypto.randomUUID(), label: 'Materials', qty: 1, unitCost: 150 },
 ]
 
-const PROJECTS: ProjectSample[] = [
+const DEFAULT_PROJECTS: ProjectSample[] = [
   {
     id: '1',
     title: 'Pre-Listing Refresh',
@@ -132,8 +168,8 @@ const PROJECTS: ProjectSample[] = [
       'Quick cosmetic refresh to help a listing show clean, bright, and move-in ready before photos and open house.',
     turnaround: '5 days',
     tags: ['Before & After', 'Listing Prep', 'Fast Turnaround'],
-    beforeUrl: 'https://YOUR-IMAGE-LINK-HERE/before.jpg',
-    afterUrl: 'https://YOUR-IMAGE-LINK-HERE/after.jpg',
+    beforeUrl: '',
+    afterUrl: '',
   },
   {
     id: '2',
@@ -144,6 +180,8 @@ const PROJECTS: ProjectSample[] = [
       'Vacant unit turnover completed with patching, flooring touch-ups, cleaning, and final walk-through photos.',
     turnaround: '4 days',
     tags: ['Turnover Work', 'Property Management', 'Vacant Unit'],
+    beforeUrl: '',
+    afterUrl: '',
   },
   {
     id: '3',
@@ -154,6 +192,8 @@ const PROJECTS: ProjectSample[] = [
       'Handled inspection items quickly with clear scope notes, photo proof, and final status updates for the agent.',
     turnaround: '3 days',
     tags: ['Inspection Repairs', 'Agent Friendly', 'Clear Updates'],
+    beforeUrl: '',
+    afterUrl: '',
   },
   {
     id: '4',
@@ -164,8 +204,19 @@ const PROJECTS: ProjectSample[] = [
       'Exterior refresh focused on first impression with front entry touch-ups, cleanup, and listing-ready presentation.',
     turnaround: '1 week',
     tags: ['Exterior', 'Curb Appeal', 'Seller Ready'],
+    beforeUrl: '',
+    afterUrl: '',
   },
 ]
+
+function loadSavedProjects() {
+  try {
+    const saved = localStorage.getItem(PROJECTS_KEY)
+    return saved ? (JSON.parse(saved) as ProjectSample[]) : DEFAULT_PROJECTS
+  } catch {
+    return DEFAULT_PROJECTS
+  }
+}
 
 function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): StoredFile[] {
   if (!Array.isArray(value)) return []
@@ -183,6 +234,7 @@ function normalizeStoredFiles(value: unknown, type: 'photo' | 'document'): Store
 
       if (item && typeof item === 'object') {
         const record = item as Record<string, unknown>
+
         return {
           name: String(record.name ?? 'file'),
           path: String(record.path ?? record.name ?? crypto.randomUUID()),
@@ -238,6 +290,7 @@ function ToggleRow({
         <div style={styles.toggleLabel}>{label}</div>
         <div style={styles.toggleText}>{text}</div>
       </div>
+
       <button
         type="button"
         onClick={() => onChange(!checked)}
@@ -271,6 +324,7 @@ function ProjectCard({ project }: { project: ProjectSample }) {
         >
           {!project.beforeUrl ? <span style={styles.projectImageLabel}>BEFORE</span> : null}
         </div>
+
         <div
           style={{
             ...styles.projectImageBox,
@@ -288,11 +342,17 @@ function ProjectCard({ project }: { project: ProjectSample }) {
       </div>
 
       <div style={styles.projectCardBody}>
-        <div style={styles.projectTitle}>{project.title}</div>
+        <div style={styles.projectTitle}>{project.title || 'Untitled Project'}</div>
+
         <div style={styles.projectMeta}>
-          {project.location} • {project.workType} • {project.turnaround}
+          {project.location || 'Location'} • {project.workType || 'Work type'} •{' '}
+          {project.turnaround || 'Timeline'}
         </div>
-        <p style={styles.projectSummary}>{project.summary}</p>
+
+        <p style={styles.projectSummary}>
+          {project.summary || 'Add a short description for this project.'}
+        </p>
+
         <div style={styles.tagWrap}>
           {project.tags.map((tag) => (
             <span key={tag} style={styles.tag}>
@@ -312,8 +372,8 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false)
 
   const [emailAlerts, setEmailAlerts] = useState(true)
-  const [smsAlerts, setSmsAlerts] = useState(true)
   const [adminAlerts, setAdminAlerts] = useState(true)
+  const [clientEmailUpdates, setClientEmailUpdates] = useState(true)
 
   const [requesterName, setRequesterName] = useState('')
   const [email, setEmail] = useState('')
@@ -343,6 +403,9 @@ export default function App() {
   const [estimateDiscount, setEstimateDiscount] = useState(0)
   const [estimateItems, setEstimateItems] = useState<EstimateItem[]>(initialEstimateItems)
 
+  const [galleryProjects, setGalleryProjects] = useState<ProjectSample[]>(loadSavedProjects)
+  const [editingProject, setEditingProject] = useState<ProjectSample | null>(null)
+
   useEffect(() => {
     const rawSettings = localStorage.getItem(SETTINGS_KEY)
     if (!rawSettings) return
@@ -350,23 +413,43 @@ export default function App() {
     try {
       const parsed = JSON.parse(rawSettings)
       setEmailAlerts(Boolean(parsed.emailAlerts))
-      setSmsAlerts(Boolean(parsed.smsAlerts))
       setAdminAlerts(Boolean(parsed.adminAlerts))
     } catch {
-      // ignore
+      // Ignore bad saved settings.
     }
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(
-      SETTINGS_KEY,
-      JSON.stringify({ emailAlerts, smsAlerts, adminAlerts })
-    )
-  }, [emailAlerts, smsAlerts, adminAlerts])
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ emailAlerts, adminAlerts }))
+  }, [emailAlerts, adminAlerts])
+
+  useEffect(() => {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(galleryProjects))
+  }, [galleryProjects])
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setEditingProject(null)
+    }
+  }, [isAdmin])
 
   useEffect(() => {
     loadRequests()
   }, [])
+
+  async function sendNotification(payload: NotificationPayload) {
+    try {
+      const { error } = await supabase.functions.invoke(NOTIFICATION_FUNCTION, {
+        body: payload,
+      })
+
+      if (error) {
+        console.warn('EMAIL NOTIFICATION ERROR:', error.message)
+      }
+    } catch (error) {
+      console.warn('EMAIL NOTIFICATION FUNCTION NOT READY:', error)
+    }
+  }
 
   async function loadRequests() {
     setLoadingRequests(true)
@@ -405,13 +488,18 @@ export default function App() {
     setDescription('')
     setPhotoFiles([])
     setDocumentFiles([])
+    setClientEmailUpdates(true)
   }
 
   async function uploadFiles(files: File[], category: 'photo' | 'document') {
     const uploaded: StoredFile[] = []
 
     for (const file of files) {
-      const safeName = `${Date.now()}-${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
+      const safeName = `${Date.now()}-${crypto.randomUUID()}-${file.name.replace(
+        /[^a-zA-Z0-9._-]/g,
+        '-'
+      )}`
+
       const path = `${category}s/${safeName}`
 
       const { error: uploadError } = await supabase.storage
@@ -490,8 +578,26 @@ export default function App() {
         throw new Error(`insert failed: ${error.message}`)
       }
 
-      setRequests((prev) => [mapDbRowToRequest(data as DbLeadRow), ...prev])
-      setSuccessMessage('Work request submitted and files uploaded successfully.')
+      const savedRequest = mapDbRowToRequest(data as DbLeadRow)
+
+      setRequests((prev) => [savedRequest, ...prev])
+      setSuccessMessage(
+        'Work request submitted successfully. You will receive email updates as the status changes.'
+      )
+
+      await sendNotification({
+        event: 'new_request',
+        request: savedRequest,
+        newStatus: 'new',
+        adminPreferences: {
+          emailAlerts,
+          adminAlerts,
+        },
+        clientPreferences: {
+          emailUpdates: clientEmailUpdates,
+        },
+      })
+
       resetForm()
     } catch (error: any) {
       console.error('SUBMIT ERROR:', error)
@@ -502,18 +608,45 @@ export default function App() {
   }
 
   async function updateStatus(id: string, status: RequestStatus) {
-    const previous = requests
+    if (!isAdmin) {
+      alert('Admin login required to update request status.')
+      return
+    }
+
+    const previousRequests = requests
+    const oldRequest = requests.find((r) => r.id === id)
+    const oldStatus = oldRequest?.status
+
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
 
-    const { error } = await supabase
-      .from('work_requests')
-      .update({ status })
-      .eq('id', id)
+    const { error } = await supabase.from('work_requests').update({ status }).eq('id', id)
 
     if (error) {
       console.error(error)
-      setRequests(previous)
+      setRequests(previousRequests)
       alert(`Could not update status: ${error.message}`)
+      return
+    }
+
+    if (oldRequest) {
+      const updatedRequest: WorkRequest = {
+        ...oldRequest,
+        status,
+      }
+
+      await sendNotification({
+        event: 'status_changed',
+        request: updatedRequest,
+        oldStatus,
+        newStatus: status,
+        adminPreferences: {
+          emailAlerts,
+          adminAlerts,
+        },
+        clientPreferences: {
+          emailUpdates: true,
+        },
+      })
     }
   }
 
@@ -615,6 +748,7 @@ export default function App() {
       needs_info: filteredRequests.filter((r) => r.status === 'needs_info'),
       estimate_ready: filteredRequests.filter((r) => r.status === 'estimate_ready'),
       pending_approval: filteredRequests.filter((r) => r.status === 'pending_approval'),
+      completed: filteredRequests.filter((r) => r.status === 'completed'),
     }),
     [filteredRequests]
   )
@@ -623,6 +757,7 @@ export default function App() {
     () => estimateItems.reduce((sum, item) => sum + item.qty * item.unitCost, 0),
     [estimateItems]
   )
+
   const taxAmount = subtotal * (estimateTax / 100)
   const discountAmount = subtotal * (estimateDiscount / 100)
   const total = subtotal + taxAmount - discountAmount
@@ -654,8 +789,12 @@ export default function App() {
           <tr>
             <td style="padding:8px;border:1px solid #d7ddd8;">${item.label || 'Line Item'}</td>
             <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">${item.qty}</td>
-            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${item.unitCost.toFixed(2)}</td>
-            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${(item.qty * item.unitCost).toFixed(2)}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${item.unitCost.toFixed(
+              2
+            )}</td>
+            <td style="padding:8px;border:1px solid #d7ddd8;text-align:right;">$${(
+              item.qty * item.unitCost
+            ).toFixed(2)}</td>
           </tr>`
       )
       .join('')
@@ -667,7 +806,10 @@ export default function App() {
         </head>
         <body style="font-family:Arial,sans-serif;padding:24px;color:#1f2a30;">
           <h1 style="margin-bottom:4px;">Shelter Prep Estimate</h1>
-          <p style="margin-top:0;color:#52606b;">${estimateClient || 'Client'}${estimateProperty ? ` • ${estimateProperty}` : ''}</p>
+          <p style="margin-top:0;color:#52606b;">
+            ${estimateClient || 'Client'}${estimateProperty ? ` • ${estimateProperty}` : ''}
+          </p>
+
           <table style="width:100%;border-collapse:collapse;margin-top:16px;">
             <thead>
               <tr>
@@ -679,16 +821,21 @@ export default function App() {
             </thead>
             <tbody>${rows}</tbody>
           </table>
+
           <div style="margin-top:20px;max-width:320px;margin-left:auto;">
             <p>Subtotal: <strong>$${subtotal.toFixed(2)}</strong></p>
             <p>Tax (${estimateTax}%): <strong>$${taxAmount.toFixed(2)}</strong></p>
-            <p>Discount (${estimateDiscount}%): <strong>-$${discountAmount.toFixed(2)}</strong></p>
+            <p>Discount (${estimateDiscount}%): <strong>-$${discountAmount.toFixed(
+              2
+            )}</strong></p>
             <p style="font-size:20px;">Total: <strong>$${total.toFixed(2)}</strong></p>
           </div>
+
           <script>window.print()</script>
         </body>
       </html>
     `)
+
     printWindow.document.close()
   }
 
@@ -698,6 +845,7 @@ export default function App() {
     return (
       <div style={styles.fileSection}>
         <strong>{label}:</strong>
+
         <div style={styles.linkList}>
           {files.map((file) =>
             file.url ? (
@@ -751,6 +899,7 @@ export default function App() {
                 value={requesterName}
                 onChange={(e) => setRequesterName(e.target.value)}
               />
+
               <input
                 style={styles.input}
                 placeholder="Your email *"
@@ -766,6 +915,7 @@ export default function App() {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
               />
+
               <select
                 style={styles.input}
                 value={workType}
@@ -794,12 +944,14 @@ export default function App() {
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
               />
+
               <input
                 style={styles.input}
                 placeholder="State *"
                 value={state}
                 onChange={(e) => setState(e.target.value)}
               />
+
               <input
                 style={styles.input}
                 placeholder="ZIP code *"
@@ -849,12 +1001,14 @@ export default function App() {
               <label style={styles.uploadBox}>
                 <div style={styles.uploadTitle}>Upload photos / videos</div>
                 <div style={styles.uploadText}>JPG, PNG, MP4, MOV up to 20MB each</div>
+
                 <input
                   type="file"
                   accept="image/*,video/mp4,video/quicktime"
                   multiple
                   onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
                 />
+
                 {photoFiles.length ? (
                   <div style={styles.fileList}>{photoFiles.map((f) => f.name).join(', ')}</div>
                 ) : null}
@@ -863,22 +1017,42 @@ export default function App() {
               <label style={styles.uploadBox}>
                 <div style={styles.uploadTitle}>Upload documents</div>
                 <div style={styles.uploadText}>PDF, DOC, DOCX up to 20MB each</div>
+
                 <input
                   type="file"
                   accept=".pdf,.doc,.docx"
                   multiple
                   onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
                 />
+
                 {documentFiles.length ? (
                   <div style={styles.fileList}>{documentFiles.map((f) => f.name).join(', ')}</div>
                 ) : null}
               </label>
             </div>
 
+            <section style={styles.noticeBox}>
+              <h3 style={styles.noticeTitle}>Client Email Notifications</h3>
+              <p style={styles.noticeText}>
+                Choose whether you want to receive email updates when your request status changes
+                or when the work is marked complete.
+              </p>
+
+              <label style={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={clientEmailUpdates}
+                  onChange={(e) => setClientEmailUpdates(e.target.checked)}
+                />
+                <span>Email me status and completion updates</span>
+              </label>
+            </section>
+
             <div style={styles.formFooter}>
               <button type="submit" style={styles.primarySubmit} disabled={submitting}>
                 {submitting ? 'Uploading...' : 'Submit Work Request'}
               </button>
+
               <button type="button" style={styles.secondaryBtn} onClick={resetForm}>
                 Clear Form
               </button>
@@ -894,6 +1068,7 @@ export default function App() {
                 Add your best before/after examples here to build trust with clients.
               </p>
             </div>
+
             <button
               type="button"
               style={styles.secondaryBtn}
@@ -904,7 +1079,7 @@ export default function App() {
           </div>
 
           <div style={styles.galleryGrid}>
-            {PROJECTS.slice(0, 2).map((project) => (
+            {galleryProjects.slice(0, 2).map((project) => (
               <ProjectCard key={project.id} project={project} />
             ))}
           </div>
@@ -920,9 +1095,11 @@ export default function App() {
           <div>
             <h2 style={styles.sectionTitle}>Admin Dashboard</h2>
             <p style={styles.sectionText}>
-              Track every job across new leads, estimate-ready work, approvals, and follow-up.
+              Track every job across new leads, estimate-ready work, approvals, completion, and
+              follow-up.
             </p>
           </div>
+
           {!isAdmin ? <div style={styles.locked}>Admin login required to manage jobs</div> : null}
         </div>
 
@@ -939,71 +1116,75 @@ export default function App() {
           <div style={styles.emptyState}>Loading requests...</div>
         ) : (
           <div style={styles.kanban}>
-            {(['new', 'estimate_ready', 'pending_approval', 'needs_info'] as RequestStatus[]).map(
-              (status) => (
-                <div
-                  key={status}
-                  style={{
-                    ...styles.column,
-                    background: STATUS_META[status].cardBg,
-                    borderColor: STATUS_META[status].border,
-                  }}
-                >
-                  <div style={styles.columnHead}>
-                    <span>{STATUS_META[status].label}</span>
-                    <span
-                      style={{
-                        ...styles.countPill,
-                        background: STATUS_META[status].pillBg,
-                      }}
-                    >
-                      {groupedRequests[status].length}
-                    </span>
-                  </div>
+            {STATUS_ORDER.map((status) => (
+              <div
+                key={status}
+                style={{
+                  ...styles.column,
+                  background: STATUS_META[status].cardBg,
+                  borderColor: STATUS_META[status].border,
+                }}
+              >
+                <div style={styles.columnHead}>
+                  <span>{STATUS_META[status].label}</span>
 
-                  <div style={styles.columnBody}>
-                    {groupedRequests[status].length === 0 ? (
-                      <div style={styles.emptyColumn}>No requests</div>
-                    ) : (
-                      groupedRequests[status].map((request) => (
-                        <div key={request.id} style={styles.leadCard}>
-                          <div style={styles.leadAddress}>{request.propertyAddress}</div>
-                          <div style={styles.leadMeta}>
-                            {request.city}, {request.state} {request.zip}
-                          </div>
-                          <div style={styles.leadMeta}>
-                            {request.requesterName} • {request.email}
-                            {request.phone ? ` • ${request.phone}` : ''}
-                          </div>
-                          <div style={styles.leadMeta}>
-                            {request.workType} • {request.urgency} • {request.occupancy}
-                          </div>
-                          <p style={styles.leadDesc}>{request.description}</p>
-
-                          {renderFiles(request.photos, 'Photos')}
-                          {renderFiles(request.documents, 'Files')}
-
-                          <div style={styles.smallText}>{request.createdAt}</div>
-
-                          <select
-                            style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
-                            value={request.status}
-                            onChange={(e) =>
-                              updateStatus(request.id, e.target.value as RequestStatus)
-                            }
-                          >
-                            <option value="new">New Lead</option>
-                            <option value="estimate_ready">Estimate Ready</option>
-                            <option value="pending_approval">Pending Approval</option>
-                            <option value="needs_info">Needs Info</option>
-                          </select>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                  <span
+                    style={{
+                      ...styles.countPill,
+                      background: STATUS_META[status].pillBg,
+                    }}
+                  >
+                    {groupedRequests[status].length}
+                  </span>
                 </div>
-              )
-            )}
+
+                <div style={styles.columnBody}>
+                  {groupedRequests[status].length === 0 ? (
+                    <div style={styles.emptyColumn}>No requests</div>
+                  ) : (
+                    groupedRequests[status].map((request) => (
+                      <div key={request.id} style={styles.leadCard}>
+                        <div style={styles.leadAddress}>{request.propertyAddress}</div>
+
+                        <div style={styles.leadMeta}>
+                          {request.city}, {request.state} {request.zip}
+                        </div>
+
+                        <div style={styles.leadMeta}>
+                          {request.requesterName} • {request.email}
+                          {request.phone ? ` • ${request.phone}` : ''}
+                        </div>
+
+                        <div style={styles.leadMeta}>
+                          {request.workType} • {request.urgency} • {request.occupancy}
+                        </div>
+
+                        <p style={styles.leadDesc}>{request.description}</p>
+
+                        {renderFiles(request.photos, 'Photos')}
+                        {renderFiles(request.documents, 'Files')}
+
+                        <div style={styles.smallText}>{request.createdAt}</div>
+
+                        <select
+                          style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
+                          value={request.status}
+                          onChange={(e) =>
+                            updateStatus(request.id, e.target.value as RequestStatus)
+                          }
+                        >
+                          <option value="new">New Lead</option>
+                          <option value="estimate_ready">Estimate Ready</option>
+                          <option value="pending_approval">Pending Approval</option>
+                          <option value="completed">Completed</option>
+                          <option value="needs_info">Needs Info</option>
+                        </select>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
@@ -1029,6 +1210,7 @@ export default function App() {
             value={estimateClient}
             onChange={(e) => setEstimateClient(e.target.value)}
           />
+
           <input
             style={styles.input}
             placeholder="Property address"
@@ -1045,6 +1227,7 @@ export default function App() {
               value={item.label}
               onChange={(e) => updateEstimateItem(item.id, { label: e.target.value })}
             />
+
             <input
               style={{ ...styles.input, marginBottom: 0 }}
               type="number"
@@ -1054,6 +1237,7 @@ export default function App() {
                 updateEstimateItem(item.id, { qty: Number(e.target.value) || 1 })
               }
             />
+
             <input
               style={{ ...styles.input, marginBottom: 0 }}
               type="number"
@@ -1064,6 +1248,7 @@ export default function App() {
                 updateEstimateItem(item.id, { unitCost: Number(e.target.value) || 0 })
               }
             />
+
             <button
               type="button"
               style={styles.secondaryBtn}
@@ -1084,6 +1269,7 @@ export default function App() {
             value={estimateTax}
             onChange={(e) => setEstimateTax(Number(e.target.value) || 0)}
           />
+
           <input
             style={styles.input}
             type="number"
@@ -1099,12 +1285,15 @@ export default function App() {
           <div>
             Subtotal: <strong>${subtotal.toFixed(2)}</strong>
           </div>
+
           <div>
             Tax: <strong>${taxAmount.toFixed(2)}</strong>
           </div>
+
           <div>
             Discount: <strong>-${discountAmount.toFixed(2)}</strong>
           </div>
+
           <div style={styles.totalLine}>
             Total: <strong>${total.toFixed(2)}</strong>
           </div>
@@ -1114,6 +1303,7 @@ export default function App() {
           <button type="button" style={styles.secondaryBtn} onClick={addEstimateItem}>
             Add Line Item
           </button>
+
           <button type="button" style={styles.primarySubmit} onClick={openPrintableEstimate}>
             Print Estimate
           </button>
@@ -1123,6 +1313,62 @@ export default function App() {
   }
 
   function renderProjectsTab() {
+    const blankProject: ProjectSample = {
+      id: crypto.randomUUID(),
+      title: '',
+      location: '',
+      workType: '',
+      summary: '',
+      turnaround: '',
+      tags: [],
+      beforeUrl: '',
+      afterUrl: '',
+    }
+
+    function saveGalleryProject(project: ProjectSample) {
+      if (!isAdmin) {
+        alert('Admin login required to edit the gallery.')
+        return
+      }
+
+      setGalleryProjects((current) => {
+        const exists = current.some((item) => item.id === project.id)
+
+        if (exists) {
+          return current.map((item) => (item.id === project.id ? project : item))
+        }
+
+        return [project, ...current]
+      })
+
+      setEditingProject(null)
+    }
+
+    function deleteGalleryProject(id: string) {
+      if (!isAdmin) {
+        alert('Admin login required to delete gallery projects.')
+        return
+      }
+
+      const confirmDelete = window.confirm('Delete this project from the gallery?')
+      if (!confirmDelete) return
+
+      setGalleryProjects((current) => current.filter((item) => item.id !== id))
+    }
+
+    function resetGalleryProjects() {
+      if (!isAdmin) {
+        alert('Admin login required to reset the gallery.')
+        return
+      }
+
+      const confirmReset = window.confirm('Reset gallery back to the original sample projects?')
+      if (!confirmReset) return
+
+      setGalleryProjects(DEFAULT_PROJECTS)
+      setEditingProject(null)
+    }
+
     return (
       <section style={styles.card}>
         <div style={styles.sectionHead}>
@@ -1132,18 +1378,171 @@ export default function App() {
               Showcase finished work, before/after examples, and the kinds of projects you handle best.
             </p>
           </div>
+
+          {isAdmin ? (
+            <div style={styles.formFooterNoMargin}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={() => setEditingProject(blankProject)}
+              >
+                Add Project
+              </button>
+
+              <button type="button" style={styles.secondaryBtn} onClick={resetGalleryProjects}>
+                Reset Samples
+              </button>
+            </div>
+          ) : (
+            <div style={styles.locked}>Admin login required to edit gallery</div>
+          )}
         </div>
 
-        <div style={styles.galleryIntro}>
-          Tip: replace the placeholder before/after boxes by adding your real image URLs
-          to the PROJECTS array at the top of this file.
-        </div>
+        {isAdmin && editingProject ? (
+          <div style={styles.galleryEditor}>
+            <h3 style={{ marginTop: 0 }}>
+              {galleryProjects.some((p) => p.id === editingProject.id)
+                ? 'Edit Project'
+                : 'Add New Project'}
+            </h3>
+
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Project title"
+                value={editingProject.title}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, title: e.target.value })
+                }
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Location"
+                value={editingProject.location}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, location: e.target.value })
+                }
+              />
+            </div>
+
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Work type"
+                value={editingProject.workType}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, workType: e.target.value })
+                }
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Turnaround, example: 5 days"
+                value={editingProject.turnaround}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, turnaround: e.target.value })
+                }
+              />
+            </div>
+
+            <textarea
+              style={{ ...styles.input, minHeight: 100, resize: 'vertical' }}
+              placeholder="Project summary"
+              value={editingProject.summary}
+              onChange={(e) =>
+                setEditingProject({ ...editingProject, summary: e.target.value })
+              }
+            />
+
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Before image URL"
+                value={editingProject.beforeUrl || ''}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, beforeUrl: e.target.value })
+                }
+              />
+
+              <input
+                style={styles.input}
+                placeholder="After image URL"
+                value={editingProject.afterUrl || ''}
+                onChange={(e) =>
+                  setEditingProject({ ...editingProject, afterUrl: e.target.value })
+                }
+              />
+            </div>
+
+            <input
+              style={styles.input}
+              placeholder="Tags separated by commas, example: Before & After, Listing Prep"
+              value={editingProject.tags.join(', ')}
+              onChange={(e) =>
+                setEditingProject({
+                  ...editingProject,
+                  tags: e.target.value
+                    .split(',')
+                    .map((tag) => tag.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+
+            <div style={styles.formFooter}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={() => saveGalleryProject(editingProject)}
+              >
+                Save Project
+              </button>
+
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={() => setEditingProject(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div style={styles.galleryGrid}>
-          {PROJECTS.map((project) => (
-            <ProjectCard key={project.id} project={project} />
+          {galleryProjects.map((project) => (
+            <div key={project.id}>
+              <ProjectCard project={project} />
+
+              {isAdmin ? (
+                <div style={styles.projectActions}>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    onClick={() => setEditingProject(project)}
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.dangerBtn}
+                    onClick={() => deleteGalleryProject(project.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ))}
         </div>
+
+        {!galleryProjects.length ? (
+          <div style={styles.emptyState}>
+            No projects yet. Admin login is required to add a project.
+          </div>
+        ) : null}
       </section>
     )
   }
@@ -1165,6 +1564,7 @@ export default function App() {
       <header style={styles.header}>
         <div style={styles.logoWrap}>
           <div style={styles.logoMark}>│││</div>
+
           <div>
             <div style={styles.brand}>SHELTER PREP</div>
             <div style={styles.brandSub}>HOME SERVICES</div>
@@ -1182,6 +1582,7 @@ export default function App() {
           <button style={styles.secondaryBtn} onClick={exportCsv}>
             Export CSV
           </button>
+
           {isAdmin ? (
             <button style={styles.primaryBtn} onClick={() => setIsAdmin(false)}>
               Log Out
@@ -1204,22 +1605,18 @@ export default function App() {
 
         <aside style={styles.sidebar}>
           <section style={styles.sideCard}>
-            <h3 style={styles.sideTitle}>Instant Notifications</h3>
+            <h3 style={styles.sideTitle}>Email Notifications</h3>
+
             <ToggleRow
-              label="Email Alerts"
-              text="Get instant email notifications when new requests come in."
+              label="Admin Email Alerts"
+              text="Get email notifications when new requests come in."
               checked={emailAlerts}
               onChange={setEmailAlerts}
             />
+
             <ToggleRow
-              label="Text Message Alerts"
-              text="Receive SMS notifications on your mobile phone."
-              checked={smsAlerts}
-              onChange={setSmsAlerts}
-            />
-            <ToggleRow
-              label="Admin Alerts"
-              text="Stay updated on status changes, new messages, and more."
+              label="Admin Status Alerts"
+              text="Stay updated on important request status changes."
               checked={adminAlerts}
               onChange={setAdminAlerts}
             />
@@ -1227,37 +1624,38 @@ export default function App() {
 
           <section style={styles.sideCardSoft}>
             <h3 style={styles.sideTitle}>Estimate Builder</h3>
+
             <p style={styles.sideText}>Create professional estimates quickly and send to clients.</p>
+
             <ul style={styles.featureList}>
               <li>Add line items and materials</li>
               <li>Set labor, taxes, and discounts</li>
               <li>Professional printable estimates</li>
               <li>Send and track client approvals</li>
             </ul>
-            <button
-              style={styles.secondaryWideBtn}
-              onClick={() => setActiveTab('estimates')}
-            >
+
+            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('estimates')}>
               Go to Estimate Builder
             </button>
           </section>
 
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Projects Gallery</h3>
+
             <p style={styles.sideText}>
               Use the gallery to show pre-listing refreshes, turnovers, and before/after examples.
             </p>
-            <button
-              style={styles.secondaryWideBtn}
-              onClick={() => setActiveTab('projects')}
-            >
+
+            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('projects')}>
               Open Projects Gallery
             </button>
           </section>
 
           <section style={styles.sideCard}>
             <h3 style={styles.sideTitle}>Need Help?</h3>
+
             <p style={styles.sideText}>Contact our support team for assistance.</p>
+
             <a
               href="mailto:support@shelterprep.com?subject=Shelter%20Prep%20Support"
               style={styles.supportBtn}
@@ -1270,23 +1668,26 @@ export default function App() {
 
       <section style={styles.bottomBand}>
         <div style={styles.bottomFeature}>
-          <div style={styles.bottomFeatureTitle}>Instant Email Alerts</div>
+          <div style={styles.bottomFeatureTitle}>Admin Email Alerts</div>
           <div style={styles.bottomFeatureText}>
-            Get notified immediately when new work requests are submitted.
+            Get notified when new work requests are submitted.
           </div>
         </div>
+
         <div style={styles.bottomFeature}>
-          <div style={styles.bottomFeatureTitle}>Text Message Alerts</div>
+          <div style={styles.bottomFeatureTitle}>Client Email Updates</div>
           <div style={styles.bottomFeatureText}>
-            Receive real-time text notifications so you never miss a request.
+            Clients can receive email updates when their request status changes.
           </div>
         </div>
+
         <div style={styles.bottomFeature}>
           <div style={styles.bottomFeatureTitle}>Estimate Builder</div>
           <div style={styles.bottomFeatureText}>
             Build, send, and track estimates all in one place.
           </div>
         </div>
+
         <div style={styles.bottomFeature}>
           <div style={styles.bottomFeatureTitle}>Projects Gallery</div>
           <div style={styles.bottomFeatureText}>
@@ -1300,16 +1701,19 @@ export default function App() {
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>Admin Login</h3>
             <p style={{ color: '#60706f' }}>Enter your admin PIN</p>
+
             <input
               style={styles.input}
               placeholder="Enter admin PIN"
               value={adminPinInput}
               onChange={(e) => setAdminPinInput(e.target.value)}
             />
+
             <div style={styles.formFooter}>
               <button style={styles.primaryBtn} onClick={doAdminLogin}>
                 Sign In
               </button>
+
               <button style={styles.secondaryBtn} onClick={() => setShowLogin(false)}>
                 Cancel
               </button>
@@ -1420,6 +1824,15 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontWeight: 700,
   },
+  dangerBtn: {
+    border: '1px solid #e3b5b5',
+    background: '#fff',
+    color: '#9f2424',
+    padding: '14px 18px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 700,
+  },
   mainGrid: {
     maxWidth: 1440,
     margin: '0 auto',
@@ -1520,6 +1933,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     marginBottom: 14,
   },
+  noticeBox: {
+    background: '#f6f4ef',
+    border: '1px solid #ded8ce',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  noticeTitle: {
+    margin: '0 0 6px',
+    color: '#213428',
+    fontSize: 18,
+  },
+  noticeText: {
+    margin: '0 0 12px',
+    color: '#66756c',
+    lineHeight: 1.5,
+  },
+  checkboxRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    fontWeight: 700,
+    color: '#24352b',
+    padding: '8px 0',
+  },
   grid2: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
@@ -1570,6 +2009,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     flexWrap: 'wrap',
     marginTop: 14,
+  },
+  formFooterNoMargin: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 0,
   },
   toggleRow: {
     display: 'flex',
@@ -1744,13 +2190,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 20,
     marginTop: 4,
   },
-  galleryIntro: {
+  galleryEditor: {
     background: '#f5f3ed',
     border: '1px solid #e0d9ce',
-    color: '#5f6d63',
+    color: '#24352b',
     borderRadius: 14,
-    padding: '14px 16px',
-    marginBottom: 14,
+    padding: '16px',
+    marginBottom: 18,
     lineHeight: 1.5,
   },
   galleryGrid: {
@@ -1809,6 +2255,12 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 0,
     color: '#25342b',
     lineHeight: 1.55,
+  },
+  projectActions: {
+    display: 'flex',
+    gap: 10,
+    marginTop: 10,
+    flexWrap: 'wrap',
   },
   tagWrap: {
     display: 'flex',
