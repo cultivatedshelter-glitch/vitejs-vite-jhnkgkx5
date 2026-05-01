@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
+import AiEstimator from './components/AiEstimator'
+import type { AiEstimateRequest } from './types/shelterprep-ai'
 
 type RequestStatus =
   | 'new'
@@ -8,7 +10,7 @@ type RequestStatus =
   | 'pending_approval'
   | 'completed'
 
-type Tab = 'request' | 'dashboard' | 'estimates' | 'projects'
+type Tab = 'request' | 'dashboard' | 'estimates' | 'ai' | 'projects'
 
 type StoredFile = {
   name: string
@@ -367,6 +369,7 @@ function ProjectCard({ project }: { project: ProjectSample }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('request')
+  const [aiInitialForm, setAiInitialForm] = useState<Partial<AiEstimateRequest> | undefined>(undefined)
   const [showLogin, setShowLogin] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
@@ -839,6 +842,43 @@ export default function App() {
     printWindow.document.close()
   }
 
+
+  function buildAiFormFromRequest(request: WorkRequest): Partial<AiEstimateRequest> {
+    return {
+      sourceRequestId: request.id,
+      requesterName: request.requesterName,
+      requesterEmail: request.email,
+      requesterPhone: request.phone,
+      propertyAddress: `${request.propertyAddress}, ${request.city}, ${request.state} ${request.zip}`,
+      zipCode: request.zip,
+      requesterType: 'unknown',
+      requestType: request.workType,
+      description: request.description,
+      timeline: request.timeline,
+      notes: `Urgency: ${request.urgency}. Occupancy: ${request.occupancy}. Status: ${STATUS_META[request.status].label}.`,
+      photosDescription: request.photos.length
+        ? `Attached photos/videos: ${request.photos.map((file) => file.name).join(', ')}`
+        : '',
+      photos: request.photos.map((file) => ({
+        name: file.name,
+        url: file.url,
+        path: file.path,
+        type: file.type,
+      })),
+      documents: request.documents.map((file) => ({
+        name: file.name,
+        url: file.url,
+        path: file.path,
+        type: file.type,
+      })),
+    }
+  }
+
+  function openAiEstimatorFromRequest(request: WorkRequest) {
+    setAiInitialForm(buildAiFormFromRequest(request))
+    setActiveTab('ai')
+  }
+
   function renderFiles(files: StoredFile[], label: string) {
     if (!files.length) return null
 
@@ -1166,6 +1206,14 @@ export default function App() {
 
                         <div style={styles.smallText}>{request.createdAt}</div>
 
+                        <button
+                          type="button"
+                          style={{ ...styles.secondaryBtn, width: '100%', marginTop: 10 }}
+                          onClick={() => openAiEstimatorFromRequest(request)}
+                        >
+                          AI Estimate This Lead
+                        </button>
+
                         <select
                           style={{ ...styles.input, marginBottom: 0, marginTop: 10 }}
                           value={request.status}
@@ -1308,6 +1356,25 @@ export default function App() {
             Print Estimate
           </button>
         </div>
+      </section>
+    )
+  }
+
+
+  function renderAiTab() {
+    return (
+      <section style={styles.card}>
+        <div style={styles.sectionHead}>
+          <div>
+            <h2 style={styles.sectionTitle}>AI Estimator</h2>
+            <p style={styles.sectionText}>
+              Generate preliminary pricing tiers, missing information, assumptions, exclusions,
+              risks, schedule notes, and a client-ready message.
+            </p>
+          </div>
+        </div>
+
+        <AiEstimator initialForm={aiInitialForm} />
       </section>
     )
   }
@@ -1575,6 +1642,7 @@ export default function App() {
           {navButton('request', 'New Request')}
           {navButton('dashboard', 'Dashboard')}
           {navButton('estimates', 'Estimates')}
+          {navButton('ai', 'AI Estimator')}
           {navButton('projects', 'Projects')}
         </div>
 
@@ -1600,6 +1668,7 @@ export default function App() {
           {activeTab === 'request' && renderRequestTab()}
           {activeTab === 'dashboard' && renderDashboardTab()}
           {activeTab === 'estimates' && renderEstimatesTab()}
+          {activeTab === 'ai' && renderAiTab()}
           {activeTab === 'projects' && renderProjectsTab()}
         </div>
 
@@ -1636,6 +1705,25 @@ export default function App() {
 
             <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('estimates')}>
               Go to Estimate Builder
+            </button>
+          </section>
+
+          <section style={styles.sideCardSoft}>
+            <h3 style={styles.sideTitle}>AI Estimator</h3>
+
+            <p style={styles.sideText}>
+              Turn a lead description into pricing tiers, missing info, scope notes, and a
+              client-ready message.
+            </p>
+
+            <ul style={styles.featureList}>
+              <li>Generate budget, standard, and premium pricing tiers</li>
+              <li>Identify assumptions, exclusions, and risk items</li>
+              <li>Create a polished reply you can send to the client</li>
+            </ul>
+
+            <button style={styles.secondaryWideBtn} onClick={() => setActiveTab('ai')}>
+              Open AI Estimator
             </button>
           </section>
 
@@ -1685,6 +1773,20 @@ export default function App() {
           <div style={styles.bottomFeatureTitle}>Estimate Builder</div>
           <div style={styles.bottomFeatureText}>
             Build, send, and track estimates all in one place.
+          </div>
+        </div>
+
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>AI Estimator</div>
+          <div style={styles.bottomFeatureText}>
+            Generate preliminary scopes, pricing tiers, and client-ready messages.
+          </div>
+        </div>
+
+        <div style={styles.bottomFeature}>
+          <div style={styles.bottomFeatureTitle}>AI Estimator</div>
+          <div style={styles.bottomFeatureText}>
+            Use uploaded photos and documents to build preliminary scope and pricing notes.
           </div>
         </div>
 
