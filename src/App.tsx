@@ -285,9 +285,29 @@ export default function App() {
       if (!supabaseUrl || !supabaseAnonKey) {
         alert('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env')
         return
-      }
-
-      const response = await fetch(`${supabaseUrl}/functions/v1/ai-estimator`, {
+        const { data, error } = await supabase.functions.invoke('ai-estimator', {
+          body: {
+            projectType: request.workType,
+            location: `${request.city}, ${request.state} ${request.zip}`,
+            scope: request.description,
+            measurements: '',
+            accessNotes: `Occupancy: ${request.occupancy}`,
+            materialsBy: 'unknown',
+            disposalNeeded: false,
+            timeline: request.timeline,
+            budget: '',
+            notes: `Urgency: ${request.urgency}. Address: ${request.propertyAddress}`,
+            files: [...request.photoUrls, ...request.documentUrls],
+          },
+        })
+        
+        if (error) {
+          console.error(error)
+          alert('Edge Function error. Check Supabase Edge Function logs.')
+          return
+        }
+        
+        alert(data?.summary || 'AI estimate completed.')
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
