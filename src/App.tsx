@@ -54,7 +54,7 @@ type WorkRequest = {
 
 const ADMIN_PIN = '2750'
 const STORAGE_KEY = 'shelter-prep-private-files-v1'
-const STORAGE_BUCKET = 'lead-uploads'
+const STORAGE_BUCKET = 'job-files'
 
 const WORK_TYPES = [
   'General Repair',
@@ -81,8 +81,8 @@ const STATUS_LABELS: Record<RequestStatus, string> = {
 
 export default function App() {
   const [tab, setTab] = useState<
-    'new' | 'dashboard' | 'bidMemory' | 'ai'
-  >('new')
+  'new' | 'dashboard' | 'invoices' | 'bidMemory' | 'ai'
+>('new')
 
   const [isAdmin, setIsAdmin] = useState(false)
   const [showLogin, setShowLogin] = useState(false)
@@ -123,7 +123,7 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(requests))
   }, [requests])
 
-  function requireAdmin(nextTab: 'dashboard' | 'bidMemory' | 'ai') {
+  function requireAdmin(nextTab: 'dashboard' | 'invoices' | 'bidMemory' | 'ai') {
     if (!isAdmin) {
       setShowLogin(true)
       return
@@ -829,7 +829,7 @@ export default function App() {
         <div style={overlayStyle} onClick={() => setShowLogin(false)}>
           <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ marginTop: 0 }}>Admin Login</h2>
-            <p style={sectionTextStyle}>Demo PIN: 4242</p>
+            <p style={sectionTextStyle}>Admin PIN: 2750</p>
 
             <input
               style={inputStyle}
