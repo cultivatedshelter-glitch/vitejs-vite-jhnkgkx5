@@ -52,7 +52,7 @@ type WorkRequest = {
   aiEstimate?: AiEstimate
 }
 
-const ADMIN_PIN = '4242'
+const ADMIN_PIN = '2750'
 const STORAGE_KEY = 'shelter-prep-private-files-v1'
 const STORAGE_BUCKET = 'lead-uploads'
 
