@@ -8,6 +8,7 @@ type MaterialCost = {
   unit: string | null
   current_price: number | null
   previous_price: number | null
+  percent_change: number | null
   source: string | null
   region: string | null
   updated_at: string
@@ -21,6 +22,7 @@ export default function MaterialCostMonitor() {
   const [currentPrice, setCurrentPrice] = useState('')
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(false)
+  const [updating, setUpdating] = useState(false)
 
   async function loadMaterials() {
     setLoading(true)
@@ -37,6 +39,26 @@ export default function MaterialCostMonitor() {
     }
 
     setLoading(false)
+  }
+
+  async function updateMaterialCostsNow() {
+    setUpdating(true)
+
+    const { data, error } = await supabase.functions.invoke('update-material-costs', {
+      body: {},
+    })
+
+    if (error) {
+      console.error(error)
+      alert('Material update failed: ' + error.message)
+      setUpdating(false)
+      return
+    }
+
+    console.log('Material update result:', data)
+    alert('Material costs updated.')
+    await loadMaterials()
+    setUpdating(false)
   }
 
   async function addMaterial() {
@@ -74,7 +96,24 @@ export default function MaterialCostMonitor() {
   return (
     <div style={cardStyle}>
       <h2>Material Cost Monitor</h2>
-      <p>Phase 1: manual/API-ready material cost database.</p>
+      <p>
+        Track manual material costs and pull weekly market data from your automation
+        function.
+      </p>
+
+      <div style={buttonRowStyle}>
+        <button style={buttonStyle} onClick={updateMaterialCostsNow} disabled={updating}>
+          {updating ? 'Updating Market Costs...' : 'Update Material Costs Now'}
+        </button>
+
+        <button style={outlineButtonStyle} onClick={loadMaterials} disabled={loading}>
+          {loading ? 'Loading...' : 'Refresh'}
+        </button>
+      </div>
+
+      <hr style={dividerStyle} />
+
+      <h3>Add Manual Material Cost</h3>
 
       <input
         style={inputStyle}
@@ -115,13 +154,13 @@ export default function MaterialCostMonitor() {
         Add Material Cost
       </button>
 
-      <button style={{ ...buttonStyle, marginLeft: 10 }} onClick={loadMaterials}>
-        {loading ? 'Loading...' : 'Refresh'}
-      </button>
+      <div style={{ marginTop: 24 }}>
+        {materials.length === 0 && (
+          <p>No material costs yet. Click “Update Material Costs Now” or add one manually.</p>
+        )}
 
-      <div style={{ marginTop: 20 }}>
         {materials.map((item) => {
-          const change =
+          const dollarChange =
             item.previous_price && item.current_price
               ? item.current_price - item.previous_price
               : null
@@ -129,25 +168,42 @@ export default function MaterialCostMonitor() {
           return (
             <div key={item.id} style={itemStyle}>
               <strong>{item.material_name}</strong>
+
               <p>
                 {item.category || 'Uncategorized'} • {item.unit || 'unit not set'}
               </p>
-              <p>Current: ${item.current_price ?? 0}</p>
-              <p>Previous: ${item.previous_price ?? 0}</p>
+
+              <p>Current: {formatPrice(item.current_price)}</p>
+              <p>Previous: {formatPrice(item.previous_price)}</p>
+
               <p>
                 Change:{' '}
-                {change === null
+                {dollarChange === null
                   ? 'No previous price'
-                  : `${change >= 0 ? '+' : ''}$${change.toFixed(2)}`}
+                  : `${dollarChange >= 0 ? '+' : ''}${dollarChange.toFixed(2)}`}
               </p>
+
+              <p>
+                Percent change:{' '}
+                {item.percent_change === null || item.percent_change === undefined
+                  ? 'Not calculated'
+                  : `${item.percent_change >= 0 ? '+' : ''}${item.percent_change.toFixed(2)}%`}
+              </p>
+
               <p>Source: {item.source || 'Not entered'}</p>
               <p>Region: {item.region || 'Not set'}</p>
+              <p style={smallTextStyle}>Updated: {item.updated_at}</p>
             </div>
           )
         })}
       </div>
     </div>
   )
+}
+
+function formatPrice(value: number | null) {
+  if (value === null || value === undefined) return 'Not set'
+  return `$${value}`
 }
 
 const cardStyle: React.CSSProperties = {
@@ -172,6 +228,14 @@ const inputStyle: React.CSSProperties = {
   marginBottom: 12,
   borderRadius: 10,
   border: '1px solid #ccc',
+  boxSizing: 'border-box',
+}
+
+const buttonRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 10,
+  flexWrap: 'wrap',
+  marginBottom: 16,
 }
 
 const buttonStyle: React.CSSProperties = {
@@ -182,4 +246,25 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: 10,
   fontWeight: 700,
   cursor: 'pointer',
+}
+
+const outlineButtonStyle: React.CSSProperties = {
+  background: 'white',
+  color: '#0f542d',
+  padding: '10px 14px',
+  border: '1px solid #0f542d',
+  borderRadius: 10,
+  fontWeight: 700,
+  cursor: 'pointer',
+}
+
+const dividerStyle: React.CSSProperties = {
+  border: 'none',
+  borderTop: '1px solid #ddd',
+  margin: '20px 0',
+}
+
+const smallTextStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
 }
