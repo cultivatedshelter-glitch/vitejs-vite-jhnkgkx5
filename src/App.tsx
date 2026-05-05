@@ -1,34 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import AiEstimator from './components/AiEstimator'
-import BidMemory from './components/BidMemory'
-import { supabase } from './lib/supabase'
+import { supabase } from './supabase'
+import Gallery from './components/Gallery'
 
-type RequestStatus =
-  | 'new'
-  | 'needs_info'
-  | 'estimate_ready'
-  | 'pending_approval'
-  | 'scheduled'
-  | 'completed'
+type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
+type Tab = 'new' | 'gallery' | 'dashboard' | 'invoices' | 'materials' | 'estimates'
 
-type UploadedFile = {
+type StoredFile = {
   name: string
   path: string
-  type: string
-}
-
-type AiEstimate = {
-  projectSummary?: string
-  lowPrice?: number
-  standardPrice?: number
-  premiumPrice?: number
-  pricingRationale?: string
-  riskFactors?: string[]
-  missingInfo?: string[]
-  recommendedScope?: string[]
-  exclusions?: string[]
-  clientMessage?: string
-  contractorNotes?: string
+  url?: string
+  type: 'photo' | 'document'
 }
 
 type WorkRequest = {
@@ -37,24 +18,57 @@ type WorkRequest = {
   requesterName: string
   email: string
   phone: string
+  workType: string
   propertyAddress: string
   city: string
   state: string
   zip: string
-  workType: string
   urgency: string
   occupancy: string
   timeline: string
   description: string
-  photos: UploadedFile[]
-  documents: UploadedFile[]
+  photos: StoredFile[]
+  documents: StoredFile[]
   status: RequestStatus
   aiEstimate?: AiEstimate
 }
 
-const ADMIN_PIN = '2750'
-const STORAGE_KEY = 'shelter-prep-private-files-v1'
-const STORAGE_BUCKET = 'job-files'
+type AiEstimate = {
+  projectSummary?: string
+  lowPrice?: number
+  standardPrice?: number
+  premiumPrice?: number
+  pricingRationale?: string
+}
+
+type Invoice = {
+  id: string
+  created_at: string
+  file_name: string
+  file_url: string
+  storage_path: string
+  vendor_name: string | null
+  property_address: string | null
+  extraction_status: string | null
+  total: number | null
+}
+
+type MaterialCost = {
+  id: string
+  material_name: string
+  category: string | null
+  unit: string | null
+  current_price: number | null
+  previous_price: number | null
+  source: string | null
+  region: string | null
+  updated_at: string
+}
+
+const STORAGE_KEY = 'shelter-prep-requests-v1'
+const ADMIN_PIN = '4242'
+const REQUEST_FILES_BUCKET = 'job-files'
+const INVOICE_BUCKET = 'invoices'
 
 const WORK_TYPES = [
   'General Repair',
@@ -66,27 +80,30 @@ const WORK_TYPES = [
   'Landscaping',
   'Inspection Repairs',
   'Turnover Work',
-  'Pre-Listing Repairs',
   'Home Services',
 ]
 
-const STATUS_LABELS: Record<RequestStatus, string> = {
-  new: 'New Request',
-  needs_info: 'Needs Info',
-  estimate_ready: 'Estimate Ready',
-  pending_approval: 'Pending Approval',
-  scheduled: 'Scheduled',
-  completed: 'Completed',
+const STATUS_META: Record<RequestStatus, { label: string; cardBg: string; border: string }> = {
+  new: { label: 'New Lead', cardBg: '#eef5ff', border: '#c8d9f2' },
+  needs_info: { label: 'Needs Info', cardBg: '#fff3f3', border: '#efc5c5' },
+  estimate_ready: { label: 'Estimate Ready', cardBg: '#f1fbf2', border: '#c9e3ce' },
+  pending_approval: { label: 'Pending Approval', cardBg: '#fbf6f0', border: '#e2d0bc' },
+}
+
+function makeId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return String(Date.now())
+}
+
+function safeFileName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '-')
 }
 
 export default function App() {
-  const [tab, setTab] = useState<
-  'new' | 'dashboard' | 'invoices' | 'bidMemory' | 'ai'
->('new')
-
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('new')
   const [showLogin, setShowLogin] = useState(false)
-  const [pin, setPin] = useState('')
+  const [adminPinInput, setAdminPinInput] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [search, setSearch] = useState('')
@@ -95,20 +112,35 @@ export default function App() {
   const [requesterName, setRequesterName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [workType, setWorkType] = useState(WORK_TYPES[0])
   const [propertyAddress, setPropertyAddress] = useState('')
   const [city, setCity] = useState('')
   const [stateValue, setStateValue] = useState('')
   const [zip, setZip] = useState('')
-  const [workType, setWorkType] = useState(WORK_TYPES[0])
   const [urgency, setUrgency] = useState('Standard')
   const [occupancy, setOccupancy] = useState('Occupied')
   const [timeline, setTimeline] = useState('')
   const [description, setDescription] = useState('')
   const [photoFiles, setPhotoFiles] = useState<File[]>([])
   const [documentFiles, setDocumentFiles] = useState<File[]>([])
-  const [successMessage, setSuccessMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
+
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
+  const [invoiceVendor, setInvoiceVendor] = useState('')
+  const [invoiceAddress, setInvoiceAddress] = useState('')
+  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [invoiceUploading, setInvoiceUploading] = useState(false)
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+
+  const [materials, setMaterials] = useState<MaterialCost[]>([])
+  const [materialName, setMaterialName] = useState('')
+  const [materialCategory, setMaterialCategory] = useState('')
+  const [materialUnit, setMaterialUnit] = useState('')
+  const [materialPrice, setMaterialPrice] = useState('')
+  const [materialSource, setMaterialSource] = useState('')
+  const [materialLoading, setMaterialLoading] = useState(false)
 
   useEffect(() => {
     try {
@@ -123,48 +155,39 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(requests))
   }, [requests])
 
-  function requireAdmin(nextTab: 'dashboard' | 'invoices' | 'bidMemory' | 'ai') {
+  useEffect(() => {
+    if (isAdmin && activeTab === 'invoices') loadInvoices()
+    if (isAdmin && activeTab === 'materials') loadMaterials()
+  }, [isAdmin, activeTab])
+
+  function requireAdmin(tab: Tab) {
     if (!isAdmin) {
       setShowLogin(true)
       return
     }
-
-    setTab(nextTab)
+    setActiveTab(tab)
   }
 
-  function login() {
-    if (pin === ADMIN_PIN) {
+  function handleLogin() {
+    if (adminPinInput === ADMIN_PIN) {
       setIsAdmin(true)
       setShowLogin(false)
-      setPin('')
-      setTab('dashboard')
+      setAdminPinInput('')
+      setActiveTab('dashboard')
     } else {
       alert('Wrong admin PIN')
     }
-  }
-
-  function logout() {
-    setIsAdmin(false)
-    setTab('new')
-  }
-
-  function makeId() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID()
-    }
-
-    return String(Date.now())
   }
 
   function resetForm() {
     setRequesterName('')
     setEmail('')
     setPhone('')
+    setWorkType(WORK_TYPES[0])
     setPropertyAddress('')
     setCity('')
     setStateValue('')
     setZip('')
-    setWorkType(WORK_TYPES[0])
     setUrgency('Standard')
     setOccupancy('Occupied')
     setTimeline('')
@@ -173,48 +196,27 @@ export default function App() {
     setDocumentFiles([])
   }
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setPhotoFiles(Array.from(e.target.files || []))
-  }
-
-  function handleDocumentChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setDocumentFiles(Array.from(e.target.files || []))
-  }
-
-  async function uploadLeadFiles(files: File[], folder: string) {
-    const uploaded: UploadedFile[] = []
+  async function uploadRequestFiles(files: File[], folder: string, type: 'photo' | 'document') {
+    const uploaded: StoredFile[] = []
 
     for (const file of files) {
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-')
-      const path = `${folder}/${Date.now()}-${safeName}`
+      const path = `${folder}/${Date.now()}-${safeFileName(file.name)}`
+      const { error } = await supabase.storage.from(REQUEST_FILES_BUCKET).upload(path, file)
+      if (error) throw error
 
-      const { error } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .upload(path, file)
-
-      if (error) {
-        console.error(error)
-        throw error
-      }
-
-      uploaded.push({
-        name: file.name,
-        path,
-        type: file.type,
-      })
+      uploaded.push({ name: file.name, path, type })
     }
 
     return uploaded
   }
 
-  async function openPrivateFile(file: UploadedFile) {
+  async function openRequestFile(file: StoredFile) {
     const { data, error } = await supabase.storage
-      .from(STORAGE_BUCKET)
+      .from(REQUEST_FILES_BUCKET)
       .createSignedUrl(file.path, 60 * 10)
 
     if (error || !data?.signedUrl) {
-      console.error(error)
-      alert('Could not open file. Check Supabase storage policies.')
+      alert('Could not open file. Check Supabase storage bucket/policies.')
       return
     }
 
@@ -233,8 +235,8 @@ export default function App() {
     setSubmitting(true)
 
     try {
-      const uploadedPhotos = await uploadLeadFiles(photoFiles, 'photos')
-      const uploadedDocuments = await uploadLeadFiles(documentFiles, 'documents')
+      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo')
+      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document')
 
       const newRequest: WorkRequest = {
         id: makeId(),
@@ -242,117 +244,162 @@ export default function App() {
         requesterName,
         email,
         phone,
+        workType,
         propertyAddress,
         city,
         state: stateValue,
         zip,
-        workType,
         urgency,
         occupancy,
         timeline,
         description,
-        photos: uploadedPhotos,
-        documents: uploadedDocuments,
+        photos,
+        documents,
         status: 'new',
       }
 
       setRequests((prev) => [newRequest, ...prev])
       setSuccessMessage('Request submitted. Shelter Prep will review and follow up.')
       resetForm()
-    } catch (error) {
+    } catch (error: any) {
       console.error(error)
-      alert('Upload failed. Check Supabase storage policies and bucket name.')
+      alert(error?.message || 'Upload failed. Check Supabase storage bucket/policies.')
     } finally {
       setSubmitting(false)
     }
   }
 
   function updateStatus(id: string, status: RequestStatus) {
-    setRequests((prev) =>
-      prev.map((request) =>
-        request.id === id ? { ...request, status } : request
-      )
-    )
+    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
   }
 
   async function runAiEstimate(request: WorkRequest) {
     setAiLoadingId(request.id)
 
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-      if (!supabaseUrl || !supabaseAnonKey) {
-        alert('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env')
-        return
-        const { data, error } = await supabase.functions.invoke('ai-estimator', {
-          body: {
-            projectType: request.workType,
-            location: `${request.city}, ${request.state} ${request.zip}`,
-            scope: request.description,
-            measurements: '',
-            accessNotes: `Occupancy: ${request.occupancy}`,
-            materialsBy: 'unknown',
-            disposalNeeded: false,
-            timeline: request.timeline,
-            budget: '',
-            notes: `Urgency: ${request.urgency}. Address: ${request.propertyAddress}`,
-            files: [...request.photoUrls, ...request.documentUrls],
-          },
-        })
-        
-        if (error) {
-          console.error(error)
-          alert('Edge Function error. Check Supabase Edge Function logs.')
-          return
-        }
-        
-        alert(data?.summary || 'AI estimate completed.')
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify({
+      const { data, error } = await supabase.functions.invoke('ai-estimator', {
+        body: {
           projectType: request.workType,
           location: `${request.city}, ${request.state} ${request.zip}`,
           scope: request.description,
-          measurements: '',
-          accessNotes: `Occupancy: ${request.occupancy}`,
-          materialsBy: 'unknown',
-          disposalNeeded: false,
           timeline: request.timeline,
-          budget: '',
-          notes: `Urgency: ${request.urgency}. Address: ${request.propertyAddress}`,
+          notes: `Urgency: ${request.urgency}. Occupancy: ${request.occupancy}. Address: ${request.propertyAddress}`,
           files: [...request.photos, ...request.documents],
-        }),
+        },
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        console.error(data)
-        alert(data.error || 'AI estimator failed.')
+      if (error) {
+        console.error(error)
+        alert('AI error: ' + error.message)
         return
       }
 
+      const estimate: AiEstimate = data?.estimate || {
+        projectSummary: data?.summary || 'AI estimate completed.',
+        lowPrice: data?.lowEstimate || 0,
+        standardPrice: data?.standardEstimate || data?.highEstimate || 0,
+        premiumPrice: data?.premiumEstimate || data?.highEstimate || 0,
+        pricingRationale: data?.pricingRationale || '',
+      }
+
       setRequests((prev) =>
-        prev.map((item) =>
-          item.id === request.id
-            ? {
-                ...item,
-                aiEstimate: data.estimate,
-                status: 'estimate_ready',
-              }
-            : item
-        )
+        prev.map((r) => (r.id === request.id ? { ...r, status: 'estimate_ready', aiEstimate: estimate } : r))
       )
-    } catch (error) {
+
+      alert(estimate.projectSummary || 'AI estimate completed.')
+    } catch (error: any) {
       console.error(error)
-      alert('AI estimator failed. Check Supabase logs.')
+      alert(error?.message || 'AI estimator failed.')
     } finally {
       setAiLoadingId(null)
     }
+  }
+
+  async function uploadInvoice() {
+    if (!invoiceFile) {
+      alert('Choose a PDF invoice first.')
+      return
+    }
+
+    setInvoiceUploading(true)
+
+    try {
+      const path = `invoices/${Date.now()}-${safeFileName(invoiceFile.name)}`
+      const { error: uploadError } = await supabase.storage.from(INVOICE_BUCKET).upload(path, invoiceFile)
+      if (uploadError) throw uploadError
+
+      const { data: publicUrlData } = supabase.storage.from(INVOICE_BUCKET).getPublicUrl(path)
+
+      const { error: insertError } = await supabase.from('invoices').insert({
+        file_name: invoiceFile.name,
+        file_url: publicUrlData.publicUrl,
+        storage_path: path,
+        vendor_name: invoiceVendor,
+        property_address: invoiceAddress,
+        extraction_status: 'pending',
+      })
+
+      if (insertError) throw insertError
+
+      alert('Invoice uploaded.')
+      setInvoiceFile(null)
+      setInvoiceVendor('')
+      setInvoiceAddress('')
+      await loadInvoices()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Invoice upload failed.')
+    } finally {
+      setInvoiceUploading(false)
+    }
+  }
+
+  async function loadInvoices() {
+    setInvoiceLoading(true)
+    const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setInvoices((data || []) as Invoice[])
+
+    setInvoiceLoading(false)
+  }
+
+  async function loadMaterials() {
+    setMaterialLoading(true)
+    const { data, error } = await supabase.from('material_costs').select('*').order('updated_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setMaterials((data || []) as MaterialCost[])
+
+    setMaterialLoading(false)
+  }
+
+  async function addMaterialCost() {
+    if (!materialName || !materialPrice) {
+      alert('Material name and current price are required.')
+      return
+    }
+
+    const { error } = await supabase.from('material_costs').insert({
+      material_name: materialName,
+      category: materialCategory,
+      unit: materialUnit,
+      current_price: Number(materialPrice),
+      source: materialSource,
+      region: 'Portland / Lake Oswego',
+    })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    setMaterialName('')
+    setMaterialCategory('')
+    setMaterialUnit('')
+    setMaterialPrice('')
+    setMaterialSource('')
+    await loadMaterials()
   }
 
   function exportCsv() {
@@ -366,45 +413,27 @@ export default function App() {
       return
     }
 
-    const headers = [
-      'createdAt',
-      'status',
-      'requesterName',
-      'email',
-      'phone',
-      'propertyAddress',
-      'city',
-      'state',
-      'zip',
-      'workType',
-      'urgency',
-      'occupancy',
-      'timeline',
-      'description',
-      'photos',
-      'documents',
-    ]
-
-    const rows = requests.map((request) =>
+    const headers = ['createdAt', 'status', 'requesterName', 'email', 'phone', 'propertyAddress', 'city', 'state', 'zip', 'workType', 'urgency', 'occupancy', 'timeline', 'description', 'photos', 'documents']
+    const rows = requests.map((r) =>
       [
-        request.createdAt,
-        request.status,
-        request.requesterName,
-        request.email,
-        request.phone,
-        request.propertyAddress,
-        request.city,
-        request.state,
-        request.zip,
-        request.workType,
-        request.urgency,
-        request.occupancy,
-        request.timeline,
-        request.description,
-        request.photos.map((file) => file.name).join(' | '),
-        request.documents.map((file) => file.name).join(' | '),
+        r.createdAt,
+        r.status,
+        r.requesterName,
+        r.email,
+        r.phone,
+        r.propertyAddress,
+        r.city,
+        r.state,
+        r.zip,
+        r.workType,
+        r.urgency,
+        r.occupancy,
+        r.timeline,
+        r.description,
+        r.photos.map((f) => f.name).join(' | '),
+        r.documents.map((f) => f.name).join(' | '),
       ]
-        .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
+        .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`)
         .join(',')
     )
 
@@ -419,421 +448,170 @@ export default function App() {
   }
 
   const filteredRequests = useMemo(() => {
-    return requests.filter((request) => {
-      const matchesFilter = filter === 'all' ? true : request.status === filter
-
-      const haystack = [
-        request.requesterName,
-        request.email,
-        request.phone,
-        request.propertyAddress,
-        request.city,
-        request.state,
-        request.zip,
-        request.workType,
-        request.description,
-      ]
+    return requests.filter((r) => {
+      const matchesFilter = filter === 'all' || r.status === filter
+      const text = [r.requesterName, r.email, r.phone, r.propertyAddress, r.city, r.state, r.zip, r.workType, r.description]
         .join(' ')
         .toLowerCase()
-
-      return matchesFilter && haystack.includes(search.toLowerCase())
+      return matchesFilter && text.includes(search.toLowerCase())
     })
   }, [requests, filter, search])
 
-  const columns: RequestStatus[] = [
-    'new',
-    'needs_info',
-    'estimate_ready',
-    'pending_approval',
-    'scheduled',
-    'completed',
-  ]
+  const columns: RequestStatus[] = ['new', 'needs_info', 'estimate_ready', 'pending_approval']
 
   return (
-    <div style={pageStyle}>
-      <header style={headerStyle}>
-        <div style={brandStyle}>
-          <div style={logoMarkStyle}>
-            <span style={logoLineStyle}></span>
-            <span style={logoLineStyle}></span>
-            <span style={logoLineStyle}></span>
-          </div>
-
-          <div>
-            <div style={brandNameStyle}>SHELTER PREP</div>
-            <div style={brandSubStyle}>HOME SERVICES</div>
-          </div>
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div>
+          <div style={styles.brand}>SHELTER PREP</div>
+          <div style={styles.subBrand}>HOME SERVICES</div>
         </div>
 
-        <nav style={navStyle}>
-          <button
-            style={tab === 'new' ? navActiveStyle : navButtonStyle}
-            onClick={() => setTab('new')}
-          >
-            New Request
-          </button>
+        <nav style={styles.nav}>
+          <button style={activeTab === 'new' ? styles.navActive : styles.navButton} onClick={() => setActiveTab('new')}>New Request</button>
+          <button style={activeTab === 'gallery' ? styles.navActive : styles.navButton} onClick={() => setActiveTab('gallery')}>Gallery</button>
 
-          <button
-            style={tab === 'dashboard' ? navActiveStyle : navButtonStyle}
-            onClick={() => requireAdmin('dashboard')}
-          >
-            Dashboard
-          </button>
-
-          <button
-            style={tab === 'bidMemory' ? navActiveStyle : navButtonStyle}
-            onClick={() => requireAdmin('bidMemory')}
-          >
-            Bid Memory
-          </button>
-
-          <button
-            style={tab === 'ai' ? navActiveStyle : navButtonStyle}
-            onClick={() => requireAdmin('ai')}
-          >
-            AI Estimator
-          </button>
+          {isAdmin && (
+            <>
+              <button style={activeTab === 'dashboard' ? styles.navActive : styles.navButton} onClick={() => requireAdmin('dashboard')}>Dashboard</button>
+              <button style={activeTab === 'invoices' ? styles.navActive : styles.navButton} onClick={() => requireAdmin('invoices')}>Invoices</button>
+              <button style={activeTab === 'materials' ? styles.navActive : styles.navButton} onClick={() => requireAdmin('materials')}>Material Costs</button>
+              <button style={activeTab === 'estimates' ? styles.navActive : styles.navButton} onClick={() => requireAdmin('estimates')}>AI Estimator</button>
+            </>
+          )}
         </nav>
 
-        <div style={topActionsStyle}>
-          {isAdmin && (
-            <button style={outlineButtonStyle} onClick={exportCsv}>
-              Export CSV
-            </button>
-          )}
-
+        <div style={styles.headerActions}>
+          {isAdmin && <button style={styles.outlineButton} onClick={exportCsv}>Export CSV</button>}
           {isAdmin ? (
-            <button style={primaryButtonStyle} onClick={logout}>
-              Log Out
-            </button>
+            <button style={styles.primaryButton} onClick={() => { setIsAdmin(false); setActiveTab('new') }}>Log Out</button>
           ) : (
-            <button style={primaryButtonStyle} onClick={() => setShowLogin(true)}>
-              Admin Login
-            </button>
+            <button style={styles.primaryButton} onClick={() => setShowLogin(true)}>Admin Login</button>
           )}
         </div>
       </header>
 
-      <main style={mainStyle}>
-        {tab === 'new' && (
-          <div style={twoColumnStyle}>
-            <div>
-              <section style={heroCardStyle}>
-                <div style={heroBadgeStyle}>Property work intake</div>
-                <h1 style={heroTitleStyle}>Submit a work request in one place.</h1>
-                <p style={heroTextStyle}>
-                  Enter the property details, describe the work needed, and upload photos,
-                  documents, or video for Shelter Prep review.
-                </p>
-              </section>
+      <main style={styles.main}>
+        {activeTab === 'new' && (
+          <div style={styles.twoColumn}>
+            <section style={styles.card}>
+              <div style={styles.hero}>Submit a property work request</div>
+              <p style={styles.muted}>Upload photos, documents, videos, and notes for Shelter Prep review.</p>
 
-              <section style={cardStyle}>
-                <h2 style={sectionTitleStyle}>New Work Request</h2>
-                <p style={sectionTextStyle}>Fields marked with * are required.</p>
+              {successMessage && <div style={styles.success}>{successMessage}</div>}
 
-                {successMessage && <div style={successStyle}>{successMessage}</div>}
+              <form onSubmit={handleSubmit}>
+                <div style={styles.grid2}>
+                  <input style={styles.input} placeholder="Your name *" value={requesterName} onChange={(e) => setRequesterName(e.target.value)} />
+                  <input style={styles.input} placeholder="Email *" value={email} onChange={(e) => setEmail(e.target.value)} />
+                </div>
 
-                <form onSubmit={handleSubmit}>
-                  <div style={grid2Style}>
-                    <input
-                      style={inputStyle}
-                      placeholder="Your name *"
-                      value={requesterName}
-                      onChange={(e) => setRequesterName(e.target.value)}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="Your email *"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
+                <div style={styles.grid2}>
+                  <input style={styles.input} placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  <select style={styles.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
+                    {WORK_TYPES.map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </div>
+
+                <input style={styles.input} placeholder="Property address *" value={propertyAddress} onChange={(e) => setPropertyAddress(e.target.value)} />
+
+                <div style={styles.grid3}>
+                  <input style={styles.input} placeholder="City *" value={city} onChange={(e) => setCity(e.target.value)} />
+                  <input style={styles.input} placeholder="State *" value={stateValue} onChange={(e) => setStateValue(e.target.value)} />
+                  <input style={styles.input} placeholder="ZIP *" value={zip} onChange={(e) => setZip(e.target.value)} />
+                </div>
+
+                <div style={styles.grid3}>
+                  <select style={styles.input} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
+                    <option>Standard</option><option>Urgent</option><option>ASAP</option>
+                  </select>
+                  <select style={styles.input} value={occupancy} onChange={(e) => setOccupancy(e.target.value)}>
+                    <option>Occupied</option><option>Vacant</option><option>Unknown</option>
+                  </select>
+                  <input style={styles.input} placeholder="Desired timeline" value={timeline} onChange={(e) => setTimeline(e.target.value)} />
+                </div>
+
+                <textarea style={{ ...styles.input, minHeight: 140 }} placeholder="Describe the work needed *" value={description} onChange={(e) => setDescription(e.target.value)} />
+
+                <div style={styles.grid2}>
+                  <div style={styles.uploadBox}>
+                    <strong>Photos</strong>
+                    <input type="file" multiple accept="image/*" onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))} />
+                    {photoFiles.length > 0 && <p style={styles.small}>{photoFiles.map((f) => f.name).join(', ')}</p>}
                   </div>
-
-                  <div style={grid2Style}>
-                    <input
-                      style={inputStyle}
-                      placeholder="Phone number"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                    />
-                    <select
-                      style={inputStyle}
-                      value={workType}
-                      onChange={(e) => setWorkType(e.target.value)}
-                    >
-                      {WORK_TYPES.map((item) => (
-                        <option key={item} value={item}>
-                          {item}
-                        </option>
-                      ))}
-                    </select>
+                  <div style={styles.uploadBox}>
+                    <strong>Documents / Video</strong>
+                    <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.mov" onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))} />
+                    {documentFiles.length > 0 && <p style={styles.small}>{documentFiles.map((f) => f.name).join(', ')}</p>}
                   </div>
+                </div>
 
-                  <input
-                    style={inputStyle}
-                    placeholder="Property address *"
-                    value={propertyAddress}
-                    onChange={(e) => setPropertyAddress(e.target.value)}
-                  />
+                <button type="submit" style={styles.primaryButton} disabled={submitting}>{submitting ? 'Submitting...' : 'Submit Request'}</button>
+                <button type="button" style={{ ...styles.outlineButton, marginLeft: 10 }} onClick={resetForm}>Clear</button>
+              </form>
+            </section>
 
-                  <div style={grid3Style}>
-                    <input
-                      style={inputStyle}
-                      placeholder="City *"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="State *"
-                      value={stateValue}
-                      onChange={(e) => setStateValue(e.target.value)}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="ZIP code *"
-                      value={zip}
-                      onChange={(e) => setZip(e.target.value)}
-                    />
-                  </div>
-
-                  <div style={grid3Style}>
-                    <select
-                      style={inputStyle}
-                      value={urgency}
-                      onChange={(e) => setUrgency(e.target.value)}
-                    >
-                      <option value="Standard">Standard</option>
-                      <option value="Urgent">Urgent</option>
-                      <option value="ASAP">ASAP</option>
-                    </select>
-
-                    <select
-                      style={inputStyle}
-                      value={occupancy}
-                      onChange={(e) => setOccupancy(e.target.value)}
-                    >
-                      <option value="Occupied">Occupied</option>
-                      <option value="Vacant">Vacant</option>
-                      <option value="Unknown">Unknown</option>
-                    </select>
-
-                    <input
-                      style={inputStyle}
-                      placeholder="Desired timeline"
-                      value={timeline}
-                      onChange={(e) => setTimeline(e.target.value)}
-                    />
-                  </div>
-
-                  <textarea
-                    style={{ ...inputStyle, minHeight: 140, resize: 'vertical' }}
-                    placeholder="Describe the work needed *"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                  />
-
-                  <div style={grid2Style}>
-                    <div style={uploadBoxStyle}>
-                      <label style={uploadLabelStyle}>Photos</label>
-                      <input type="file" multiple accept="image/*" onChange={handlePhotoChange} />
-                      {photoFiles.length > 0 && (
-                        <div style={fileTextStyle}>
-                          {photoFiles.map((file) => file.name).join(', ')}
-                        </div>
-                      )}
-                    </div>
-
-                    <div style={uploadBoxStyle}>
-                      <label style={uploadLabelStyle}>Documents / Video / Inspection Notes</label>
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.mov"
-                        onChange={handleDocumentChange}
-                      />
-                      {documentFiles.length > 0 && (
-                        <div style={fileTextStyle}>
-                          {documentFiles.map((file) => file.name).join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={buttonRowStyle}>
-                    <button type="submit" style={primaryButtonStyle} disabled={submitting}>
-                      {submitting ? 'Submitting...' : 'Submit Property Issue'}
-                    </button>
-                    <button type="button" style={outlineButtonStyle} onClick={resetForm}>
-                      Clear Form
-                    </button>
-                  </div>
-                </form>
-              </section>
-            </div>
-
-            <aside style={sideColumnStyle}>
-              <section style={cardStyle}>
-                <h3 style={sideTitleStyle}>Private Status Updates</h3>
-                <p style={sectionTextStyle}>
-                  After submitting, Shelter Prep will follow up by email or phone.
-                  Job details are not shown publicly on this website.
-                </p>
-              </section>
-
-              <section style={softCardStyle}>
-                <h3 style={sideTitleStyle}>Bid Memory</h3>
-                <p style={sectionTextStyle}>
-                  Admin-only memory for old bids, invoices, lessons learned, and pricing history.
-                </p>
-                <button style={wideOutlineButtonStyle} onClick={() => requireAdmin('bidMemory')}>
-                  Open Bid Memory
-                </button>
-              </section>
-
-              <section style={softCardStyle}>
-                <h3 style={sideTitleStyle}>AI Estimator</h3>
-                <p style={sectionTextStyle}>
-                  Create smarter bid ranges using past jobs, project scope, and risk notes.
-                </p>
-                <button style={wideOutlineButtonStyle} onClick={() => requireAdmin('ai')}>
-                  Open AI Estimator
-                </button>
-              </section>
+            <aside style={styles.sideCard}>
+              <h2>Phase 1 AI Foundation</h2>
+              <p style={styles.muted}>Invoice upload, invoice records, material cost database, and AI estimate call are wired into the app.</p>
+              <button style={styles.wideButton} onClick={() => requireAdmin('invoices')}>Open Invoices</button>
+              <button style={styles.wideButton} onClick={() => requireAdmin('materials')}>Open Material Costs</button>
             </aside>
           </div>
         )}
 
-        {isAdmin && tab === 'dashboard' && (
+        {activeTab === 'gallery' && <Gallery />}
+
+        {isAdmin && activeTab === 'dashboard' && (
           <>
-            <section style={cardStyle}>
-              <div style={dashboardHeaderStyle}>
-                <div>
-                  <h2 style={sectionTitleStyle}>Admin Dashboard</h2>
-                  <p style={sectionTextStyle}>
-                    Review submitted requests, open private files, and run AI estimates.
-                  </p>
-                </div>
-
-                <div style={filterBarStyle}>
-                  <input
-                    style={inputStyle}
-                    placeholder="Search requests"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-
-                  <select
-                    style={inputStyle}
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value as 'all' | RequestStatus)}
-                  >
-                    <option value="all">All Statuses</option>
-                    {columns.map((status) => (
-                      <option key={status} value={status}>
-                        {STATUS_LABELS[status]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            <section style={styles.card}>
+              <h2>Admin Dashboard</h2>
+              <div style={styles.grid2}>
+                <input style={styles.input} placeholder="Search requests" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <select style={styles.input} value={filter} onChange={(e) => setFilter(e.target.value as 'all' | RequestStatus)}>
+                  <option value="all">All Statuses</option>
+                  {columns.map((status) => <option key={status} value={status}>{STATUS_META[status].label}</option>)}
+                </select>
               </div>
             </section>
 
-            <section style={kanbanWrapStyle}>
+            <section style={styles.kanban}>
               {columns.map((status) => {
                 const items = filteredRequests.filter((request) => request.status === status)
-
                 return (
-                  <div key={status} style={{ ...columnStyle, ...columnByStatus[status] }}>
-                    <div style={columnHeaderStyle}>
-                      <span>{STATUS_LABELS[status]}</span>
-                      <span style={countBadgeStyle}>{items.length}</span>
-                    </div>
+                  <div key={status} style={{ ...styles.column, background: STATUS_META[status].cardBg, border: `1px solid ${STATUS_META[status].border}` }}>
+                    <h3>{STATUS_META[status].label} ({items.length})</h3>
+                    {items.length === 0 && <div style={styles.empty}>No requests</div>}
+                    {items.map((request) => (
+                      <div key={request.id} style={styles.requestCard}>
+                        <strong>{request.propertyAddress}</strong>
+                        <p style={styles.small}>{request.city}, {request.state} {request.zip}</p>
+                        <p style={styles.small}>{request.requesterName} • {request.email}</p>
+                        <p>{request.description}</p>
 
-                    <div style={columnBodyStyle}>
-                      {items.length === 0 ? (
-                        <div style={emptyColumnStyle}>No requests</div>
-                      ) : (
-                        items.map((request) => (
-                          <div key={request.id} style={requestCardStyle}>
-                            <strong>{request.propertyAddress}</strong>
-                            <p style={smallMutedStyle}>
-                              {request.city}, {request.state} {request.zip}
-                            </p>
-                            <p style={smallMutedStyle}>
-                              {request.requesterName} • {request.email}
-                            </p>
-                            <p style={cardTextStyle}>{request.description}</p>
+                        {request.photos.length > 0 && <strong>Photos</strong>}
+                        {request.photos.map((file) => <button key={file.path} style={styles.linkButton} onClick={() => openRequestFile(file)}>Open {file.name}</button>)}
 
-                            {request.photos.length > 0 && (
-                              <div style={fileLinkGroupStyle}>
-                                <strong>Photos:</strong>
-                                {request.photos.map((file) => (
-                                  <div key={file.path}>
-                                    <button
-                                      style={linkButtonStyle}
-                                      onClick={() => openPrivateFile(file)}
-                                    >
-                                      Open {file.name}
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                        {request.documents.length > 0 && <strong>Documents</strong>}
+                        {request.documents.map((file) => <button key={file.path} style={styles.linkButton} onClick={() => openRequestFile(file)}>Open {file.name}</button>)}
 
-                            {request.documents.length > 0 && (
-                              <div style={fileLinkGroupStyle}>
-                                <strong>Documents:</strong>
-                                {request.documents.map((file) => (
-                                  <div key={file.path}>
-                                    <button
-                                      style={linkButtonStyle}
-                                      onClick={() => openPrivateFile(file)}
-                                    >
-                                      Open {file.name}
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                        <button style={styles.wideButton} disabled={aiLoadingId === request.id} onClick={() => runAiEstimate(request)}>
+                          {aiLoadingId === request.id ? 'Running AI...' : 'Run AI Estimate'}
+                        </button>
 
-                            <button
-                              style={widePrimaryButtonStyle}
-                              onClick={() => runAiEstimate(request)}
-                              disabled={aiLoadingId === request.id}
-                            >
-                              {aiLoadingId === request.id ? 'Running AI...' : 'Run AI Estimate'}
-                            </button>
-
-                            {request.aiEstimate && (
-                              <div style={aiBoxStyle}>
-                                <strong>AI Estimate</strong>
-                                <p>{request.aiEstimate.projectSummary || 'Estimate ready.'}</p>
-                                <p>
-                                  Low: ${request.aiEstimate.lowPrice || 0} • Standard: $
-                                  {request.aiEstimate.standardPrice || 0} • Premium: $
-                                  {request.aiEstimate.premiumPrice || 0}
-                                </p>
-                              </div>
-                            )}
-
-                            <select
-                              style={{ ...inputStyle, marginBottom: 0, marginTop: 12 }}
-                              value={request.status}
-                              onChange={(e) =>
-                                updateStatus(request.id, e.target.value as RequestStatus)
-                              }
-                            >
-                              {columns.map((nextStatus) => (
-                                <option key={nextStatus} value={nextStatus}>
-                                  {STATUS_LABELS[nextStatus]}
-                                </option>
-                              ))}
-                            </select>
+                        {request.aiEstimate && (
+                          <div style={styles.aiBox}>
+                            <strong>AI Estimate</strong>
+                            <p>{request.aiEstimate.projectSummary}</p>
+                            <p>Low: ${request.aiEstimate.lowPrice || 0} • Standard: ${request.aiEstimate.standardPrice || 0} • Premium: ${request.aiEstimate.premiumPrice || 0}</p>
                           </div>
-                        ))
-                      )}
-                    </div>
+                        )}
+
+                        <select style={styles.input} value={request.status} onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}>
+                          {columns.map((next) => <option key={next} value={next}>{STATUS_META[next].label}</option>)}
+                        </select>
+                      </div>
+                    ))}
                   </div>
                 )
               })}
@@ -841,31 +619,80 @@ export default function App() {
           </>
         )}
 
-        {isAdmin && tab === 'bidMemory' && <BidMemory />}
-        {isAdmin && tab === 'ai' && <AiEstimator />}
+        {isAdmin && activeTab === 'invoices' && (
+          <section style={styles.card}>
+            <h2>Invoice Intake</h2>
+            <p style={styles.muted}>Upload PDF invoices now. Extraction will be added in the next backend step.</p>
+            <input style={styles.input} placeholder="Vendor name" value={invoiceVendor} onChange={(e) => setInvoiceVendor(e.target.value)} />
+            <input style={styles.input} placeholder="Property address" value={invoiceAddress} onChange={(e) => setInvoiceAddress(e.target.value)} />
+            <input style={styles.input} type="file" accept="application/pdf" onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)} />
+            <button style={styles.primaryButton} onClick={uploadInvoice} disabled={invoiceUploading}>{invoiceUploading ? 'Uploading...' : 'Upload Invoice'}</button>
+            <button style={{ ...styles.outlineButton, marginLeft: 10 }} onClick={loadInvoices} disabled={invoiceLoading}>{invoiceLoading ? 'Loading...' : 'Refresh'}</button>
+
+            <div style={{ marginTop: 20 }}>
+              {invoices.length === 0 && <p style={styles.muted}>No invoices loaded yet.</p>}
+              {invoices.map((invoice) => (
+                <div key={invoice.id} style={styles.requestCard}>
+                  <strong>{invoice.file_name}</strong>
+                  <p style={styles.small}>Vendor: {invoice.vendor_name || 'Not entered'}</p>
+                  <p style={styles.small}>Property: {invoice.property_address || 'Not entered'}</p>
+                  <p style={styles.small}>Status: {invoice.extraction_status || 'pending'}</p>
+                  <p style={styles.small}>Total: {invoice.total ? `$${invoice.total}` : 'Not extracted yet'}</p>
+                  <a href={invoice.file_url} target="_blank" rel="noreferrer">Open / Download PDF</a>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'materials' && (
+          <section style={styles.card}>
+            <h2>Material Cost Monitor</h2>
+            <p style={styles.muted}>Phase 1: manual/API-ready material cost database. Weekly API automation comes next.</p>
+            <input style={styles.input} placeholder="Material name, ex: 2x4 lumber" value={materialName} onChange={(e) => setMaterialName(e.target.value)} />
+            <input style={styles.input} placeholder="Category, ex: lumber" value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)} />
+            <input style={styles.input} placeholder="Unit, ex: each / sq ft / sheet" value={materialUnit} onChange={(e) => setMaterialUnit(e.target.value)} />
+            <input style={styles.input} placeholder="Current price" value={materialPrice} onChange={(e) => setMaterialPrice(e.target.value)} />
+            <input style={styles.input} placeholder="Source, ex: Home Depot / supplier / RSMeans" value={materialSource} onChange={(e) => setMaterialSource(e.target.value)} />
+            <button style={styles.primaryButton} onClick={addMaterialCost}>Add Material Cost</button>
+            <button style={{ ...styles.outlineButton, marginLeft: 10 }} onClick={loadMaterials}>{materialLoading ? 'Loading...' : 'Refresh'}</button>
+
+            <div style={{ marginTop: 20 }}>
+              {materials.length === 0 && <p style={styles.muted}>No material costs yet.</p>}
+              {materials.map((item) => {
+                const change = item.previous_price && item.current_price ? item.current_price - item.previous_price : null
+                return (
+                  <div key={item.id} style={styles.requestCard}>
+                    <strong>{item.material_name}</strong>
+                    <p style={styles.small}>{item.category || 'Uncategorized'} • {item.unit || 'unit not set'}</p>
+                    <p style={styles.small}>Current: ${item.current_price ?? 0}</p>
+                    <p style={styles.small}>Previous: ${item.previous_price ?? 0}</p>
+                    <p style={styles.small}>Change: {change === null ? 'No previous price' : `${change >= 0 ? '+' : ''}$${change.toFixed(2)}`}</p>
+                    <p style={styles.small}>Source: {item.source || 'Not entered'}</p>
+                    <p style={styles.small}>Region: {item.region || 'Not set'}</p>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'estimates' && (
+          <section style={styles.card}>
+            <h2>AI Estimator</h2>
+            <p style={styles.muted}>Use the Run AI Estimate button from a dashboard request. This screen is reserved for the next full estimator UI.</p>
+          </section>
+        )}
       </main>
 
       {showLogin && (
-        <div style={overlayStyle} onClick={() => setShowLogin(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginTop: 0 }}>Admin Login</h2>
-            <p style={sectionTextStyle}>Admin PIN: 2750</p>
-
-            <input
-              style={inputStyle}
-              placeholder="Enter admin PIN"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-            />
-
-            <div style={buttonRowStyle}>
-              <button style={primaryButtonStyle} onClick={login}>
-                Sign In
-              </button>
-              <button style={outlineButtonStyle} onClick={() => setShowLogin(false)}>
-                Cancel
-              </button>
-            </div>
+        <div style={styles.overlay} onClick={() => setShowLogin(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h2>Admin Login</h2>
+            <p style={styles.muted}>Demo PIN: 4242</p>
+            <input style={styles.input} placeholder="Enter admin PIN" value={adminPinInput} onChange={(e) => setAdminPinInput(e.target.value)} />
+            <button style={styles.primaryButton} onClick={handleLogin}>Sign In</button>
+            <button style={{ ...styles.outlineButton, marginLeft: 10 }} onClick={() => setShowLogin(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -873,403 +700,36 @@ export default function App() {
   )
 }
 
-const COLORS = {
-  background: '#f4f1ec',
-  card: '#ffffff',
-  soft: '#eef3ea',
-  green: '#0f542d',
-  darkGreen: '#07391f',
-  ink: '#173425',
-  muted: '#5f6f63',
-  border: '#d7dfd3',
-  paleGreen: '#e7f3e5',
-}
-
-const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  background: COLORS.background,
-  color: COLORS.ink,
-  fontFamily:
-    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-}
-
-const headerStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1.2fr 1fr',
-  alignItems: 'center',
-  gap: 20,
-  padding: '34px 46px 24px',
-}
-
-const brandStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 14,
-}
-
-const logoMarkStyle: React.CSSProperties = {
-  width: 54,
-  height: 68,
-  border: `4px solid ${COLORS.green}`,
-  borderBottom: 'none',
-  borderRadius: '22px 22px 0 0',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  gap: 6,
-}
-
-const logoLineStyle: React.CSSProperties = {
-  width: 3,
-  height: 28,
-  background: COLORS.green,
-  borderRadius: 999,
-}
-
-const brandNameStyle: React.CSSProperties = {
-  fontSize: 32,
-  letterSpacing: 3,
-  fontWeight: 900,
-  color: COLORS.green,
-  lineHeight: 1,
-}
-
-const brandSubStyle: React.CSSProperties = {
-  marginTop: 10,
-  fontSize: 13,
-  letterSpacing: 6,
-  fontWeight: 800,
-  color: COLORS.green,
-}
-
-const navStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 18,
-  flexWrap: 'wrap',
-}
-
-const navButtonStyle: React.CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: COLORS.ink,
-  padding: '12px 18px',
-  borderRadius: 999,
-  fontSize: 16,
-  fontWeight: 800,
-  cursor: 'pointer',
-}
-
-const navActiveStyle: React.CSSProperties = {
-  ...navButtonStyle,
-  borderBottom: `3px solid ${COLORS.green}`,
-  boxShadow: `0 14px 0 -11px ${COLORS.green}`,
-}
-
-const topActionsStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: 14,
-  flexWrap: 'wrap',
-}
-
-const mainStyle: React.CSSProperties = {
-  padding: '10px 46px 60px',
-}
-
-const twoColumnStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 0.7fr',
-  gap: 22,
-}
-
-const sideColumnStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 18,
-  alignContent: 'start',
-}
-
-const heroCardStyle: React.CSSProperties = {
-  background: `linear-gradient(135deg, ${COLORS.green} 0%, ${COLORS.darkGreen} 100%)`,
-  color: 'white',
-  borderRadius: 28,
-  padding: 32,
-  marginBottom: 22,
-}
-
-const heroBadgeStyle: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '10px 18px',
-  background: 'rgba(255,255,255,0.16)',
-  borderRadius: 999,
-  fontWeight: 800,
-  fontSize: 13,
-  marginBottom: 18,
-}
-
-const heroTitleStyle: React.CSSProperties = {
-  fontSize: 34,
-  lineHeight: 1.1,
-  margin: '0 0 12px',
-}
-
-const heroTextStyle: React.CSSProperties = {
-  fontSize: 18,
-  lineHeight: 1.55,
-  margin: 0,
-}
-
-const cardStyle: React.CSSProperties = {
-  background: COLORS.card,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 24,
-  padding: 24,
-  boxShadow: '0 10px 28px rgba(15, 84, 45, 0.06)',
-}
-
-const softCardStyle: React.CSSProperties = {
-  background: COLORS.soft,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 24,
-  padding: 24,
-}
-
-const sectionTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 30,
-  color: COLORS.ink,
-}
-
-const sideTitleStyle: React.CSSProperties = {
-  margin: '0 0 14px',
-  fontSize: 22,
-  color: COLORS.ink,
-}
-
-const sectionTextStyle: React.CSSProperties = {
-  margin: '10px 0 20px',
-  color: COLORS.muted,
-  fontSize: 16,
-  lineHeight: 1.5,
-}
-
-const smallMutedStyle: React.CSSProperties = {
-  margin: '6px 0',
-  color: COLORS.muted,
-  fontSize: 14,
-  lineHeight: 1.45,
-}
-
-const cardTextStyle: React.CSSProperties = {
-  color: COLORS.ink,
-  lineHeight: 1.55,
-}
-
-const grid2Style: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: 14,
-}
-
-const grid3Style: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-  gap: 14,
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '16px 18px',
-  borderRadius: 13,
-  border: `1px solid ${COLORS.border}`,
-  background: 'white',
-  color: COLORS.ink,
-  fontSize: 15,
-  outline: 'none',
-  marginBottom: 14,
-  boxSizing: 'border-box',
-}
-
-const uploadBoxStyle: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 16,
-  background: '#fbfcfa',
-  padding: 18,
-  marginBottom: 14,
-}
-
-const uploadLabelStyle: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 800,
-  marginBottom: 10,
-}
-
-const fileTextStyle: React.CSSProperties = {
-  marginTop: 10,
-  fontSize: 13,
-  color: COLORS.muted,
-}
-
-const buttonRowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 12,
-  flexWrap: 'wrap',
-  marginTop: 10,
-}
-
-const primaryButtonStyle: React.CSSProperties = {
-  border: 'none',
-  background: COLORS.green,
-  color: 'white',
-  padding: '15px 22px',
-  borderRadius: 12,
-  cursor: 'pointer',
-  fontWeight: 900,
-  fontSize: 15,
-}
-
-const widePrimaryButtonStyle: React.CSSProperties = {
-  ...primaryButtonStyle,
-  width: '100%',
-  marginTop: 12,
-}
-
-const outlineButtonStyle: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  background: 'white',
-  color: COLORS.ink,
-  padding: '15px 22px',
-  borderRadius: 12,
-  cursor: 'pointer',
-  fontWeight: 900,
-  fontSize: 15,
-}
-
-const wideOutlineButtonStyle: React.CSSProperties = {
-  ...outlineButtonStyle,
-  width: '100%',
-  marginTop: 10,
-}
-
-const successStyle: React.CSSProperties = {
-  margin: '16px 0',
-  padding: '14px 16px',
-  borderRadius: 14,
-  background: COLORS.paleGreen,
-  color: COLORS.green,
-  fontWeight: 800,
-}
-
-const dashboardHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: 18,
-  flexWrap: 'wrap',
-}
-
-const filterBarStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1.3fr 1fr',
-  gap: 12,
-  minWidth: 420,
-}
-
-const kanbanWrapStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-  gap: 16,
-  marginTop: 18,
-}
-
-const columnStyle: React.CSSProperties = {
-  borderRadius: 22,
-  padding: 16,
-  minHeight: 250,
-}
-
-const columnByStatus: Record<RequestStatus, React.CSSProperties> = {
-  new: { background: '#e9f1fb', border: '1px solid #cdddf5' },
-  needs_info: { background: '#fdecec', border: '1px solid #f3c7c7' },
-  estimate_ready: { background: '#ebf8ef', border: '1px solid #cce8d4' },
-  pending_approval: { background: '#f7efe7', border: '1px solid #ead8c7' },
-  scheduled: { background: '#f1eefb', border: '1px solid #d9d0f2' },
-  completed: { background: '#edf7f3', border: '1px solid #cce7dd' },
-}
-
-const columnHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  fontWeight: 900,
-  marginBottom: 14,
-}
-
-const countBadgeStyle: React.CSSProperties = {
-  background: 'white',
-  borderRadius: 999,
-  padding: '4px 9px',
-  fontSize: 12,
-}
-
-const columnBodyStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 12,
-}
-
-const emptyColumnStyle: React.CSSProperties = {
-  padding: 18,
-  borderRadius: 16,
-  background: 'rgba(255,255,255,0.8)',
-  color: COLORS.muted,
-}
-
-const requestCardStyle: React.CSSProperties = {
-  background: 'white',
-  borderRadius: 18,
-  padding: 16,
-  border: `1px solid ${COLORS.border}`,
-}
-
-const fileLinkGroupStyle: React.CSSProperties = {
-  marginTop: 10,
-  color: COLORS.muted,
-  fontSize: 14,
-}
-
-const linkButtonStyle: React.CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: COLORS.green,
-  padding: '4px 0',
-  cursor: 'pointer',
-  fontWeight: 800,
-  textDecoration: 'underline',
-}
-
-const aiBoxStyle: React.CSSProperties = {
-  background: COLORS.paleGreen,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 14,
-  padding: 12,
-  marginTop: 12,
-  color: COLORS.ink,
-}
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(0,0,0,0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 20,
-  zIndex: 1000,
-}
-
-const modalStyle: React.CSSProperties = {
-  width: '100%',
-  maxWidth: 430,
-  background: 'white',
-  borderRadius: 22,
-  padding: 24,
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: '100vh', background: '#f4f1ec', color: '#173425', fontFamily: 'Inter, Arial, sans-serif' },
+  header: { display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 20, alignItems: 'center', padding: '28px 42px 18px' },
+  brand: { fontSize: 30, letterSpacing: 3, fontWeight: 900, color: '#0f542d' },
+  subBrand: { marginTop: 8, fontSize: 12, letterSpacing: 5, fontWeight: 800, color: '#0f542d' },
+  nav: { display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 10 },
+  navButton: { border: 'none', background: 'transparent', padding: '11px 14px', borderRadius: 999, fontWeight: 800, cursor: 'pointer', color: '#173425' },
+  navActive: { border: '1px solid #0f542d', background: '#e7f3e5', padding: '11px 14px', borderRadius: 999, fontWeight: 900, cursor: 'pointer', color: '#0f542d' },
+  headerActions: { display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' },
+  main: { padding: '12px 42px 60px' },
+  twoColumn: { display: 'grid', gridTemplateColumns: '1fr 0.45fr', gap: 22 },
+  card: { background: 'white', border: '1px solid #d7dfd3', borderRadius: 22, padding: 24, boxShadow: '0 10px 28px rgba(15,84,45,0.06)', marginBottom: 18 },
+  sideCard: { background: '#eef3ea', border: '1px solid #d7dfd3', borderRadius: 22, padding: 24, alignSelf: 'start' },
+  hero: { background: 'linear-gradient(135deg,#0f542d,#07391f)', color: 'white', padding: 28, borderRadius: 24, fontSize: 34, fontWeight: 900, marginBottom: 18 },
+  muted: { color: '#5f6f63', lineHeight: 1.5 },
+  small: { color: '#5f6f63', fontSize: 14, lineHeight: 1.4 },
+  input: { width: '100%', padding: '14px 16px', borderRadius: 12, border: '1px solid #d7dfd3', marginBottom: 12, boxSizing: 'border-box', fontSize: 15 },
+  grid2: { display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 12 },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 },
+  uploadBox: { border: '1px solid #d7dfd3', borderRadius: 16, padding: 16, background: '#fbfcfa', marginBottom: 12 },
+  primaryButton: { border: 'none', background: '#0f542d', color: 'white', padding: '13px 18px', borderRadius: 12, cursor: 'pointer', fontWeight: 900 },
+  outlineButton: { border: '1px solid #d7dfd3', background: 'white', color: '#173425', padding: '13px 18px', borderRadius: 12, cursor: 'pointer', fontWeight: 900 },
+  wideButton: { width: '100%', border: 'none', background: '#0f542d', color: 'white', padding: '13px 18px', borderRadius: 12, cursor: 'pointer', fontWeight: 900, marginTop: 10 },
+  success: { background: '#e7f3e5', color: '#0f542d', padding: 14, borderRadius: 14, marginBottom: 16, fontWeight: 800 },
+  kanban: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: 16 },
+  column: { borderRadius: 20, padding: 16, minHeight: 220 },
+  empty: { background: 'rgba(255,255,255,0.8)', borderRadius: 14, padding: 14, color: '#5f6f63' },
+  requestCard: { background: 'white', border: '1px solid #d7dfd3', borderRadius: 16, padding: 16, marginBottom: 12 },
+  linkButton: { display: 'block', border: 'none', background: 'transparent', color: '#0f542d', padding: '4px 0', fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' },
+  aiBox: { background: '#e7f3e5', border: '1px solid #d7dfd3', borderRadius: 14, padding: 12, marginTop: 12 },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 },
+  modal: { width: '100%', maxWidth: 420, background: 'white', borderRadius: 20, padding: 24 },
 }
