@@ -66,7 +66,7 @@ type MaterialCost = {
 }
 
 const STORAGE_KEY = 'shelter-prep-requests-v1'
-const ADMIN_PIN = '4242'
+const ADMIN_PIN = '0202'
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
