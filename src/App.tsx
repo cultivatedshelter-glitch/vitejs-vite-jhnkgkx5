@@ -89,6 +89,9 @@ const ADMIN_PIN = '0202'
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
+const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
+const AGENT_API_KEY = 'K3slk88bgd!?'
+
 const WORK_TYPES = [
   'General Repair',
   'Painting',
@@ -157,6 +160,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
+  const [researchingId, setResearchingId] = useState<string | null>(null)
 
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [invoiceVendor, setInvoiceVendor] = useState('')
@@ -288,12 +292,32 @@ export default function App() {
     setSubmitting(true)
 
     try {
+      const { data: leadRow, error: leadError } = await supabase
+        .from('leads')
+        .insert({
+          name: requesterName,
+          email,
+          phone,
+          address: propertyAddress,
+          city,
+          state: stateValue,
+          zip,
+          description,
+          status: 'new',
+        })
+        .select('id, created_at')
+        .single()
+
+      if (leadError) throw leadError
+
       const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo')
       const documents = await uploadRequestFiles(documentFiles, 'documents', 'document')
 
       const newRequest: WorkRequest = {
-        id: makeId(),
-        createdAt: new Date().toLocaleString(),
+        id: leadRow?.id || makeId(),
+        createdAt: leadRow?.created_at
+          ? new Date(leadRow.created_at).toLocaleString()
+          : new Date().toLocaleString(),
         requesterName,
         email,
         phone,
@@ -369,6 +393,79 @@ export default function App() {
       alert(error?.message || 'AI estimator failed.')
     } finally {
       setAiLoadingId(null)
+    }
+  }
+
+  async function ensureLeadExists(request: WorkRequest) {
+    const { data: existing, error: selectError } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('id', request.id)
+      .maybeSingle()
+
+    if (selectError) throw selectError
+    if (existing?.id) return
+
+    const { error: insertError } = await supabase.from('leads').insert({
+      id: request.id,
+      name: request.requesterName,
+      email: request.email,
+      phone: request.phone,
+      address: request.propertyAddress,
+      city: request.city,
+      state: request.state,
+      zip: request.zip,
+      description: request.description,
+      status: request.status,
+    })
+
+    if (insertError) throw insertError
+  }
+
+  async function researchMaterials(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will create an AI material research draft only. Human review is required before any estimate, proposal, purchase order, email, or submission is sent.'
+    )
+
+    if (!confirmStart) return
+
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      return
+    }
+
+    setResearchingId(request.id)
+
+    try {
+      await ensureLeadExists(request)
+
+      const response = await fetch(`${AGENT_API_URL}/research-materials`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          leadId: request.id,
+          description: request.description,
+          zip: request.zip,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'AI material research failed.')
+      }
+
+      alert(
+        `AI research draft created. ${result.itemCount || 0} estimate items saved. Human review required.`
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'AI material research failed.')
+    } finally {
+      setResearchingId(null)
     }
   }
 
@@ -1006,6 +1103,27 @@ export default function App() {
                           {aiLoadingId === request.id ? 'Running AI...' : 'Run AI Estimate'}
                         </button>
 
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.wideButton,
+                            background: '#ffffff',
+                            color: '#0f542d',
+                            border: '1px solid #0f542d',
+                          }}
+                          disabled={researchingId === request.id}
+                          onClick={() => researchMaterials(request)}
+                        >
+                          {researchingId === request.id
+                            ? 'Researching Materials...'
+                            : 'AI Research Materials'}
+                        </button>
+
+                        <div style={styles.noticeBox}>
+                          AI research drafts only. Human approval is required before any
+                          estimate, proposal, purchase order, email, or submission.
+                        </div>
+
                         {request.aiEstimate && (
                           <div style={styles.aiBox}>
                             <strong>AI Estimate</strong>
@@ -1496,6 +1614,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     cursor: 'pointer',
     textDecoration: 'underline',
+  },
+  noticeBox: {
+    background: '#fff8e8',
+    border: '1px solid #ecd9a7',
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 10,
+    marginBottom: 10,
+    color: '#6f4f14',
+    fontSize: 12,
+    lineHeight: 1.45,
   },
   aiBox: {
     background: '#e7f3e5',
