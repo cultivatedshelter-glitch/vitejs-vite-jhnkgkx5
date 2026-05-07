@@ -307,12 +307,12 @@ type MissingInfoRequest = {
 }
 
 const STORAGE_KEY = 'shelter-prep-requests-v1'
-const ADMIN_PIN = '6303'
+const ADMIN_PIN = '0202'
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'KillBill0202'
+const AGENT_API_KEY = 'KillBill0202' // <-- replace only this value with your Railway AGENT_API_KEY
 
 const WORK_TYPES = [
   'General Repair',
@@ -536,6 +536,7 @@ export default function App() {
   const [researchingId, setResearchingId] = useState<string | null>(null)
   const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
   const [takeoffLoadingId, setTakeoffLoadingId] = useState<string | null>(null)
+
   const [intakeText, setIntakeText] = useState('')
   const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
   const [intakeDraft, setIntakeDraft] = useState<IntakeDraft | null>(null)
@@ -693,7 +694,7 @@ export default function App() {
         imageDataUrl = await fileToDataUrl(intakeScreenshotFile)
       }
 
-      if (!AGENT_API_KEY || AGENT_API_KEY === 'KillBill0202') {
+      if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
         const fallback = localIntakeFallback(intakeText)
         setIntakeDraft(fallback)
         alert('Agent key is missing. I created a local draft, but AI screenshot reading requires the Railway agent key.')
@@ -1367,7 +1368,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
     if (!confirmStart) return
 
-    if (!AGENT_API_KEY || AGENT_API_KEY === 'KillBill0202') {
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
       alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
       return
     }
@@ -1409,102 +1410,57 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
-async function generateAiTakeoff(request: WorkRequest) {
-  const confirmStart = window.confirm(
-    'This will create a rough AI quantity takeoff for sqft, linear feet, cubic yards, gallons, bundles, sheets, and draft material quantities. Human/site verification is required before any estimate, proposal, purchase order, email, submission, or material order.'
-  )
 
-  if (!confirmStart) return
+  async function generateAiTakeoff(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will create a rough AI quantity takeoff for sqft, linear feet, cubic yards, gallons, bundles, sheets, and draft material quantities. Human/site verification is required before any estimate, proposal, purchase order, email, submission, or material order.'
+    )
 
-  if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-    alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
-    return
-  }
+    if (!confirmStart) return
 
-  setTakeoffLoadingId(request.id)
-
-  try {
-    await ensureLeadExists(request)
-
-    const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-agent-key': AGENT_API_KEY,
-      },
-      body: JSON.stringify({
-        leadId: request.id,
-        description: request.description,
-        workType: request.workType,
-        zip: request.zip,
-        request,
-      }),
-    })
-
-    const result = await response.json().catch(() => ({}))
-
-    if (!response.ok) {
-      throw new Error(result?.error || 'AI takeoff failed.')
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      return
     }
 
-    alert(
-      `AI quantity takeoff created. ${result.measurementCount || 0} measurements and ${result.itemCount || 0} priced material items saved. Open Estimate Review to review/edit/approve. Human verification required.`
-    )
-  } catch (error: any) {
-    console.error(error)
-    alert(error?.message || 'AI takeoff failed.')
-  } finally {
-    setTakeoffLoadingId(null)
-  }
-}
-async function generateAiTakeoff(request: WorkRequest) {
-  const confirmStart = window.confirm(
-    'This will create a rough AI quantity takeoff for sqft, linear feet, cubic yards, gallons, bundles, sheets, and draft material quantities. Human/site verification is required before any estimate, proposal, purchase order, email, submission, or material order.'
-  )
+    setTakeoffLoadingId(request.id)
 
-  if (!confirmStart) return
+    try {
+      await ensureLeadExists(request)
 
-  if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-    alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
-    return
-  }
+      const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          leadId: request.id,
+          description: request.description,
+          workType: request.workType,
+          zip: request.zip,
+          request,
+        }),
+      })
 
-  setTakeoffLoadingId(request.id)
+      const result = await response.json().catch(() => ({}))
 
-  try {
-    await ensureLeadExists(request)
+      if (!response.ok) {
+        throw new Error(result?.error || 'AI takeoff failed.')
+      }
 
-    const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-agent-key': AGENT_API_KEY,
-      },
-      body: JSON.stringify({
-        leadId: request.id,
-        description: request.description,
-        workType: request.workType,
-        zip: request.zip,
-        request,
-      }),
-    })
-
-    const result = await response.json().catch(() => ({}))
-
-    if (!response.ok) {
-      throw new Error(result?.error || 'AI takeoff failed.')
+      alert(
+        `AI quantity takeoff created. ${result.measurementCount || 0} measurements and ${result.itemCount || 0} priced material items saved. Open Estimate Review to review/edit/approve. Human verification required.`
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'AI takeoff failed.')
+    } finally {
+      setTakeoffLoadingId(null)
     }
-
-    alert(
-      `AI quantity takeoff created. ${result.measurementCount || 0} measurements and ${result.itemCount || 0} priced material items saved. Open Estimate Review to review/edit/approve. Human verification required.`
-    )
-  } catch (error: any) {
-    console.error(error)
-    alert(error?.message || 'AI takeoff failed.')
-  } finally {
-    setTakeoffLoadingId(null)
   }
-}
+
+
   async function applyBestLaborRateForRequest(request: WorkRequest, showAlert = true) {
     try {
       const { data, error } = await supabase
@@ -3287,21 +3243,22 @@ async function generateAiTakeoff(request: WorkRequest) {
                           {materialListLoadingId === request.id
                             ? 'Building Material List...'
                             : 'Generate Rough Material List'}
-                            <button
-  type="button"
-  style={{
-    ...styles.wideButton,
-    background: '#eef4fb',
-    color: '#173425',
-    border: '1px solid #bfd3e6',
-  }}
-  disabled={takeoffLoadingId === request.id}
-  onClick={() => generateAiTakeoff(request)}
->
-  {takeoffLoadingId === request.id
-    ? 'Building Takeoff...'
-    : 'AI Takeoff / Quantities'}
-</button>
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.wideButton,
+                            background: '#eef4fb',
+                            color: '#173425',
+                            border: '1px solid #bfd3e6',
+                          }}
+                          disabled={takeoffLoadingId === request.id}
+                          onClick={() => generateAiTakeoff(request)}
+                        >
+                          {takeoffLoadingId === request.id
+                            ? 'Building Takeoff...'
+                            : 'AI Takeoff / Quantities'}
                         </button>
 
                         <button
