@@ -455,6 +455,47 @@ function localIntakeFallback(text = ''): IntakeDraft {
   }
 }
 
+
+function normalizeRequestStatus(value: any): RequestStatus {
+  const raw = String(value || '').toLowerCase().trim()
+
+  if (raw === 'needs info' || raw === 'needs_info' || raw === 'need info' || raw === 'missing info') {
+    return 'needs_info'
+  }
+
+  if (raw === 'estimate ready' || raw === 'estimate_ready' || raw === 'ready' || raw === 'complete') {
+    return 'estimate_ready'
+  }
+
+  if (raw === 'pending approval' || raw === 'pending_approval' || raw === 'pending' || raw === 'review') {
+    return 'pending_approval'
+  }
+
+  return 'new'
+}
+
+function mapLeadRowToWorkRequest(row: any): WorkRequest {
+  return {
+    id: row.id,
+    createdAt: row.created_at ? new Date(row.created_at).toLocaleString() : '',
+    requesterName: row.name || row.requester_name || row.client_name || '',
+    email: row.email || row.client_email || row.requester_email || row.contact_email || '',
+    phone: row.phone || row.client_phone || row.requester_phone || '',
+    workType: row.work_type || row.workType || row.project_type || 'Home Services',
+    propertyAddress: row.address || row.property_address || row.project_address || '',
+    city: row.city || '',
+    state: row.state || '',
+    zip: row.zip || row.postal_code || '',
+    urgency: row.urgency || 'Standard',
+    occupancy: row.occupancy || 'Unknown',
+    timeline: row.timeline || '',
+    description: row.description || row.scope || row.notes || '',
+    photos: [],
+    documents: [],
+    status: normalizeRequestStatus(row.status),
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('new')
   const [showLogin, setShowLogin] = useState(false)
@@ -545,17 +586,11 @@ export default function App() {
   const [estimateNotes, setEstimateNotes] = useState('Draft estimate. Final price requires human review and site verification.')
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) setRequests(JSON.parse(raw))
-    } catch {
-      setRequests([])
-    }
+    loadRequestsFromSupabase()
   }, [])
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(requests))
-  }, [requests])
+  // Requests are now loaded from Supabase so phone + desktop stay in sync.
+  // Do not save dashboard requests to browser localStorage.
 
   useEffect(() => {
     if (isAdmin && activeTab === 'invoices') loadInvoices()
@@ -880,6 +915,44 @@ export default function App() {
     }
   }
 
+  async function sendMessageEmail(log: MessageLog) {
+    if (!log.recipient_email) {
+      alert('This message does not have a recipient email. Add an email to the linked request first.')
+      return
+    }
+
+    if (!confirm(`Send this message by email to ${log.recipient_email}?`)) return
+
+    setMessageSavingId(log.id)
+
+    try {
+      const response = await fetch(`${AGENT_API_URL}/send-message-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          messageLogId: log.id,
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(result?.error || 'Email failed to send.')
+      }
+
+      await loadMessageCenter()
+      alert('Email sent and message log updated.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not send email.')
+    } finally {
+      setMessageSavingId(null)
+    }
+  }
+
   async function markMessageLog(log: MessageLog, nextStatus: 'draft' | 'approved' | 'sent') {
     setMessageSavingId(log.id)
 
@@ -901,6 +974,23 @@ export default function App() {
       alert(error?.message || 'Could not update message log.')
     } finally {
       setMessageSavingId(null)
+    }
+  }
+
+  async function loadRequestsFromSupabase() {
+    try {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      const mapped = (data || []).map(mapLeadRowToWorkRequest)
+      setRequests(mapped)
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load requests from Supabase.')
     }
   }
 
@@ -1009,8 +1099,21 @@ export default function App() {
     }
   }
 
-  function updateStatus(id: string, status: RequestStatus) {
-    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
+  async function updateStatus(id: string, status: RequestStatus) {
+    try {
+      setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({ status })
+        .eq('id', id)
+
+      if (error) throw error
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update lead status.')
+      await loadRequestsFromSupabase()
+    }
   }
 
   async function runAiEstimate(request: WorkRequest) {
@@ -2723,6 +2826,13 @@ export default function App() {
                       onClick={() => markMessageLog(log, 'sent')}
                     >
                       Mark Sent
+                    </button>
+                    <button
+                      style={styles.primaryButton}
+                      disabled={messageSavingId === log.id || !log.recipient_email}
+                      onClick={() => sendMessageEmail(log)}
+                    >
+                      Send Email
                     </button>
                   </div>
                 </div>
