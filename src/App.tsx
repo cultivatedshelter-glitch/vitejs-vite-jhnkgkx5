@@ -38,6 +38,8 @@ type WorkRequest = {
   photos: StoredFile[]
   documents: StoredFile[]
   status: RequestStatus
+  archived?: boolean
+  archivedAt?: string
   aiEstimate?: AiEstimate
 }
 
@@ -309,7 +311,7 @@ const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'KillBill0202'
+const AGENT_API_KEY = 'PASTE_YOUR_AGENT_API_KEY_HERE'
 
 const WORK_TYPES = [
   'General Repair',
@@ -493,6 +495,8 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     photos: [],
     documents: [],
     status: normalizeRequestStatus(row.status),
+    archived: Boolean(row.archived),
+    archivedAt: row.archived_at || '',
   }
 }
 
@@ -982,6 +986,7 @@ export default function App() {
       const { data, error } = await supabase
         .from('leads')
         .select('*')
+        .or('archived.is.null,archived.eq.false')
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -1112,6 +1117,42 @@ export default function App() {
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not update lead status.')
+      await loadRequestsFromSupabase()
+    }
+  }
+
+  async function archiveLead(request: WorkRequest) {
+    const confirmed = window.confirm(
+      `Archive this lead?
+
+${request.propertyAddress || 'Untitled lead'}
+
+This will hide it from the dashboard without deleting linked estimates, files, messages, or research.`
+    )
+
+    if (!confirmed) return
+
+    try {
+      setRequests((prev) => prev.filter((item) => item.id !== request.id))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          archived: true,
+          archived_at: new Date().toISOString(),
+        })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      if (selectedEstimateRequest?.id === request.id) {
+        setSelectedEstimateRequest(null)
+        setEstimateItems([])
+        setEstimateResearchRows([])
+      }
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not archive lead.')
       await loadRequestsFromSupabase()
     }
   }
@@ -2279,6 +2320,8 @@ export default function App() {
 
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
+      if (r.archived) return false
+
       const matchesFilter = filter === 'all' || r.status === filter
       const text = [
         r.requesterName,
@@ -3031,6 +3074,20 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.outlineButton,
+                            width: '100%',
+                            borderColor: '#c9a9a9',
+                            color: '#8a2f2f',
+                            marginTop: 10,
+                          }}
+                          onClick={() => archiveLead(request)}
+                        >
+                          Archive Lead
+                        </button>
                       </div>
                     ))}
                   </div>
