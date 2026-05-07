@@ -4,7 +4,7 @@ import Gallery from './components/Gallery'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'dashboard' | 'invoices' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'invoices' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
   name: string
@@ -39,6 +39,25 @@ type WorkRequest = {
   documents: StoredFile[]
   status: RequestStatus
   aiEstimate?: AiEstimate
+}
+
+type IntakeDraft = {
+  requesterName?: string
+  email?: string
+  phone?: string
+  workType?: string
+  propertyAddress?: string
+  city?: string
+  state?: string
+  zip?: string
+  urgency?: string
+  occupancy?: string
+  timeline?: string
+  description?: string
+  missingInfo?: string[]
+  suggestedReply?: string
+  confidence?: string
+  notes?: string
 }
 
 type Invoice = {
@@ -248,6 +267,42 @@ type EstimateResearchRow = {
   human_approved: boolean | null
 }
 
+type MessageLog = {
+  id: string
+  created_at?: string | null
+  lead_id?: string | null
+  direction?: string | null
+  channel?: string | null
+  recipient_name?: string | null
+  recipient_email?: string | null
+  recipient_phone?: string | null
+  message_type?: string | null
+  message_body: string
+  ai_generated?: boolean | null
+  auto_sent?: boolean | null
+  human_reviewed?: boolean | null
+  human_approved?: boolean | null
+  status?: string | null
+  notes?: string | null
+}
+
+type MissingInfoRequest = {
+  id: string
+  created_at?: string | null
+  lead_id?: string | null
+  missing_address?: boolean | null
+  missing_photos?: boolean | null
+  missing_inspection_report?: boolean | null
+  missing_deadline?: boolean | null
+  missing_access_info?: boolean | null
+  missing_scope_clarity?: boolean | null
+  generated_message?: string | null
+  status?: string | null
+  auto_send_allowed?: boolean | null
+  sent_at?: string | null
+  human_reviewed?: boolean | null
+}
+
 const STORAGE_KEY = 'shelter-prep-requests-v1'
 const ADMIN_PIN = '0202'
 const REQUEST_FILES_BUCKET = 'job-files'
@@ -332,6 +387,74 @@ function countItems(value: any[] | null | undefined) {
   return Array.isArray(value) ? value.length : 0
 }
 
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('Could not read image file.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function getBestWorkType(value = '', description = '') {
+  const text = [value, description].join(' ').toLowerCase()
+  const exact = WORK_TYPES.find((item) => item.toLowerCase() === value.toLowerCase())
+  if (exact) return exact
+
+  const matchers: Array<[string, string[]]> = [
+    ['Roofing', ['roof', 'shingle', 'leak', 'flashing', 'gutter']],
+    ['Painting', ['paint', 'primer', 'interior paint', 'exterior paint']],
+    ['Electrical', ['electrical', 'outlet', 'breaker', 'panel', 'light fixture']],
+    ['Plumbing', ['plumbing', 'leak', 'toilet', 'sink', 'faucet', 'water heater']],
+    ['Landscaping', ['landscape', 'yard', 'lawn', 'tree', 'mulch']],
+    ['Cleaning', ['clean', 'cleaning', 'debris', 'turnover']],
+    ['Inspection Repairs', ['inspection', 'repair request', 'buyer', 'seller']],
+    ['Turnover Work', ['turnover', 'move out', 'tenant', 'unit']],
+  ]
+
+  const found = matchers.find(([_, words]) => words.some((word) => text.includes(word)))
+  return found?.[0] || WORK_TYPES[0]
+}
+
+function localIntakeFallback(text = ''): IntakeDraft {
+  const cleaned = text.replace(/\s+/g, ' ').trim()
+  const lower = cleaned.toLowerCase()
+
+  const emailMatch = cleaned.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  const phoneMatch = cleaned.match(/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/)
+  const zipMatch = cleaned.match(/\b\d{5}(?:-\d{4})?\b/)
+  const addressMatch = cleaned.match(/\b\d{1,6}\s+[A-Za-z0-9.'\-\s]+\s+(?:Ave|Avenue|St|Street|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Pl|Place|Terrace|Ter|Loop|Cir|Circle)\b[^,.\n]*/i)
+
+  const missing: string[] = []
+  if (!addressMatch) missing.push('property address')
+  if (!lower.includes('photo') && !lower.includes('pic') && !lower.includes('image')) missing.push('photos')
+  if (!lower.includes('deadline') && !lower.includes('tonight') && !lower.includes('tomorrow') && !lower.includes('asap')) missing.push('deadline')
+  if (!lower.includes('inspection')) missing.push('inspection report')
+  if (!lower.includes('access') && !lower.includes('lockbox')) missing.push('access instructions')
+
+  const workType = getBestWorkType('', cleaned)
+  const urgency = lower.includes('asap') || lower.includes('urgent') || lower.includes('tonight') || lower.includes('tight') ? 'Urgent' : 'Standard'
+
+  return {
+    requesterName: '',
+    email: emailMatch?.[0] || '',
+    phone: phoneMatch?.[0] || '',
+    workType,
+    propertyAddress: addressMatch?.[0]?.trim() || '',
+    city: '',
+    state: '',
+    zip: zipMatch?.[0] || '',
+    urgency,
+    occupancy: 'Unknown',
+    timeline: lower.includes('tonight') ? 'Tonight' : lower.includes('tomorrow') ? 'Tomorrow' : '',
+    description: cleaned || 'Imported from text/screenshot intake. Review required.',
+    missingInfo: missing,
+    suggestedReply: `Thanks — I have the ${workType.toLowerCase()} request started. Please send ${missing.length ? missing.join(', ') : 'any photos, deadline, access instructions, and inspection notes'} so we can prepare a more accurate estimate.`,
+    confidence: 'local_draft',
+    notes: 'Local fallback parser used. Human review required.',
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('new')
   const [showLogin, setShowLogin] = useState(false)
@@ -360,6 +483,17 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState('')
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
   const [researchingId, setResearchingId] = useState<string | null>(null)
+
+  const [intakeText, setIntakeText] = useState('')
+  const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
+  const [intakeDraft, setIntakeDraft] = useState<IntakeDraft | null>(null)
+  const [intakeAnalyzing, setIntakeAnalyzing] = useState(false)
+
+  const [messageLogs, setMessageLogs] = useState<MessageLog[]>([])
+  const [missingInfoRequests, setMissingInfoRequests] = useState<MissingInfoRequest[]>([])
+  const [messageLoading, setMessageLoading] = useState(false)
+  const [messageSavingId, setMessageSavingId] = useState<string | null>(null)
+  const [messageFilter, setMessageFilter] = useState<'all' | 'draft' | 'sent' | 'approved'>('all')
 
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [invoiceVendor, setInvoiceVendor] = useState('')
@@ -427,6 +561,7 @@ export default function App() {
     if (isAdmin && activeTab === 'invoices') loadInvoices()
     if (isAdmin && activeTab === 'materials') loadMaterials()
     if (isAdmin && activeTab === 'labor') loadLaborRates()
+    if (isAdmin && activeTab === 'messages') loadMessageCenter()
   }, [isAdmin, activeTab])
 
   useEffect(() => {
@@ -489,6 +624,284 @@ export default function App() {
     setDescription('')
     setPhotoFiles([])
     setDocumentFiles([])
+  }
+
+
+  async function analyzeIntake() {
+    if (!intakeText.trim() && !intakeScreenshotFile) {
+      alert('Paste a message or upload a screenshot first.')
+      return
+    }
+
+    if (intakeScreenshotFile && intakeScreenshotFile.size > 7 * 1024 * 1024) {
+      alert('Screenshot is too large. Please upload an image under 7 MB.')
+      return
+    }
+
+    setIntakeAnalyzing(true)
+
+    try {
+      let imageDataUrl = ''
+      if (intakeScreenshotFile) {
+        imageDataUrl = await fileToDataUrl(intakeScreenshotFile)
+      }
+
+      if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+        const fallback = localIntakeFallback(intakeText)
+        setIntakeDraft(fallback)
+        alert('Agent key is missing. I created a local draft, but AI screenshot reading requires the Railway agent key.')
+        return
+      }
+
+      const response = await fetch(`${AGENT_API_URL}/analyze-intake`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          text: intakeText,
+          imageDataUrl,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'AI intake analysis failed.')
+      }
+
+      setIntakeDraft(result.draft || result)
+    } catch (error: any) {
+      console.error(error)
+      const fallback = localIntakeFallback(intakeText)
+      setIntakeDraft(fallback)
+      alert(`${error?.message || 'AI intake failed.'} I created a local draft instead.`)
+    } finally {
+      setIntakeAnalyzing(false)
+    }
+  }
+
+  function applyIntakeDraftToNewRequest() {
+    if (!intakeDraft) return
+
+    const nextDescription = intakeDraft.description || intakeText || ''
+
+    setRequesterName(intakeDraft.requesterName || requesterName || '')
+    setEmail(intakeDraft.email || email || '')
+    setPhone(intakeDraft.phone || phone || '')
+    setWorkType(getBestWorkType(intakeDraft.workType || '', nextDescription))
+    setPropertyAddress(intakeDraft.propertyAddress || '')
+    setCity(intakeDraft.city || '')
+    setStateValue(intakeDraft.state || '')
+    setZip(intakeDraft.zip || '')
+    setUrgency(intakeDraft.urgency || 'Standard')
+    setOccupancy(intakeDraft.occupancy || 'Unknown')
+    setTimeline(intakeDraft.timeline || '')
+    setDescription(nextDescription)
+
+    if (intakeScreenshotFile) {
+      setPhotoFiles([intakeScreenshotFile])
+    }
+
+    setSuccessMessage('AI intake draft copied into the request form. Review it, add anything missing, then submit.')
+    setActiveTab('new')
+  }
+
+  async function copyToClipboard(value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      alert('Copied.')
+    } catch {
+      alert(value)
+    }
+  }
+
+  function getRequestLabel(leadId?: string | null) {
+    if (!leadId) return 'No linked job yet'
+    const request = requests.find((item) => item.id === leadId)
+    if (!request) return leadId
+    return request.propertyAddress || request.description.slice(0, 60) || leadId
+  }
+
+  async function loadMessageCenter() {
+    setMessageLoading(true)
+
+    try {
+      const [{ data: logs, error: logsError }, { data: missingRows, error: missingError }] = await Promise.all([
+        supabase.from('message_logs').select('*').order('created_at', { ascending: false }),
+        supabase.from('missing_info_requests').select('*').order('created_at', { ascending: false }),
+      ])
+
+      if (logsError) throw logsError
+      if (missingError) throw missingError
+
+      setMessageLogs((logs || []) as MessageLog[])
+      setMissingInfoRequests((missingRows || []) as MissingInfoRequest[])
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load message center. Make sure message_logs and missing_info_requests tables exist.')
+    } finally {
+      setMessageLoading(false)
+    }
+  }
+
+  function getMissingInfoItems(request: WorkRequest) {
+    const text = [request.workType, request.description, request.timeline, request.urgency].join(' ').toLowerCase()
+    const items: string[] = []
+
+    if (!request.propertyAddress || !request.city || !request.state || !request.zip) items.push('property address')
+    if (request.photos.length === 0 && !text.includes('photo') && !text.includes('picture')) items.push('photos')
+    if (!request.timeline && !text.includes('deadline') && !text.includes('asap') && !text.includes('urgent')) items.push('deadline')
+    if ((text.includes('inspection') || text.includes('buyer') || text.includes('seller') || text.includes('roof')) && !text.includes('report')) {
+      items.push('inspection report')
+    }
+    if (!text.includes('access') && !text.includes('lockbox') && !text.includes('vacant') && !text.includes('occupied')) {
+      items.push('access instructions')
+    }
+    if (!request.description || request.description.trim().length < 35) items.push('scope clarity')
+
+    return [...new Set(items)]
+  }
+
+  function buildMissingInfoMessage(request: WorkRequest, missingItems: string[]) {
+    const greeting = request.requesterName ? `Hi ${request.requesterName},` : 'Hi,'
+    const scope = request.workType ? request.workType.toLowerCase() : 'work'
+    const needed = missingItems.length
+      ? missingItems.join(', ')
+      : 'any photos, deadline, access instructions, and inspection notes'
+
+    return `${greeting} thanks — I have the ${scope} request started for ${
+      request.propertyAddress || 'the property'
+    }. Please send ${needed} so we can prepare a more accurate estimate. I’ll review it before any proposal or estimate is sent.`
+  }
+
+  async function saveIntakeReplyDraft() {
+    if (!intakeDraft?.suggestedReply) {
+      alert('Analyze an intake message first so there is a reply draft to save.')
+      return
+    }
+
+    setMessageSavingId('intake-draft')
+
+    try {
+      const { error } = await supabase.from('message_logs').insert({
+        lead_id: null,
+        direction: 'outbound',
+        channel: 'manual',
+        recipient_name: intakeDraft.requesterName || '',
+        recipient_email: intakeDraft.email || '',
+        recipient_phone: intakeDraft.phone || '',
+        message_type: 'missing_info_request',
+        message_body: intakeDraft.suggestedReply,
+        ai_generated: true,
+        auto_sent: false,
+        human_reviewed: false,
+        human_approved: false,
+        status: 'draft',
+        notes: `Saved from AI Intake. Missing info: ${(intakeDraft.missingInfo || []).join(', ') || 'not listed'}`,
+      })
+
+      if (error) throw error
+
+      await loadMessageCenter()
+      alert('Reply draft saved to Message Center.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save reply draft.')
+    } finally {
+      setMessageSavingId(null)
+    }
+  }
+
+  async function generateMissingInfoRequest(request: WorkRequest) {
+    const missingItems = getMissingInfoItems(request)
+    const messageBody = buildMissingInfoMessage(request, missingItems)
+
+    setMessageSavingId(request.id)
+
+    try {
+      await ensureLeadExists(request)
+
+      const missingPayload = {
+        lead_id: request.id,
+        missing_address: missingItems.includes('property address'),
+        missing_photos: missingItems.includes('photos'),
+        missing_inspection_report: missingItems.includes('inspection report'),
+        missing_deadline: missingItems.includes('deadline'),
+        missing_access_info: missingItems.includes('access instructions'),
+        missing_scope_clarity: missingItems.includes('scope clarity'),
+        generated_message: messageBody,
+        status: 'draft',
+        auto_send_allowed: missingItems.length > 0 && missingItems.every((item) =>
+          ['property address', 'photos', 'inspection report', 'deadline', 'access instructions', 'scope clarity'].includes(item)
+        ),
+        human_reviewed: false,
+      }
+
+      const { error: missingError } = await supabase
+        .from('missing_info_requests')
+        .insert(missingPayload)
+
+      if (missingError) throw missingError
+
+      const { error: logError } = await supabase.from('message_logs').insert({
+        lead_id: request.id,
+        direction: 'outbound',
+        channel: 'manual',
+        recipient_name: request.requesterName,
+        recipient_email: request.email,
+        recipient_phone: request.phone,
+        message_type: 'missing_info_request',
+        message_body: messageBody,
+        ai_generated: true,
+        auto_sent: false,
+        human_reviewed: false,
+        human_approved: false,
+        status: 'draft',
+        notes: `Missing info requested: ${missingItems.join(', ') || 'general clarification'}`,
+      })
+
+      if (logError) throw logError
+
+      if (missingItems.length > 0) {
+        updateStatus(request.id, 'needs_info')
+        await supabase.from('leads').update({ status: 'needs_info' }).eq('id', request.id)
+      }
+
+      await loadMessageCenter()
+      setActiveTab('messages')
+      alert('Missing-info request draft created. Review before sending.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not create missing-info request.')
+    } finally {
+      setMessageSavingId(null)
+    }
+  }
+
+  async function markMessageLog(log: MessageLog, nextStatus: 'draft' | 'approved' | 'sent') {
+    setMessageSavingId(log.id)
+
+    try {
+      const patch: Partial<MessageLog> = {
+        status: nextStatus,
+        human_reviewed: nextStatus === 'approved' || nextStatus === 'sent',
+        human_approved: nextStatus === 'approved' || nextStatus === 'sent',
+        auto_sent: false,
+      }
+
+      const { error } = await supabase.from('message_logs').update(patch).eq('id', log.id)
+
+      if (error) throw error
+
+      await loadMessageCenter()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update message log.')
+    } finally {
+      setMessageSavingId(null)
+    }
   }
 
   async function uploadRequestFiles(
@@ -1837,6 +2250,25 @@ export default function App() {
             Gallery
           </button>
 
+
+          {isAdmin && (
+            <>
+              <button
+                style={activeTab === 'intake' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('intake')}
+              >
+                AI Intake
+              </button>
+
+              <button
+                style={activeTab === 'messages' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('messages')}
+              >
+                Messages
+              </button>
+            </>
+          )}
+
           {isAdmin && (
             <>
               <button
@@ -2082,6 +2514,252 @@ export default function App() {
 
         {activeTab === 'gallery' && <Gallery />}
 
+        {isAdmin && activeTab === 'intake' && (
+          <section style={styles.card}>
+            <h2>AI Text Message / Screenshot Intake</h2>
+            <p style={styles.muted}>
+              Paste a text message or upload a screenshot from iMessage, email, or a client thread. AI will extract the address, work type, urgency, missing info, and a safe reply draft. Review everything before submitting.
+            </p>
+
+            <div style={styles.warningBox}>
+              Intake drafts are not sent automatically. AI can draft missing-info requests, but a human must review before any estimate, proposal, purchase order, email, or submission is used.
+            </div>
+
+            <textarea
+              style={{ ...styles.input, minHeight: 180 }}
+              placeholder="Paste the agent/client text here. Example: Hi John, can you quote a roof repair at 183 SW Wright Ave? Tight inspection deadline."
+              value={intakeText}
+              onChange={(e) => setIntakeText(e.target.value)}
+            />
+
+            <div style={styles.uploadBox}>
+              <strong>Screenshot upload</strong>
+              <p style={styles.small}>
+                Optional. Upload a screenshot of a text thread, inspection note, email, or job request.
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setIntakeScreenshotFile(e.target.files?.[0] || null)}
+              />
+              {intakeScreenshotFile && (
+                <p style={styles.small}>{intakeScreenshotFile.name}</p>
+              )}
+            </div>
+
+            <div style={{ ...styles.buttonRow, marginTop: 14 }}>
+              <button style={styles.primaryButton} onClick={analyzeIntake} disabled={intakeAnalyzing}>
+                {intakeAnalyzing ? 'Analyzing Intake...' : 'Analyze Intake'}
+              </button>
+              <button
+                style={styles.outlineButton}
+                onClick={() => {
+                  setIntakeText('')
+                  setIntakeScreenshotFile(null)
+                  setIntakeDraft(null)
+                }}
+              >
+                Clear Intake
+              </button>
+            </div>
+
+            {intakeDraft && (
+              <div style={{ ...styles.reviewBox, marginTop: 24 }}>
+                <h3>AI Intake Draft</h3>
+
+                <div style={styles.grid2}>
+                  <div>
+                    <strong>Work Type</strong>
+                    <p style={styles.muted}>{intakeDraft.workType || 'Needs review'}</p>
+                  </div>
+                  <div>
+                    <strong>Urgency</strong>
+                    <p style={styles.muted}>{intakeDraft.urgency || 'Needs review'}</p>
+                  </div>
+                </div>
+
+                <div style={styles.grid2}>
+                  <div>
+                    <strong>Address</strong>
+                    <p style={styles.muted}>{intakeDraft.propertyAddress || 'Missing'}</p>
+                  </div>
+                  <div>
+                    <strong>ZIP</strong>
+                    <p style={styles.muted}>{intakeDraft.zip || 'Missing'}</p>
+                  </div>
+                </div>
+
+                <div style={styles.grid2}>
+                  <div>
+                    <strong>Contact</strong>
+                    <p style={styles.muted}>
+                      {[intakeDraft.requesterName, intakeDraft.email, intakeDraft.phone].filter(Boolean).join(' • ') || 'Missing'}
+                    </p>
+                  </div>
+                  <div>
+                    <strong>Timeline</strong>
+                    <p style={styles.muted}>{intakeDraft.timeline || 'Needs review'}</p>
+                  </div>
+                </div>
+
+                <strong>Clean Scope Draft</strong>
+                <p style={styles.scopeText}>{intakeDraft.description || 'No scope extracted.'}</p>
+
+                <strong>Missing Info Checklist</strong>
+                {intakeDraft.missingInfo && intakeDraft.missingInfo.length > 0 ? (
+                  <ul style={styles.mutedList}>
+                    {intakeDraft.missingInfo.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={styles.muted}>No obvious missing info detected. Still review before use.</p>
+                )}
+
+                <strong>Suggested Reply Draft</strong>
+                <div style={styles.replyDraftBox}>
+                  {intakeDraft.suggestedReply || 'No reply draft generated.'}
+                </div>
+
+                <p style={styles.small}>
+                  Confidence: {intakeDraft.confidence || 'needs_review'}
+                  {intakeDraft.notes ? ` • ${intakeDraft.notes}` : ''}
+                </p>
+
+                <div style={styles.buttonRow}>
+                  <button style={styles.primaryButton} onClick={applyIntakeDraftToNewRequest}>
+                    Use Draft in New Request
+                  </button>
+                  <button
+                    style={styles.outlineButton}
+                    onClick={() => copyToClipboard(intakeDraft.suggestedReply || '')}
+                  >
+                    Copy Suggested Reply
+                  </button>
+                  <button
+                    style={styles.outlineButton}
+                    onClick={saveIntakeReplyDraft}
+                    disabled={messageSavingId === 'intake-draft'}
+                  >
+                    {messageSavingId === 'intake-draft' ? 'Saving...' : 'Save Reply Draft'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'messages' && (
+          <section style={styles.card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div>
+                <h2>Message Center</h2>
+                <p style={styles.muted}>AI-drafted replies and missing-info requests. Human review is required before sending.</p>
+              </div>
+              <button style={styles.outlineButton} disabled={messageLoading} onClick={loadMessageCenter}>
+                {messageLoading ? 'Loading...' : 'Refresh Messages'}
+              </button>
+            </div>
+
+            <div style={styles.noticeBox}>
+              Safe automation rule: AI can draft missing-info requests, but it cannot send prices, proposals, purchase orders, contractor commitments, or final approvals without human review.
+            </div>
+
+            <select
+              style={styles.input}
+              value={messageFilter}
+              onChange={(e) => setMessageFilter(e.target.value as 'all' | 'draft' | 'sent' | 'approved')}
+            >
+              <option value="all">All messages</option>
+              <option value="draft">Drafts</option>
+              <option value="approved">Approved</option>
+              <option value="sent">Marked Sent</option>
+            </select>
+
+            <h3>Drafts + Message Logs</h3>
+            {messageLogs.filter((log) => messageFilter === 'all' || log.status === messageFilter).length === 0 && (
+              <p style={styles.muted}>No messages yet. Generate a missing-info request from a dashboard card, or save an AI Intake reply draft.</p>
+            )}
+
+            {messageLogs
+              .filter((log) => messageFilter === 'all' || log.status === messageFilter)
+              .map((log) => (
+                <div key={log.id} style={styles.requestCard}>
+                  <div style={styles.grid3}>
+                    <div>
+                      <strong>Status</strong>
+                      <p style={styles.small}>{log.status || 'draft'}</p>
+                    </div>
+                    <div>
+                      <strong>Linked Job</strong>
+                      <p style={styles.small}>{getRequestLabel(log.lead_id)}</p>
+                    </div>
+                    <div>
+                      <strong>Recipient</strong>
+                      <p style={styles.small}>
+                        {[log.recipient_name, log.recipient_email, log.recipient_phone].filter(Boolean).join(' • ') || 'Not set'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p style={styles.scopeText}>{log.message_body}</p>
+                  {log.notes && <p style={styles.small}>Notes: {log.notes}</p>}
+                  <p style={styles.small}>Created: {log.created_at ? new Date(log.created_at).toLocaleString() : 'Not set'}</p>
+
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button style={styles.outlineButton} onClick={() => copyToClipboard(log.message_body)}>
+                      Copy Message
+                    </button>
+                    <button
+                      style={styles.outlineButton}
+                      disabled={messageSavingId === log.id}
+                      onClick={() => markMessageLog(log, 'approved')}
+                    >
+                      Approve Draft
+                    </button>
+                    <button
+                      style={styles.primaryButton}
+                      disabled={messageSavingId === log.id}
+                      onClick={() => markMessageLog(log, 'sent')}
+                    >
+                      Mark Sent
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+            <hr style={styles.divider} />
+
+            <h3>Missing Info Requests</h3>
+            {missingInfoRequests.length === 0 && <p style={styles.muted}>No missing-info request records yet.</p>}
+            {missingInfoRequests.map((item) => {
+              const flags = [
+                item.missing_address ? 'address' : '',
+                item.missing_photos ? 'photos' : '',
+                item.missing_inspection_report ? 'inspection report' : '',
+                item.missing_deadline ? 'deadline' : '',
+                item.missing_access_info ? 'access info' : '',
+                item.missing_scope_clarity ? 'scope clarity' : '',
+              ].filter(Boolean)
+
+              return (
+                <div key={item.id} style={styles.requestCard}>
+                  <strong>{getRequestLabel(item.lead_id)}</strong>
+                  <p style={styles.small}>Status: {item.status || 'draft'} • Auto-send safe: {item.auto_send_allowed ? 'Yes' : 'No'}</p>
+                  <p style={styles.small}>Missing: {flags.join(', ') || 'None listed'}</p>
+                  {item.generated_message && <p style={styles.scopeText}>{item.generated_message}</p>}
+                  <button
+                    style={styles.outlineButton}
+                    onClick={() => copyToClipboard(item.generated_message || '')}
+                  >
+                    Copy Request
+                  </button>
+                </div>
+              )
+            })}
+          </section>
+        )}
+
         {isAdmin && activeTab === 'dashboard' && (
           <>
             <section style={styles.card}>
@@ -2197,6 +2875,22 @@ export default function App() {
                           onClick={() => openEstimateReview(request)}
                         >
                           Open Estimate Review
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.wideButton,
+                            background: '#fff8e8',
+                            color: '#6f4f14',
+                            border: '1px solid #ecd9a7',
+                          }}
+                          disabled={messageSavingId === request.id}
+                          onClick={() => generateMissingInfoRequest(request)}
+                        >
+                          {messageSavingId === request.id
+                            ? 'Creating Message...'
+                            : 'Generate Missing Info Request'}
                         </button>
 
                         <div style={styles.noticeBox}>
@@ -3067,6 +3761,52 @@ export default function App() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+
+  buttonRow: {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  warningBox: {
+    border: '1px solid #d9b35f',
+    background: '#fff8e8',
+    color: '#5b410b',
+    borderRadius: 14,
+    padding: 14,
+    margin: '14px 0 18px',
+    lineHeight: 1.5,
+  },
+  reviewBox: {
+    border: '1px solid #d7dfd3',
+    background: '#fbfdf9',
+    borderRadius: 18,
+    padding: 18,
+  },
+  scopeText: {
+    whiteSpace: 'pre-wrap',
+    lineHeight: 1.55,
+    color: '#123524',
+    background: '#f7faf5',
+    border: '1px solid #dfe8da',
+    borderRadius: 12,
+    padding: 12,
+  },
+  mutedList: {
+    color: '#536056',
+    lineHeight: 1.6,
+    marginTop: 8,
+  },
+  replyDraftBox: {
+    marginTop: 8,
+    whiteSpace: 'pre-wrap',
+    lineHeight: 1.55,
+    background: '#f5f7fb',
+    border: '1px solid #dce3ee',
+    borderRadius: 12,
+    padding: 12,
+    color: '#1f2a30',
+  },
   page: {
     minHeight: '100vh',
     background: '#f4f1ec',
