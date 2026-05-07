@@ -535,7 +535,7 @@ export default function App() {
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
   const [researchingId, setResearchingId] = useState<string | null>(null)
   const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
-
+  const [takeoffLoadingId, setTakeoffLoadingId] = useState<string | null>(null)
   const [intakeText, setIntakeText] = useState('')
   const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
   const [intakeDraft, setIntakeDraft] = useState<IntakeDraft | null>(null)
@@ -693,7 +693,7 @@ export default function App() {
         imageDataUrl = await fileToDataUrl(intakeScreenshotFile)
       }
 
-      if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      if (!AGENT_API_KEY || AGENT_API_KEY === 'KillBill0202') {
         const fallback = localIntakeFallback(intakeText)
         setIntakeDraft(fallback)
         alert('Agent key is missing. I created a local draft, but AI screenshot reading requires the Railway agent key.')
@@ -1367,7 +1367,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
     if (!confirmStart) return
 
-    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'KillBill0202') {
       alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
       return
     }
@@ -1409,7 +1409,102 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
+async function generateAiTakeoff(request: WorkRequest) {
+  const confirmStart = window.confirm(
+    'This will create a rough AI quantity takeoff for sqft, linear feet, cubic yards, gallons, bundles, sheets, and draft material quantities. Human/site verification is required before any estimate, proposal, purchase order, email, submission, or material order.'
+  )
 
+  if (!confirmStart) return
+
+  if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+    alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+    return
+  }
+
+  setTakeoffLoadingId(request.id)
+
+  try {
+    await ensureLeadExists(request)
+
+    const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-agent-key': AGENT_API_KEY,
+      },
+      body: JSON.stringify({
+        leadId: request.id,
+        description: request.description,
+        workType: request.workType,
+        zip: request.zip,
+        request,
+      }),
+    })
+
+    const result = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error(result?.error || 'AI takeoff failed.')
+    }
+
+    alert(
+      `AI quantity takeoff created. ${result.measurementCount || 0} measurements and ${result.itemCount || 0} priced material items saved. Open Estimate Review to review/edit/approve. Human verification required.`
+    )
+  } catch (error: any) {
+    console.error(error)
+    alert(error?.message || 'AI takeoff failed.')
+  } finally {
+    setTakeoffLoadingId(null)
+  }
+}
+async function generateAiTakeoff(request: WorkRequest) {
+  const confirmStart = window.confirm(
+    'This will create a rough AI quantity takeoff for sqft, linear feet, cubic yards, gallons, bundles, sheets, and draft material quantities. Human/site verification is required before any estimate, proposal, purchase order, email, submission, or material order.'
+  )
+
+  if (!confirmStart) return
+
+  if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+    alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+    return
+  }
+
+  setTakeoffLoadingId(request.id)
+
+  try {
+    await ensureLeadExists(request)
+
+    const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-agent-key': AGENT_API_KEY,
+      },
+      body: JSON.stringify({
+        leadId: request.id,
+        description: request.description,
+        workType: request.workType,
+        zip: request.zip,
+        request,
+      }),
+    })
+
+    const result = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error(result?.error || 'AI takeoff failed.')
+    }
+
+    alert(
+      `AI quantity takeoff created. ${result.measurementCount || 0} measurements and ${result.itemCount || 0} priced material items saved. Open Estimate Review to review/edit/approve. Human verification required.`
+    )
+  } catch (error: any) {
+    console.error(error)
+    alert(error?.message || 'AI takeoff failed.')
+  } finally {
+    setTakeoffLoadingId(null)
+  }
+}
   async function applyBestLaborRateForRequest(request: WorkRequest, showAlert = true) {
     try {
       const { data, error } = await supabase
@@ -3192,6 +3287,21 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           {materialListLoadingId === request.id
                             ? 'Building Material List...'
                             : 'Generate Rough Material List'}
+                            <button
+  type="button"
+  style={{
+    ...styles.wideButton,
+    background: '#eef4fb',
+    color: '#173425',
+    border: '1px solid #bfd3e6',
+  }}
+  disabled={takeoffLoadingId === request.id}
+  onClick={() => generateAiTakeoff(request)}
+>
+  {takeoffLoadingId === request.id
+    ? 'Building Takeoff...'
+    : 'AI Takeoff / Quantities'}
+</button>
                         </button>
 
                         <button
