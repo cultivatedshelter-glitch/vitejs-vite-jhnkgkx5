@@ -534,6 +534,7 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState('')
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
   const [researchingId, setResearchingId] = useState<string | null>(null)
+  const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
 
   const [intakeText, setIntakeText] = useState('')
   const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
@@ -1063,18 +1064,35 @@ export default function App() {
   async function uploadRequestFiles(
     files: File[],
     folder: 'photos' | 'documents',
-    type: 'photo' | 'document'
+    type: 'photo' | 'document',
+    leadId?: string
   ) {
     const uploaded: StoredFile[] = []
 
     for (const file of files) {
-      const path = `${folder}/${Date.now()}-${safeFileName(file.name)}`
+      const path = `${folder}/${leadId || 'unlinked'}/${Date.now()}-${safeFileName(file.name)}`
 
       const { error } = await supabase.storage
         .from(REQUEST_FILES_BUCKET)
         .upload(path, file)
 
       if (error) throw error
+
+      const { data: publicUrlData } = supabase.storage
+        .from(REQUEST_FILES_BUCKET)
+        .getPublicUrl(path)
+
+      if (leadId) {
+        const { error: fileInsertError } = await supabase.from('files').insert({
+          lead_id: leadId,
+          file_url: publicUrlData.publicUrl,
+          file_name: file.name,
+        })
+
+        if (fileInsertError) {
+          console.warn('File uploaded, but file database row was not saved:', fileInsertError)
+        }
+      }
 
       uploaded.push({
         name: file.name,
@@ -1129,8 +1147,8 @@ export default function App() {
 
       if (leadError) throw leadError
 
-      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo')
-      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document')
+      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id)
+      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id)
 
       const newRequest: WorkRequest = {
         id: leadRow?.id || makeId(),
@@ -1338,6 +1356,56 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       alert(error?.message || 'AI material research failed.')
     } finally {
       setResearchingId(null)
+    }
+  }
+
+
+  async function generateRoughMaterialList(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will create a rough material list with draft quantities and prices. Human review is required before any estimate, proposal, purchase order, email, submission, or material order.'
+    )
+
+    if (!confirmStart) return
+
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      return
+    }
+
+    setMaterialListLoadingId(request.id)
+
+    try {
+      await ensureLeadExists(request)
+
+      const response = await fetch(`${AGENT_API_URL}/generate-material-list`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          leadId: request.id,
+          description: request.description,
+          workType: request.workType,
+          zip: request.zip,
+          request,
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(result?.error || 'Rough material list failed.')
+      }
+
+      alert(
+        `Rough material list created. ${result.itemCount || 0} priced material items saved to Estimate Review. Human review required.`
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Rough material list failed.')
+    } finally {
+      setMaterialListLoadingId(null)
     }
   }
 
@@ -3108,6 +3176,22 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           {researchingId === request.id
                             ? 'Researching Materials...'
                             : 'AI Research Materials'}
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.wideButton,
+                            background: '#eef7ee',
+                            color: '#0f542d',
+                            border: '1px solid #bdd8bd',
+                          }}
+                          disabled={materialListLoadingId === request.id}
+                          onClick={() => generateRoughMaterialList(request)}
+                        >
+                          {materialListLoadingId === request.id
+                            ? 'Building Material List...'
+                            : 'Generate Rough Material List'}
                         </button>
 
                         <button
