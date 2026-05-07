@@ -4,7 +4,7 @@ import Gallery from './components/Gallery'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'invoices' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
   name: string
@@ -40,6 +40,7 @@ type WorkRequest = {
   status: RequestStatus
   archived?: boolean
   archivedAt?: string
+  archiveReason?: string
   aiEstimate?: AiEstimate
 }
 
@@ -497,6 +498,7 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     status: normalizeRequestStatus(row.status),
     archived: Boolean(row.archived),
     archivedAt: row.archived_at || '',
+    archiveReason: row.archive_reason || '',
   }
 }
 
@@ -507,6 +509,10 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false)
 
   const [requests, setRequests] = useState<WorkRequest[]>([])
+  const [archivedRequests, setArchivedRequests] = useState<WorkRequest[]>([])
+  const [archivedSearch, setArchivedSearch] = useState('')
+  const [archivedLoading, setArchivedLoading] = useState(false)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | RequestStatus>('all')
 
@@ -601,6 +607,7 @@ export default function App() {
     if (isAdmin && activeTab === 'materials') loadMaterials()
     if (isAdmin && activeTab === 'labor') loadLaborRates()
     if (isAdmin && activeTab === 'messages') loadMessageCenter()
+    if (isAdmin && activeTab === 'archived') loadArchivedRequestsFromSupabase()
   }, [isAdmin, activeTab])
 
   useEffect(() => {
@@ -999,6 +1006,60 @@ export default function App() {
     }
   }
 
+  async function loadArchivedRequestsFromSupabase() {
+    setArchivedLoading(true)
+
+    try {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('archived', true)
+        .order('archived_at', { ascending: false })
+
+      if (error) throw error
+
+      const mapped = (data || []).map(mapLeadRowToWorkRequest)
+      setArchivedRequests(mapped)
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load archived leads from Supabase.')
+    } finally {
+      setArchivedLoading(false)
+    }
+  }
+
+  async function restoreArchivedLead(request: WorkRequest) {
+    const confirmed = window.confirm(
+      `Restore this archived lead?\n\n${request.propertyAddress || 'Untitled lead'}\n\nIt will return to the active Dashboard.`
+    )
+
+    if (!confirmed) return
+
+    setRestoringId(request.id)
+
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          archived: false,
+          archived_at: null,
+          archive_reason: null,
+        })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      setArchivedRequests((prev) => prev.filter((item) => item.id !== request.id))
+      await loadRequestsFromSupabase()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not restore archived lead.')
+      await loadArchivedRequestsFromSupabase()
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
   async function uploadRequestFiles(
     files: File[],
     folder: 'photos' | 'documents',
@@ -1144,6 +1205,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         .eq('id', request.id)
 
       if (error) throw error
+
+      if (activeTab === 'archived') {
+        await loadArchivedRequestsFromSupabase()
+      }
 
       if (selectedEstimateRequest?.id === request.id) {
         setSelectedEstimateRequest(null)
@@ -2341,6 +2406,27 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     })
   }, [requests, filter, search])
 
+  const filteredArchivedRequests = useMemo(() => {
+    return archivedRequests.filter((r) => {
+      const text = [
+        r.requesterName,
+        r.email,
+        r.phone,
+        r.propertyAddress,
+        r.city,
+        r.state,
+        r.zip,
+        r.workType,
+        r.description,
+        r.archiveReason,
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return text.includes(archivedSearch.toLowerCase())
+    })
+  }, [archivedRequests, archivedSearch])
+
   const columns: RequestStatus[] = [
     'new',
     'needs_info',
@@ -2422,6 +2508,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 onClick={() => requireAdmin('dashboard')}
               >
                 Dashboard
+              </button>
+
+              <button
+                style={activeTab === 'archived' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('archived')}
+              >
+                Archived Leads
               </button>
 
               <button
@@ -3095,6 +3188,80 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               })}
             </section>
           </>
+        )}
+
+
+        {isAdmin && activeTab === 'archived' && (
+          <section style={styles.card}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <h2>Archived Leads</h2>
+                <p style={styles.muted}>
+                  Archived leads are hidden from the Dashboard, but their files, estimates,
+                  messages, and research stay saved in Supabase.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                style={styles.outlineButton}
+                disabled={archivedLoading}
+                onClick={loadArchivedRequestsFromSupabase}
+              >
+                {archivedLoading ? 'Loading...' : 'Refresh Archived'}
+              </button>
+            </div>
+
+            <input
+              style={styles.input}
+              placeholder="Search archived leads"
+              value={archivedSearch}
+              onChange={(e) => setArchivedSearch(e.target.value)}
+            />
+
+            {filteredArchivedRequests.length === 0 ? (
+              <div style={styles.empty}>No archived leads found.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {filteredArchivedRequests.map((request) => (
+                  <div key={request.id} style={styles.requestCard}>
+                    <strong>{request.propertyAddress || 'Untitled lead'}</strong>
+
+                    <p style={styles.small}>
+                      {request.city}, {request.state} {request.zip}
+                    </p>
+
+                    <p style={styles.small}>
+                      {request.requesterName || 'No name'} • {request.email || 'No email'}
+                    </p>
+
+                    <p style={styles.small}>
+                      Status before archive: {STATUS_META[request.status]?.label || request.status}
+                    </p>
+
+                    <p style={styles.small}>
+                      Archived: {request.archivedAt ? new Date(request.archivedAt).toLocaleString() : 'Unknown date'}
+                    </p>
+
+                    {request.archiveReason && (
+                      <p style={styles.small}>Reason: {request.archiveReason}</p>
+                    )}
+
+                    <p>{request.description || 'No description saved.'}</p>
+
+                    <button
+                      type="button"
+                      style={styles.primaryButton}
+                      disabled={restoringId === request.id}
+                      onClick={() => restoreArchivedLead(request)}
+                    >
+                      {restoringId === request.id ? 'Restoring...' : 'Restore to Dashboard'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {isAdmin && activeTab === 'invoices' && (
@@ -4162,6 +4329,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
+  },
+  fileGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
+    gap: 14,
   },
   linkButton: {
     display: 'block',
