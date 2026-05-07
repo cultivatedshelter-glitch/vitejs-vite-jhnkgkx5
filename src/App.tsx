@@ -312,7 +312,7 @@ const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'PASTE_YOUR_AGENT_API_KEY_HERE'
+const AGENT_API_KEY = 'KillBill0202'
 
 const WORK_TYPES = [
   'General Repair',
