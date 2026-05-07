@@ -4,7 +4,7 @@ import Gallery from './components/Gallery'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'dashboard' | 'invoices' | 'materials' | 'estimates'
+type Tab = 'new' | 'gallery' | 'dashboard' | 'invoices' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
   name: string
@@ -73,15 +73,179 @@ type InvoiceCostAnalysis = {
 
 type MaterialCost = {
   id: string
-  material_name: string
+  created_at?: string | null
+  updated_at: string | null
+
+  item_name?: string | null
+  material_name?: string | null
+  normalized_name?: string | null
   category: string | null
   unit: string | null
-  current_price: number | null
-  previous_price: number | null
+
+  low_price?: number | null
+  typical_price?: number | null
+  high_price?: number | null
+  current_price?: number | null
+  previous_price?: number | null
   percent_change?: number | null
+
   source: string | null
-  region: string | null
-  updated_at: string
+  source_url?: string | null
+  store_name?: string | null
+  zip?: string | null
+  region?: string | null
+
+  confidence?: string | null
+  human_verified?: boolean | null
+  last_checked?: string | null
+  notes?: string | null
+}
+
+
+type LaborRate = {
+  id: string
+  created_at?: string | null
+  updated_at?: string | null
+
+  trade: string
+  job_type?: string | null
+  unit?: string | null
+
+  low_rate?: number | null
+  typical_rate?: number | null
+  high_rate?: number | null
+
+  minimum_charge?: number | null
+  trip_charge?: number | null
+  disposal_fee?: number | null
+
+  zip?: string | null
+  region?: string | null
+
+  source?: string | null
+  confidence?: string | null
+  human_verified?: boolean | null
+  last_checked?: string | null
+  notes?: string | null
+}
+
+function getLaborConfidenceLabel(value: string | null | undefined, verified?: boolean | null) {
+  if (verified) return 'labor_verified'
+  return value || 'needs_review'
+}
+
+function normalizeLaborText(value = '') {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getLaborKeywordMatches(request: WorkRequest) {
+  const text = normalizeLaborText(
+    [request.workType, request.description, request.timeline, request.urgency].join(' ')
+  )
+
+  const keywords: Record<string, string[]> = {
+    roofing: ['roof', 'roofing', 'shingle', 'leak', 'flashing', 'gutter'],
+    painting: ['paint', 'painting', 'primer', 'interior paint', 'exterior paint'],
+    concrete: ['concrete', 'slab', 'demo', 'remove concrete', 'post block'],
+    decking: ['deck', 'decking', 'framing deck', 'post base', '2x6'],
+    drywall: ['drywall', 'sheetrock', 'patch', 'joint compound', 'texture'],
+    plumbing: ['plumb', 'plumbing', 'leak', 'fixture', 'toilet', 'sink'],
+    electrical: ['electric', 'electrical', 'outlet', 'panel', 'breaker', 'light'],
+    flooring: ['floor', 'flooring', 'vinyl', 'lvp', 'tile floor'],
+    tile: ['tile', 'grout', 'thinset', 'backsplash', 'shower'],
+    landscaping: ['landscape', 'yard', 'lawn', 'tree', 'mulch'],
+    cleaning: ['clean', 'cleaning', 'turnover', 'debris'],
+  }
+
+  return Object.entries(keywords)
+    .filter(([, words]) => words.some((word) => text.includes(word)))
+    .map(([trade]) => trade)
+}
+
+function scoreLaborRateForRequest(rate: LaborRate, request: WorkRequest) {
+  const workText = normalizeLaborText([request.workType, request.description].join(' '))
+  const trade = normalizeLaborText(rate.trade || '')
+  const jobType = normalizeLaborText(rate.job_type || '')
+  const matches = getLaborKeywordMatches(request)
+
+  let score = 0
+
+  if (rate.human_verified) score += 100
+  if (rate.zip && request.zip && rate.zip === request.zip) score += 30
+  if (!rate.zip) score += 5
+  if (trade && workText.includes(trade)) score += 30
+  if (jobType && workText.includes(jobType)) score += 35
+  if (matches.some((match) => trade.includes(match) || match.includes(trade))) score += 40
+  if (matches.some((match) => jobType.includes(match) || match.includes(jobType))) score += 25
+  if (Number(rate.typical_rate || 0) > 0) score += 10
+
+  return score
+}
+
+function getDefaultLaborUnits(rate: LaborRate | null, request?: WorkRequest | null) {
+  const unit = normalizeLaborText(rate?.unit || 'hour')
+  const text = normalizeLaborText([request?.workType || '', request?.description || ''].join(' '))
+
+  if (unit.includes('sqft') || unit.includes('sq ft') || unit.includes('square')) {
+    const sqftMatch = text.match(/(\d{2,5})\s*(sqft|sq ft|square feet|sf)/)
+    return sqftMatch ? Number(sqftMatch[1]) : 100
+  }
+
+  if (unit.includes('day')) return 1
+  if (unit.includes('job') || unit.includes('project') || unit.includes('flat')) return 1
+
+  if (text.includes('asap') || text.includes('urgent')) return 6
+  return 4
+}
+
+function calculateLaborTotalFromRate(
+  rate: LaborRate | null,
+  unitsText: string,
+  minimumText: string,
+  tripText: string,
+  disposalText: string
+) {
+  if (!rate) return 0
+
+  const units = Number(unitsText || 0)
+  const typicalRate = Number(rate.typical_rate || 0)
+  const minimumCharge = Number(minimumText || 0)
+  const tripCharge = Number(tripText || 0)
+  const disposalFee = Number(disposalText || 0)
+  const baseLabor = typicalRate * units
+
+  return Math.round((Math.max(baseLabor, minimumCharge) + tripCharge + disposalFee) * 100) / 100
+}
+
+type EstimateItem = {
+  id: string
+  research_id?: string | null
+  lead_id: string
+  created_at?: string
+  item_name: string
+  source: string | null
+  source_url: string | null
+  quantity: number | null
+  unit_price: number | null
+  total_price: number | null
+  confidence: string | null
+  human_approved: boolean | null
+}
+
+type EstimateResearchRow = {
+  id: string
+  lead_id: string
+  created_at?: string
+  status: string | null
+  source: string | null
+  search_query: string | null
+  screenshot_url: string | null
+  notes: string | null
+  human_approved: boolean | null
 }
 
 const STORAGE_KEY = 'shelter-prep-requests-v1'
@@ -90,7 +254,7 @@ const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'K3slk88bgd!?'
+const AGENT_API_KEY = 'PASTE_YOUR_AGENT_API_KEY_HERE'
 
 const WORK_TYPES = [
   'General Repair',
@@ -127,6 +291,41 @@ function safeFileName(name: string) {
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Not set'
   return `$${Number(value).toFixed(2)}`
+}
+
+function parseMoneyInput(value: string | number | null | undefined) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (value === null || value === undefined) return 0
+
+  const cleaned = String(value)
+    .replace(/,/g, '')
+    .match(/-?\d+(?:\.\d+)?/)
+
+  if (!cleaned) return 0
+
+  const parsed = Number(cleaned[0])
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeMaterialName(value = '') {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getMaterialName(item: MaterialCost) {
+  return item.item_name || item.material_name || 'Unnamed material'
+}
+
+function getMaterialTypicalPrice(item: MaterialCost) {
+  return item.typical_price ?? item.current_price ?? 0
+}
+
+function getConfidenceLabel(value: string | null | undefined, verified?: boolean | null) {
+  if (verified) return 'database_verified'
+  return value || 'needs_review'
 }
 
 function countItems(value: any[] | null | undefined) {
@@ -180,6 +379,36 @@ export default function App() {
   const [materialSource, setMaterialSource] = useState('')
   const [materialLoading, setMaterialLoading] = useState(false)
   const [materialUpdating, setMaterialUpdating] = useState(false)
+  const [materialSavingId, setMaterialSavingId] = useState<string | null>(null)
+
+  const [laborRates, setLaborRates] = useState<LaborRate[]>([])
+  const [laborTrade, setLaborTrade] = useState('')
+  const [laborJobType, setLaborJobType] = useState('')
+  const [laborUnit, setLaborUnit] = useState('hour')
+  const [laborTypicalRate, setLaborTypicalRate] = useState('')
+  const [laborMinimumCharge, setLaborMinimumCharge] = useState('')
+  const [laborTripCharge, setLaborTripCharge] = useState('')
+  const [laborDisposalFee, setLaborDisposalFee] = useState('')
+  const [laborRegion, setLaborRegion] = useState('')
+  const [laborLoading, setLaborLoading] = useState(false)
+  const [laborSavingId, setLaborSavingId] = useState<string | null>(null)
+
+
+  const [selectedEstimateRequest, setSelectedEstimateRequest] = useState<WorkRequest | null>(null)
+  const [estimateItems, setEstimateItems] = useState<EstimateItem[]>([])
+  const [estimateResearchRows, setEstimateResearchRows] = useState<EstimateResearchRow[]>([])
+  const [estimateLoading, setEstimateLoading] = useState(false)
+  const [estimateSavingId, setEstimateSavingId] = useState<string | null>(null)
+  const [estimateLaborCost, setEstimateLaborCost] = useState('0')
+  const [appliedLaborRate, setAppliedLaborRate] = useState<LaborRate | null>(null)
+  const [estimateLaborUnits, setEstimateLaborUnits] = useState('4')
+  const [estimateMinimumCharge, setEstimateMinimumCharge] = useState('0')
+  const [estimateTripCharge, setEstimateTripCharge] = useState('0')
+  const [estimateDisposalFee, setEstimateDisposalFee] = useState('0')
+  const [estimateLaborMessage, setEstimateLaborMessage] = useState('No labor rate applied yet.')
+  const [estimateMarkupPercent, setEstimateMarkupPercent] = useState('20')
+  const [estimateContingencyPercent, setEstimateContingencyPercent] = useState('10')
+  const [estimateNotes, setEstimateNotes] = useState('Draft estimate. Final price requires human review and site verification.')
 
   useEffect(() => {
     try {
@@ -197,7 +426,28 @@ export default function App() {
   useEffect(() => {
     if (isAdmin && activeTab === 'invoices') loadInvoices()
     if (isAdmin && activeTab === 'materials') loadMaterials()
+    if (isAdmin && activeTab === 'labor') loadLaborRates()
   }, [isAdmin, activeTab])
+
+  useEffect(() => {
+    if (!appliedLaborRate) return
+
+    const nextLaborTotal = calculateLaborTotalFromRate(
+      appliedLaborRate,
+      estimateLaborUnits,
+      estimateMinimumCharge,
+      estimateTripCharge,
+      estimateDisposalFee
+    )
+
+    setEstimateLaborCost(String(nextLaborTotal))
+  }, [
+    appliedLaborRate,
+    estimateLaborUnits,
+    estimateMinimumCharge,
+    estimateTripCharge,
+    estimateDisposalFee,
+  ])
 
   function requireAdmin(tab: Tab) {
     if (!isAdmin) {
@@ -469,6 +719,477 @@ export default function App() {
     }
   }
 
+
+  async function applyBestLaborRateForRequest(request: WorkRequest, showAlert = true) {
+    try {
+      const { data, error } = await supabase
+        .from('labor_rates')
+        .select('*')
+        .eq('human_verified', true)
+        .gt('typical_rate', 0)
+        .order('last_checked', { ascending: false })
+
+      if (error) throw error
+
+      const rates = ((data || []) as LaborRate[]).filter((rate) =>
+        Number(rate.typical_rate || 0) > 0
+      )
+
+      const scored = rates
+        .map((rate) => ({ rate, score: scoreLaborRateForRequest(rate, request) }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score)
+
+      const best = scored[0]?.rate || null
+
+      if (!best) {
+        setAppliedLaborRate(null)
+        setEstimateLaborUnits('4')
+        setEstimateMinimumCharge('0')
+        setEstimateTripCharge('0')
+        setEstimateDisposalFee('0')
+        setEstimateLaborMessage(
+          'No verified labor rate matched this job yet. Add or approve a labor rate, or enter labor manually.'
+        )
+
+        if (showAlert) {
+          alert('No verified labor rate matched this job yet. Add/approve one in Labor Rates or enter labor manually.')
+        }
+
+        return null
+      }
+
+      const defaultUnits = getDefaultLaborUnits(best, request)
+      const minimum = Number(best.minimum_charge || 0)
+      const trip = Number(best.trip_charge || 0)
+      const disposal = Number(best.disposal_fee || 0)
+      const calculatedTotal = calculateLaborTotalFromRate(
+        best,
+        String(defaultUnits),
+        String(minimum),
+        String(trip),
+        String(disposal)
+      )
+
+      setAppliedLaborRate(best)
+      setEstimateLaborUnits(String(defaultUnits))
+      setEstimateMinimumCharge(String(minimum))
+      setEstimateTripCharge(String(trip))
+      setEstimateDisposalFee(String(disposal))
+      setEstimateLaborCost(String(calculatedTotal))
+      setEstimateLaborMessage(
+        `Applied verified labor rate: ${best.trade}${best.job_type ? ` / ${best.job_type}` : ''} at ${money(Number(best.typical_rate || 0))}/${best.unit || 'hour'}.`
+      )
+
+      return best
+    } catch (error: any) {
+      console.error(error)
+      setEstimateLaborMessage(error?.message || 'Could not load labor rates.')
+
+      if (showAlert) {
+        alert(error?.message || 'Could not load labor rates.')
+      }
+
+      return null
+    }
+  }
+
+  async function openEstimateReview(request: WorkRequest) {
+    setActiveTab('estimates')
+    setSelectedEstimateRequest(request)
+    setEstimateLoading(true)
+
+    try {
+      await ensureLeadExists(request)
+
+      const { data: items, error: itemError } = await supabase
+        .from('estimate_items')
+        .select('*')
+        .eq('lead_id', request.id)
+        .order('created_at', { ascending: true })
+
+      if (itemError) throw itemError
+
+      const { data: researchRows, error: researchError } = await supabase
+        .from('estimate_research')
+        .select('*')
+        .eq('lead_id', request.id)
+        .order('created_at', { ascending: false })
+
+      if (researchError) throw researchError
+
+      setEstimateItems((items || []) as EstimateItem[])
+      setEstimateResearchRows((researchRows || []) as EstimateResearchRow[])
+      await applyBestLaborRateForRequest(request, false)
+
+      if (!items || items.length === 0) {
+        alert('No estimate items found yet. Click AI Research Materials on this request first, or add manual line items in the estimator.')
+      }
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load estimate review.')
+    } finally {
+      setEstimateLoading(false)
+    }
+  }
+
+  function updateLocalEstimateItem(id: string, changes: Partial<EstimateItem>) {
+    setEstimateItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item
+        const next = { ...item, ...changes }
+        const qty = Number(next.quantity || 0)
+        const unit = Number(next.unit_price || 0)
+        return { ...next, total_price: qty * unit }
+      })
+    )
+  }
+
+  async function saveEstimateItem(item: EstimateItem) {
+    setEstimateSavingId(item.id)
+
+    const quantity = Number(item.quantity || 0)
+    const unitPrice = Number(item.unit_price || 0)
+    const totalPrice = quantity * unitPrice
+
+    try {
+      const { data, error } = await supabase
+        .from('estimate_items')
+        .update({
+          item_name: item.item_name,
+          source: item.source,
+          source_url: item.source_url,
+          quantity,
+          unit_price: unitPrice,
+          total_price: totalPrice,
+          confidence: item.confidence || 'human_reviewed',
+          human_approved: item.human_approved || false,
+        })
+        .eq('id', item.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setEstimateItems((prev) =>
+        prev.map((existing) => (existing.id === item.id ? (data as EstimateItem) : existing))
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save estimate item.')
+    } finally {
+      setEstimateSavingId(null)
+    }
+  }
+
+  async function addManualEstimateItem() {
+    if (!selectedEstimateRequest) {
+      alert('Open a request in the estimate review first.')
+      return
+    }
+
+    try {
+      await ensureLeadExists(selectedEstimateRequest)
+
+      const { data, error } = await supabase
+        .from('estimate_items')
+        .insert({
+          lead_id: selectedEstimateRequest.id,
+          item_name: 'New estimate item',
+          source: 'Human Review',
+          source_url: null,
+          quantity: 1,
+          unit_price: 0,
+          total_price: 0,
+          confidence: 'human_added',
+          human_approved: false,
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setEstimateItems((prev) => [...prev, data as EstimateItem])
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not add manual estimate item.')
+    }
+  }
+
+  async function toggleEstimateItemApproved(item: EstimateItem) {
+    const nextApproved = !item.human_approved
+    const updated = { ...item, human_approved: nextApproved, confidence: nextApproved ? 'human_approved' : item.confidence }
+    updateLocalEstimateItem(item.id, updated)
+    await saveEstimateItem(updated)
+  }
+
+  async function approveAllEstimateItems() {
+    const confirmApprove = window.confirm(
+      'Approve all current line items for this draft? This still does not send a proposal or purchase order.'
+    )
+
+    if (!confirmApprove) return
+
+    try {
+      const updates = estimateItems.map((item) =>
+        supabase
+          .from('estimate_items')
+          .update({ human_approved: true, confidence: 'human_approved' })
+          .eq('id', item.id)
+      )
+
+      const results = await Promise.all(updates)
+      const failed = results.find((result) => result.error)
+      if (failed?.error) throw failed.error
+
+      setEstimateItems((prev) =>
+        prev.map((item) => ({ ...item, human_approved: true, confidence: 'human_approved' }))
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not approve estimate items.')
+    }
+  }
+
+  function generateEstimatePdf() {
+    if (!selectedEstimateRequest) {
+      alert('Open a request in the estimate review first.')
+      return
+    }
+
+    const materialSubtotal = estimateItems.reduce(
+      (sum, item) => sum + Number(item.total_price || 0),
+      0
+    )
+    const labor = Number(estimateLaborCost || 0)
+    const laborRateLabel = appliedLaborRate
+      ? `${appliedLaborRate.trade}${appliedLaborRate.job_type ? ` / ${appliedLaborRate.job_type}` : ''} at ${money(Number(appliedLaborRate.typical_rate || 0))}/${appliedLaborRate.unit || 'hour'}`
+      : 'Manual labor entry'
+    const laborUnits = Number(estimateLaborUnits || 0)
+    const laborMinimum = Number(estimateMinimumCharge || 0)
+    const laborTrip = Number(estimateTripCharge || 0)
+    const laborDisposal = Number(estimateDisposalFee || 0)
+    const markupPercent = Number(estimateMarkupPercent || 0)
+    const contingencyPercent = Number(estimateContingencyPercent || 0)
+    const directCost = materialSubtotal + labor
+    const markup = directCost * (markupPercent / 100)
+    const contingency = directCost * (contingencyPercent / 100)
+    const standardTotal = directCost + markup + contingency
+    const lowTotal = standardTotal * 0.9
+    const premiumTotal = standardTotal * 1.15
+    const approvedCount = estimateItems.filter((item) => item.human_approved).length
+    const allApproved = estimateItems.length > 0 && approvedCount === estimateItems.length
+
+    const rows = estimateItems
+      .map(
+        (item) => `
+          <tr>
+            <td>${item.item_name || ''}</td>
+            <td>${item.source || ''}</td>
+            <td>${Number(item.quantity || 0).toFixed(2)}</td>
+            <td>${money(Number(item.unit_price || 0))}</td>
+            <td>${money(Number(item.total_price || 0))}</td>
+            <td>${item.human_approved ? 'Approved' : 'Needs review'}</td>
+          </tr>
+        `
+      )
+      .join('')
+
+    const html = `
+      <html>
+        <head>
+          <title>Shelter Prep Estimate Draft</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #173425; padding: 32px; }
+            h1 { color: #0f542d; margin-bottom: 4px; }
+            .muted { color: #66736a; }
+            .box { border: 1px solid #d7dfd3; border-radius: 14px; padding: 16px; margin: 18px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border-bottom: 1px solid #d7dfd3; text-align: left; padding: 10px; font-size: 13px; }
+            th { background: #f4f1ec; }
+            .warning { background: #fff7e6; border: 1px solid #e2c47e; padding: 12px; border-radius: 12px; }
+            .total { font-size: 22px; font-weight: bold; color: #0f542d; }
+          </style>
+        </head>
+        <body>
+          <h1>Shelter Prep Estimate Draft</h1>
+          <div class="muted">Powered by AI. Approved by humans.</div>
+          <div class="box">
+            <strong>Client:</strong> ${selectedEstimateRequest.requesterName}<br />
+            <strong>Email:</strong> ${selectedEstimateRequest.email}<br />
+            <strong>Phone:</strong> ${selectedEstimateRequest.phone || 'Not provided'}<br />
+            <strong>Property:</strong> ${selectedEstimateRequest.propertyAddress}, ${selectedEstimateRequest.city}, ${selectedEstimateRequest.state} ${selectedEstimateRequest.zip}<br />
+            <strong>Work Type:</strong> ${selectedEstimateRequest.workType}<br />
+            <strong>Urgency:</strong> ${selectedEstimateRequest.urgency}
+          </div>
+          <div class="box">
+            <strong>Scope Summary</strong><br />
+            ${selectedEstimateRequest.description}
+          </div>
+          <div class="warning">
+            ${allApproved ? 'All line items are human-approved.' : 'Draft only: some line items still require human review before sending.'}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Source</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Total</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="box">
+            <p><strong>Materials:</strong> ${money(materialSubtotal)}</p>
+            <p><strong>Labor:</strong> ${money(labor)}</p>
+            <p><strong>Labor source:</strong> ${laborRateLabel}</p>
+            <p><strong>Labor units:</strong> ${laborUnits}</p>
+            <p><strong>Minimum / Trip / Disposal:</strong> ${money(laborMinimum)} / ${money(laborTrip)} / ${money(laborDisposal)}</p>
+            <p><strong>Markup:</strong> ${markupPercent}% = ${money(markup)}</p>
+            <p><strong>Contingency:</strong> ${contingencyPercent}% = ${money(contingency)}</p>
+            <p class="total">Standard Estimate: ${money(standardTotal)}</p>
+            <p><strong>Suggested Range:</strong> ${money(lowTotal)} - ${money(premiumTotal)}</p>
+          </div>
+          <div class="box">
+            <strong>Notes / Assumptions</strong><br />
+            ${estimateNotes}
+          </div>
+        </body>
+      </html>
+    `
+
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      alert('Popup blocked. Allow popups to generate the PDF.')
+      return
+    }
+
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
+    printWindow.print()
+  }
+
+
+  function generateInvoicePdf() {
+    if (!selectedEstimateRequest) {
+      alert('Open a request in the estimate review first.')
+      return
+    }
+
+    const materialSubtotal = estimateItems.reduce(
+      (sum, item) => sum + Number(item.total_price || 0),
+      0
+    )
+    const labor = Number(estimateLaborCost || 0)
+    const markupPercent = Number(estimateMarkupPercent || 0)
+    const contingencyPercent = Number(estimateContingencyPercent || 0)
+    const directCost = materialSubtotal + labor
+    const adjustmentTotal =
+      directCost * (markupPercent / 100) + directCost * (contingencyPercent / 100)
+    const amountDue = directCost + adjustmentTotal
+    const approvedCount = estimateItems.filter((item) => item.human_approved).length
+    const allApproved = estimateItems.length === 0 || approvedCount === estimateItems.length
+
+    if (amountDue <= 0) {
+      alert('Add estimate items or labor before generating an invoice.')
+      return
+    }
+
+    const invoiceNumber = `SP-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`
+    const invoiceDate = new Date().toLocaleDateString()
+
+    const html = `
+      <html>
+        <head>
+          <title>Shelter Prep Invoice</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #173425; padding: 32px; }
+            h1 { color: #0f542d; margin-bottom: 4px; }
+            .muted { color: #66736a; }
+            .top { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+            .box { border: 1px solid #d7dfd3; border-radius: 14px; padding: 16px; margin: 18px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border-bottom: 1px solid #d7dfd3; text-align: left; padding: 10px; font-size: 13px; }
+            th { background: #f4f1ec; }
+            .right { text-align: right; }
+            .totalBox { border: 2px solid #0f542d; border-radius: 14px; padding: 16px; margin-top: 20px; }
+            .total { font-size: 24px; font-weight: bold; color: #0f542d; }
+            .notice { background: #fff7e6; border: 1px solid #e2c47e; padding: 12px; border-radius: 12px; margin-top: 16px; }
+            @media print { body { padding: 18px; } }
+          </style>
+        </head>
+        <body>
+          <div class="top">
+            <div>
+              <h1>Shelter Prep Invoice</h1>
+              <div class="muted">Professional services invoice</div>
+            </div>
+            <div class="box">
+              <strong>Invoice #:</strong> ${invoiceNumber}<br />
+              <strong>Date:</strong> ${invoiceDate}<br />
+              <strong>Status:</strong> Draft / Review
+            </div>
+          </div>
+
+          <div class="box">
+            <strong>Bill To:</strong> ${selectedEstimateRequest.requesterName}<br />
+            <strong>Email:</strong> ${selectedEstimateRequest.email}<br />
+            <strong>Phone:</strong> ${selectedEstimateRequest.phone || 'Not provided'}<br />
+            <strong>Property:</strong> ${selectedEstimateRequest.propertyAddress}, ${selectedEstimateRequest.city}, ${selectedEstimateRequest.state} ${selectedEstimateRequest.zip}<br />
+            <strong>Work Type:</strong> ${selectedEstimateRequest.workType}
+          </div>
+
+          <div class="box">
+            <strong>Scope / Description</strong><br />
+            ${selectedEstimateRequest.description}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th class="right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Project work per approved scope</td>
+                <td class="right">${money(amountDue)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="totalBox">
+            <div class="muted">Amount Due</div>
+            <div class="total">${money(amountDue)}</div>
+          </div>
+
+          ${allApproved ? '' : '<div class="notice">Internal note: Some underlying estimate line items still need review before this invoice is sent.</div>'}
+
+          <div class="box">
+            <strong>Payment Notes</strong><br />
+            Payment due upon receipt unless otherwise agreed. Please reference the invoice number with payment.
+          </div>
+        </body>
+      </html>
+    `
+
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      alert('Popup blocked. Allow popups to generate the invoice.')
+      return
+    }
+
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
+    printWindow.print()
+  }
+
   async function uploadInvoice() {
     if (!invoiceFile) {
       alert('Choose a PDF invoice first.')
@@ -611,6 +1332,7 @@ export default function App() {
     const { data, error } = await supabase
       .from('material_costs')
       .select('*')
+      .order('human_verified', { ascending: true })
       .order('updated_at', { ascending: false })
 
     if (error) alert(error.message)
@@ -641,17 +1363,28 @@ export default function App() {
 
   async function addMaterialCost() {
     if (!materialName || !materialPrice) {
-      alert('Material name and current price are required.')
+      alert('Material name and typical price are required.')
       return
     }
 
+    const price = Number(materialPrice)
+    const normalizedName = normalizeMaterialName(materialName)
+
     const { error } = await supabase.from('material_costs').insert({
-      material_name: materialName,
-      category: materialCategory,
-      unit: materialUnit,
-      current_price: Number(materialPrice),
-      source: materialSource,
-      region: 'Portland / Lake Oswego',
+      item_name: materialName,
+      normalized_name: normalizedName,
+      category: materialCategory || 'Material',
+      unit: materialUnit || 'each',
+      low_price: Math.round(price * 0.9 * 100) / 100,
+      typical_price: price,
+      high_price: Math.round(price * 1.15 * 100) / 100,
+      source: materialSource || 'manual_admin_entry',
+      store_name: materialSource || 'Manual entry',
+      zip: zip || '',
+      confidence: 'database_review',
+      human_verified: false,
+      last_checked: new Date().toISOString(),
+      notes: 'Manual draft material cost. Human approval required before reuse.',
     })
 
     if (error) {
@@ -665,6 +1398,304 @@ export default function App() {
     setMaterialPrice('')
     setMaterialSource('')
     await loadMaterials()
+  }
+
+  async function editMaterialCost(item: MaterialCost) {
+    const currentName = getMaterialName(item)
+    const currentTypical = getMaterialTypicalPrice(item)
+
+    const nextName = window.prompt('Material name', currentName)
+    if (nextName === null) return
+
+    const nextUnit = window.prompt('Unit, ex: each / bag / sqft', item.unit || 'each')
+    if (nextUnit === null) return
+
+    const nextTypicalText = window.prompt('Typical price', String(currentTypical || 0))
+    if (nextTypicalText === null) return
+
+    const nextTypical = parseMoneyInput(nextTypicalText)
+    if (!Number.isFinite(nextTypical) || nextTypical <= 0) {
+      alert('Please enter a valid typical price.')
+      return
+    }
+
+    const nextLowText = window.prompt(
+      'Low price',
+      String(item.low_price ?? Math.round(nextTypical * 0.9 * 100) / 100)
+    )
+    if (nextLowText === null) return
+
+    const nextHighText = window.prompt(
+      'High price',
+      String(item.high_price ?? Math.round(nextTypical * 1.15 * 100) / 100)
+    )
+    if (nextHighText === null) return
+
+    const nextCategory = window.prompt('Category', item.category || 'Material')
+    if (nextCategory === null) return
+
+    const nextZip = window.prompt('ZIP or service area', item.zip || '')
+    if (nextZip === null) return
+
+    const nextSource = window.prompt('Source/store', item.source || item.store_name || 'admin_review')
+    if (nextSource === null) return
+
+    setMaterialSavingId(item.id)
+
+    const { error } = await supabase
+      .from('material_costs')
+      .update({
+        item_name: nextName,
+        normalized_name: normalizeMaterialName(nextName),
+        category: nextCategory || 'Material',
+        unit: nextUnit || 'each',
+        low_price: Number(nextLowText) || nextTypical,
+        typical_price: nextTypical,
+        high_price: Number(nextHighText) || nextTypical,
+        source: nextSource || 'admin_review',
+        store_name: nextSource || 'Admin review',
+        zip: nextZip || '',
+        confidence: item.human_verified ? 'database_verified' : 'database_review',
+        last_checked: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notes: 'Edited in Material Cost Review. Human review required unless approved as verified.',
+      })
+      .eq('id', item.id)
+
+    if (error) alert(error.message)
+    else await loadMaterials()
+
+    setMaterialSavingId(null)
+  }
+
+  async function approveMaterialCost(item: MaterialCost) {
+    const currentName = getMaterialName(item)
+    const currentTypical = getMaterialTypicalPrice(item)
+
+    const approvedPriceText = window.prompt(
+      `Approve verified typical price for ${currentName}`,
+      String(currentTypical || 0)
+    )
+
+    if (approvedPriceText === null) return
+
+    const approvedPrice = parseMoneyInput(approvedPriceText)
+    if (!Number.isFinite(approvedPrice) || approvedPrice <= 0) {
+      alert('Please enter a valid approved price.')
+      return
+    }
+
+    const approvedUnit = window.prompt('Approved unit', item.unit || 'each')
+    if (approvedUnit === null) return
+
+    setMaterialSavingId(item.id)
+
+    const { error } = await supabase
+      .from('material_costs')
+      .update({
+        item_name: currentName,
+        normalized_name: normalizeMaterialName(currentName),
+        unit: approvedUnit || 'each',
+        low_price: Math.round(approvedPrice * 0.95 * 100) / 100,
+        typical_price: approvedPrice,
+        high_price: Math.round(approvedPrice * 1.1 * 100) / 100,
+        confidence: 'database_verified',
+        human_verified: true,
+        last_checked: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notes: 'Approved as human-verified pricing memory. Future estimates may reuse this price first.',
+      })
+      .eq('id', item.id)
+
+    if (error) alert(error.message)
+    else {
+      alert('Material cost approved as verified. Future AI estimates can reuse this price first.')
+      await loadMaterials()
+    }
+
+    setMaterialSavingId(null)
+  }
+
+
+  async function loadLaborRates() {
+    setLaborLoading(true)
+
+    const { data, error } = await supabase
+      .from('labor_rates')
+      .select('*')
+      .order('human_verified', { ascending: true })
+      .order('updated_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setLaborRates((data || []) as LaborRate[])
+
+    setLaborLoading(false)
+  }
+
+  async function addLaborRate() {
+    if (!laborTrade || !laborTypicalRate) {
+      alert('Trade and typical rate are required.')
+      return
+    }
+
+    const typical = parseMoneyInput(laborTypicalRate)
+    if (!Number.isFinite(typical) || typical <= 0) {
+      alert('Please enter a valid typical rate.')
+      return
+    }
+
+    const { error } = await supabase.from('labor_rates').insert({
+      trade: laborTrade,
+      job_type: laborJobType || 'General',
+      unit: laborUnit || 'hour',
+      low_rate: Math.round(typical * 0.85 * 100) / 100,
+      typical_rate: typical,
+      high_rate: Math.round(typical * 1.25 * 100) / 100,
+      minimum_charge: parseMoneyInput(laborMinimumCharge),
+      trip_charge: parseMoneyInput(laborTripCharge),
+      disposal_fee: parseMoneyInput(laborDisposalFee),
+      zip: zip || '',
+      region: laborRegion || '',
+      source: 'manual_admin_entry',
+      confidence: 'labor_review',
+      human_verified: false,
+      last_checked: new Date().toISOString(),
+      notes: 'Manual draft labor rate. Human approval required before reuse.',
+    })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    setLaborTrade('')
+    setLaborJobType('')
+    setLaborUnit('hour')
+    setLaborTypicalRate('')
+    setLaborMinimumCharge('')
+    setLaborTripCharge('')
+    setLaborDisposalFee('')
+    setLaborRegion('')
+    await loadLaborRates()
+  }
+
+  async function editLaborRate(rate: LaborRate) {
+    const nextTrade = window.prompt('Trade', rate.trade || '')
+    if (nextTrade === null) return
+
+    const nextJobType = window.prompt('Job type / scope', rate.job_type || 'General')
+    if (nextJobType === null) return
+
+    const nextUnit = window.prompt('Unit, ex: hour / sqft / day / fixed', rate.unit || 'hour')
+    if (nextUnit === null) return
+
+    const nextTypicalText = window.prompt('Typical labor rate', String(rate.typical_rate || 0))
+    if (nextTypicalText === null) return
+
+    const nextTypical = parseMoneyInput(nextTypicalText)
+    if (!Number.isFinite(nextTypical) || nextTypical <= 0) {
+      alert('Please enter a valid typical labor rate.')
+      return
+    }
+
+    const nextLowText = window.prompt(
+      'Low rate',
+      String(rate.low_rate ?? Math.round(nextTypical * 0.85 * 100) / 100)
+    )
+    if (nextLowText === null) return
+
+    const nextHighText = window.prompt(
+      'High rate',
+      String(rate.high_rate ?? Math.round(nextTypical * 1.25 * 100) / 100)
+    )
+    if (nextHighText === null) return
+
+    const nextMinimumText = window.prompt('Minimum charge', String(rate.minimum_charge || 0))
+    if (nextMinimumText === null) return
+
+    const nextTripText = window.prompt('Trip charge', String(rate.trip_charge || 0))
+    if (nextTripText === null) return
+
+    const nextDisposalText = window.prompt('Disposal fee', String(rate.disposal_fee || 0))
+    if (nextDisposalText === null) return
+
+    const nextZip = window.prompt('ZIP or service area', rate.zip || '')
+    if (nextZip === null) return
+
+    const nextRegion = window.prompt('Region', rate.region || '')
+    if (nextRegion === null) return
+
+    setLaborSavingId(rate.id)
+
+    const { error } = await supabase
+      .from('labor_rates')
+      .update({
+        trade: nextTrade,
+        job_type: nextJobType || 'General',
+        unit: nextUnit || 'hour',
+        low_rate: parseMoneyInput(nextLowText) || nextTypical,
+        typical_rate: nextTypical,
+        high_rate: parseMoneyInput(nextHighText) || nextTypical,
+        minimum_charge: parseMoneyInput(nextMinimumText),
+        trip_charge: parseMoneyInput(nextTripText),
+        disposal_fee: parseMoneyInput(nextDisposalText),
+        zip: nextZip || '',
+        region: nextRegion || '',
+        source: rate.source || 'admin_review',
+        confidence: rate.human_verified ? 'labor_verified' : 'labor_review',
+        last_checked: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notes: 'Edited in Labor Rate Review. Human review required unless approved as verified.',
+      })
+      .eq('id', rate.id)
+
+    if (error) alert(error.message)
+    else await loadLaborRates()
+
+    setLaborSavingId(null)
+  }
+
+  async function approveLaborRate(rate: LaborRate) {
+    const approvedTypicalText = window.prompt(
+      `Approve verified labor rate for ${rate.trade}`,
+      String(rate.typical_rate || 0)
+    )
+
+    if (approvedTypicalText === null) return
+
+    const approvedTypical = parseMoneyInput(approvedTypicalText)
+    if (!Number.isFinite(approvedTypical) || approvedTypical <= 0) {
+      alert('Please enter a valid approved labor rate.')
+      return
+    }
+
+    const approvedUnit = window.prompt('Approved unit', rate.unit || 'hour')
+    if (approvedUnit === null) return
+
+    setLaborSavingId(rate.id)
+
+    const { error } = await supabase
+      .from('labor_rates')
+      .update({
+        unit: approvedUnit || 'hour',
+        low_rate: Math.round(approvedTypical * 0.9 * 100) / 100,
+        typical_rate: approvedTypical,
+        high_rate: Math.round(approvedTypical * 1.15 * 100) / 100,
+        confidence: 'labor_verified',
+        human_verified: true,
+        last_checked: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notes: 'Approved as human-verified labor memory. Future estimates may reuse this rate first.',
+      })
+      .eq('id', rate.id)
+
+    if (error) alert(error.message)
+    else {
+      alert('Labor rate approved as verified. Future estimates can reuse this labor memory.')
+      await loadLaborRates()
+    }
+
+    setLaborSavingId(null)
   }
 
   function exportCsv() {
@@ -758,6 +1789,31 @@ export default function App() {
     'pending_approval',
   ]
 
+  const estimateMaterialSubtotal = estimateItems.reduce(
+    (sum, item) => sum + Number(item.total_price || 0),
+    0
+  )
+  const estimateLaborNumber = Number(estimateLaborCost || 0)
+  const estimateLaborUnitsNumber = Number(estimateLaborUnits || 0)
+  const estimateLaborBaseNumber = appliedLaborRate
+    ? Number(appliedLaborRate.typical_rate || 0) * estimateLaborUnitsNumber
+    : estimateLaborNumber
+  const estimateLaborMinimumNumber = Number(estimateMinimumCharge || 0)
+  const estimateTripChargeNumber = Number(estimateTripCharge || 0)
+  const estimateDisposalFeeNumber = Number(estimateDisposalFee || 0)
+  const estimateMarkupNumber = Number(estimateMarkupPercent || 0)
+  const estimateContingencyNumber = Number(estimateContingencyPercent || 0)
+  const estimateDirectCost = estimateMaterialSubtotal + estimateLaborNumber
+  const estimateMarkupDollars = estimateDirectCost * (estimateMarkupNumber / 100)
+  const estimateContingencyDollars = estimateDirectCost * (estimateContingencyNumber / 100)
+  const estimateStandardTotal =
+    estimateDirectCost + estimateMarkupDollars + estimateContingencyDollars
+  const estimateLowTotal = estimateStandardTotal * 0.9
+  const estimatePremiumTotal = estimateStandardTotal * 1.15
+  const approvedEstimateCount = estimateItems.filter((item) => item.human_approved).length
+  const allEstimateItemsApproved =
+    estimateItems.length > 0 && approvedEstimateCount === estimateItems.length
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
@@ -802,6 +1858,13 @@ export default function App() {
                 onClick={() => requireAdmin('materials')}
               >
                 Material Costs
+              </button>
+
+              <button
+                style={activeTab === 'labor' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('labor')}
+              >
+                Labor Rates
               </button>
 
               <button
@@ -1008,6 +2071,10 @@ export default function App() {
                 <button style={styles.wideButton} onClick={() => requireAdmin('materials')}>
                   Open Material Costs
                 </button>
+
+                <button style={styles.wideButton} onClick={() => requireAdmin('labor')}>
+                  Open Labor Rates
+                </button>
               </aside>
             )}
           </div>
@@ -1117,6 +2184,19 @@ export default function App() {
                           {researchingId === request.id
                             ? 'Researching Materials...'
                             : 'AI Research Materials'}
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.wideButton,
+                            background: '#f4f1ec',
+                            color: '#173425',
+                            border: '1px solid #d7dfd3',
+                          }}
+                          onClick={() => openEstimateReview(request)}
+                        >
+                          Open Estimate Review
                         </button>
 
                         <div style={styles.noticeBox}>
@@ -1269,18 +2349,26 @@ export default function App() {
 
         {isAdmin && activeTab === 'materials' && (
           <section style={styles.card}>
-            <h2>Material Cost Monitor</h2>
+            <h2>Material Cost Review</h2>
             <p style={styles.muted}>
-              Add manual material costs or pull updated market/index data from the weekly
-              automation function.
+              Review AI-found, database, and fallback material costs. Approving a price saves
+              your judgment as pricing memory so future estimates can reuse it first.
             </p>
+
+            <div style={styles.noticeBox}>
+              Confidence labels: <strong>database_verified</strong> = you approved it,{' '}
+              <strong>database_review</strong> = saved draft from database,{' '}
+              <strong>medium</strong> = AI saw a visible web price,{' '}
+              <strong>needs_review</strong> = uncertain AI/web price, and{' '}
+              <strong>fallback_review</strong> = rough fallback price used.
+            </div>
 
             <button
               style={styles.primaryButton}
               disabled={materialUpdating}
               onClick={updateMaterialCostsNow}
             >
-              {materialUpdating ? 'Updating...' : 'Update Material Costs Now'}
+              {materialUpdating ? 'Updating...' : 'Update Market Data'}
             </button>
 
             <button
@@ -1288,84 +2376,364 @@ export default function App() {
               disabled={materialLoading}
               onClick={loadMaterials}
             >
-              {materialLoading ? 'Loading...' : 'Refresh'}
+              {materialLoading ? 'Loading...' : 'Refresh Material Database'}
             </button>
 
             <hr style={styles.divider} />
 
+            <h3>Add Manual Draft Cost</h3>
+            <p style={styles.small}>
+              Optional. You can still let the AI agent add most draft prices automatically.
+            </p>
+
             <input
               style={styles.input}
-              placeholder="Material name, ex: 2x4 lumber"
+              placeholder="Material name, ex: concrete deck block"
               value={materialName}
               onChange={(e) => setMaterialName(e.target.value)}
             />
 
             <input
               style={styles.input}
-              placeholder="Category, ex: lumber"
+              placeholder="Category, ex: Concrete / Lumber / Hardware"
               value={materialCategory}
               onChange={(e) => setMaterialCategory(e.target.value)}
             />
 
             <input
               style={styles.input}
-              placeholder="Unit, ex: each / sq ft / sheet"
+              placeholder="Unit, ex: each / bag / sqft"
               value={materialUnit}
               onChange={(e) => setMaterialUnit(e.target.value)}
             />
 
             <input
               style={styles.input}
-              placeholder="Current price"
+              placeholder="Typical price"
               value={materialPrice}
               onChange={(e) => setMaterialPrice(e.target.value)}
             />
 
             <input
               style={styles.input}
-              placeholder="Source, ex: Home Depot / supplier / RSMeans"
+              placeholder="Source, ex: Home Depot / Lowe's / local supplier"
               value={materialSource}
               onChange={(e) => setMaterialSource(e.target.value)}
             />
 
             <button style={styles.primaryButton} onClick={addMaterialCost}>
-              Add Material Cost
+              Add Draft Material Cost
             </button>
 
-            <div style={{ marginTop: 20 }}>
+            <hr style={styles.divider} />
+
+            <h3>Review Saved Material Costs</h3>
+
+            <div style={{ marginTop: 16 }}>
               {materials.length === 0 && (
-                <p style={styles.muted}>No material costs yet.</p>
+                <p style={styles.muted}>
+                  No material costs yet. Run AI Research Materials on a job first, then refresh this screen.
+                </p>
               )}
 
               {materials.map((item) => {
-                const dollarChange =
-                  item.previous_price && item.current_price
-                    ? item.current_price - item.previous_price
-                    : null
+                const itemName = getMaterialName(item)
+                const typicalPrice = getMaterialTypicalPrice(item)
+                const confidence = getConfidenceLabel(item.confidence, item.human_verified)
+                const lowPrice = item.low_price ?? null
+                const highPrice = item.high_price ?? null
+                const isVerified = Boolean(item.human_verified)
 
                 return (
-                  <div key={item.id} style={styles.requestCard}>
-                    <strong>{item.material_name}</strong>
+                  <div
+                    key={item.id}
+                    style={{
+                      ...styles.requestCard,
+                      border: isVerified ? '2px solid #0f542d' : '1px solid #d7dfd3',
+                      background: isVerified ? '#f1fbf2' : 'white',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <div>
+                        <strong>{itemName}</strong>
+                        <p style={styles.small}>
+                          {item.category || 'Material'} • {item.unit || 'each'} • ZIP:{' '}
+                          {item.zip || item.region || 'Not set'}
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          background: isVerified ? '#0f542d' : '#fff8e8',
+                          color: isVerified ? 'white' : '#6f4f14',
+                          borderRadius: 999,
+                          padding: '8px 12px',
+                          fontWeight: 900,
+                          fontSize: 12,
+                          height: 'fit-content',
+                        }}
+                      >
+                        {confidence}
+                      </div>
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <div style={styles.aiBox}>
+                        <strong>Low</strong>
+                        <p>{money(lowPrice)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>Typical</strong>
+                        <p>{money(typicalPrice)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>High</strong>
+                        <p>{money(highPrice)}</p>
+                      </div>
+                    </div>
+
                     <p style={styles.small}>
-                      {item.category || 'Uncategorized'} • {item.unit || 'unit not set'}
+                      Source: {item.store_name || item.source || 'Not entered'}
+                      {item.source_url ? ' • ' : ''}
+                      {item.source_url && (
+                        <a href={item.source_url} target="_blank" rel="noreferrer">
+                          Open source
+                        </a>
+                      )}
                     </p>
-                    <p style={styles.small}>Current: {money(item.current_price)}</p>
-                    <p style={styles.small}>Previous: {money(item.previous_price)}</p>
+
                     <p style={styles.small}>
-                      Change:{' '}
-                      {dollarChange === null
-                        ? 'No previous price'
-                        : `${dollarChange >= 0 ? '+' : ''}${dollarChange.toFixed(2)}`}
+                      Last checked: {item.last_checked || item.updated_at || 'Not set'}
                     </p>
+
+                    {item.notes && <p style={styles.small}>{item.notes}</p>}
+
+                    <div style={styles.buttonRow}>
+                      <button
+                        style={styles.outlineButton}
+                        disabled={materialSavingId === item.id}
+                        onClick={() => editMaterialCost(item)}
+                      >
+                        {materialSavingId === item.id ? 'Saving...' : 'Edit / Save Price'}
+                      </button>
+
+                      <button
+                        style={styles.primaryButton}
+                        disabled={materialSavingId === item.id || isVerified}
+                        onClick={() => approveMaterialCost(item)}
+                      >
+                        {isVerified ? 'Verified' : 'Approve as Verified'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'labor' && (
+          <section style={styles.card}>
+            <h2>Labor Rate Review</h2>
+            <p style={styles.muted}>
+              Review and approve labor rates by trade, job type, unit, ZIP, and region.
+              This becomes labor memory so estimates can use your verified rates instead
+              of guessing.
+            </p>
+
+            <div style={styles.noticeBox}>
+              Confidence labels: <strong>labor_verified</strong> = you approved it,{' '}
+              <strong>labor_review</strong> = draft rate that needs review, and{' '}
+              <strong>needs_review</strong> = incomplete or uncertain rate. AI can draft,
+              but human approval is required before any proposal, estimate, purchase order,
+              email, or submission is sent.
+            </div>
+
+            <button
+              style={styles.outlineButton}
+              disabled={laborLoading}
+              onClick={loadLaborRates}
+            >
+              {laborLoading ? 'Loading...' : 'Refresh Labor Rates'}
+            </button>
+
+            <hr style={styles.divider} />
+
+            <h3>Add Manual Draft Labor Rate</h3>
+            <p style={styles.small}>
+              Use this for local rates you know. Later the AI estimator can pull from this
+              table when building the labor side of estimates.
+            </p>
+
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Trade, ex: Roofing / Decking / Painting"
+                value={laborTrade}
+                onChange={(e) => setLaborTrade(e.target.value)}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Job type, ex: roof repair / deck framing"
+                value={laborJobType}
+                onChange={(e) => setLaborJobType(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.grid3}>
+              <input
+                style={styles.input}
+                placeholder="Unit, ex: hour / sqft / day / fixed"
+                value={laborUnit}
+                onChange={(e) => setLaborUnit(e.target.value)}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Typical rate"
+                value={laborTypicalRate}
+                onChange={(e) => setLaborTypicalRate(e.target.value)}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Region, ex: Portland Metro"
+                value={laborRegion}
+                onChange={(e) => setLaborRegion(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.grid3}>
+              <input
+                style={styles.input}
+                placeholder="Minimum charge"
+                value={laborMinimumCharge}
+                onChange={(e) => setLaborMinimumCharge(e.target.value)}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Trip charge"
+                value={laborTripCharge}
+                onChange={(e) => setLaborTripCharge(e.target.value)}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Disposal fee"
+                value={laborDisposalFee}
+                onChange={(e) => setLaborDisposalFee(e.target.value)}
+              />
+            </div>
+
+            <button style={styles.primaryButton} onClick={addLaborRate}>
+              Add Draft Labor Rate
+            </button>
+
+            <hr style={styles.divider} />
+
+            <h3>Review Saved Labor Rates</h3>
+
+            <div style={{ marginTop: 16 }}>
+              {laborRates.length === 0 && (
+                <p style={styles.muted}>
+                  No labor rates yet. Add a few draft rates for your local market, then
+                  approve them as verified when you are comfortable using them.
+                </p>
+              )}
+
+              {laborRates.map((rate) => {
+                const isVerified = Boolean(rate.human_verified)
+                const confidence = getLaborConfidenceLabel(rate.confidence, rate.human_verified)
+
+                return (
+                  <div
+                    key={rate.id}
+                    style={{
+                      ...styles.requestCard,
+                      border: isVerified ? '2px solid #0f542d' : '1px solid #d7dfd3',
+                      background: isVerified ? '#f1fbf2' : 'white',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <div>
+                        <strong>{rate.trade}</strong>
+                        <p style={styles.small}>
+                          {rate.job_type || 'General'} • {rate.unit || 'hour'} • ZIP:{' '}
+                          {rate.zip || rate.region || 'Not set'}
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          background: isVerified ? '#0f542d' : '#fff8e8',
+                          color: isVerified ? 'white' : '#6f4f14',
+                          borderRadius: 999,
+                          padding: '8px 12px',
+                          fontWeight: 900,
+                          fontSize: 12,
+                          height: 'fit-content',
+                        }}
+                      >
+                        {confidence}
+                      </div>
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <div style={styles.aiBox}>
+                        <strong>Low</strong>
+                        <p>{money(rate.low_rate)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>Typical</strong>
+                        <p>{money(rate.typical_rate)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>High</strong>
+                        <p>{money(rate.high_rate)}</p>
+                      </div>
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <div style={styles.aiBox}>
+                        <strong>Minimum</strong>
+                        <p>{money(rate.minimum_charge)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>Trip</strong>
+                        <p>{money(rate.trip_charge)}</p>
+                      </div>
+                      <div style={styles.aiBox}>
+                        <strong>Disposal</strong>
+                        <p>{money(rate.disposal_fee)}</p>
+                      </div>
+                    </div>
+
                     <p style={styles.small}>
-                      Percent change:{' '}
-                      {item.percent_change === null || item.percent_change === undefined
-                        ? 'Not calculated'
-                        : `${item.percent_change >= 0 ? '+' : ''}${item.percent_change.toFixed(2)}%`}
+                      Source: {rate.source || 'Shelter Prep'} • Last checked:{' '}
+                      {rate.last_checked || rate.updated_at || 'Not set'}
                     </p>
-                    <p style={styles.small}>Source: {item.source || 'Not entered'}</p>
-                    <p style={styles.small}>Region: {item.region || 'Not set'}</p>
-                    <p style={styles.small}>Updated: {item.updated_at}</p>
+
+                    {rate.notes && <p style={styles.small}>{rate.notes}</p>}
+
+                    <div style={styles.buttonRow}>
+                      <button
+                        style={styles.outlineButton}
+                        disabled={laborSavingId === rate.id}
+                        onClick={() => editLaborRate(rate)}
+                      >
+                        {laborSavingId === rate.id ? 'Saving...' : 'Edit / Save Rate'}
+                      </button>
+
+                      <button
+                        style={styles.primaryButton}
+                        disabled={laborSavingId === rate.id || isVerified}
+                        onClick={() => approveLaborRate(rate)}
+                      >
+                        {isVerified ? 'Verified' : 'Approve as Verified'}
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -1375,12 +2743,295 @@ export default function App() {
 
         {isAdmin && activeTab === 'estimates' && (
           <section style={styles.card}>
-            <h2>AI Estimator</h2>
+            <h2>AI Estimate Review</h2>
             <p style={styles.muted}>
-              Use the Run AI Estimate button from a dashboard request. Invoice extraction,
-              invoice cost analysis, and material monitoring are connected for the next
-              estimator upgrade.
+              AI can research and draft. A human must review and approve line items before
+              any proposal, estimate, purchase order, email, or submission is sent.
             </p>
+
+            {!selectedEstimateRequest && (
+              <div style={styles.noticeBox}>
+                Open a job from the Dashboard, then click Open Estimate Review. You can also
+                run AI Research Materials first to fill this panel with draft material items.
+              </div>
+            )}
+
+            {selectedEstimateRequest && (
+              <>
+                <div style={styles.requestCard}>
+                  <strong>{selectedEstimateRequest.propertyAddress}</strong>
+                  <p style={styles.small}>
+                    {selectedEstimateRequest.city}, {selectedEstimateRequest.state}{' '}
+                    {selectedEstimateRequest.zip}
+                  </p>
+                  <p style={styles.small}>
+                    {selectedEstimateRequest.requesterName} • {selectedEstimateRequest.email}
+                  </p>
+                  <p>{selectedEstimateRequest.description}</p>
+                  <div style={styles.noticeBox}>
+                    Estimate status: {approvedEstimateCount}/{estimateItems.length} line items
+                    approved. {allEstimateItemsApproved ? 'Ready for draft PDF.' : 'Still needs human review.'}
+                  </div>
+                </div>
+
+                <div style={styles.aiBox}>
+                  <strong>Labor Rate Auto-Fill</strong>
+                  <p style={styles.small}>{estimateLaborMessage}</p>
+
+                  {appliedLaborRate ? (
+                    <div style={styles.noticeBox}>
+                      <strong>Matched labor memory:</strong> {appliedLaborRate.trade}
+                      {appliedLaborRate.job_type ? ` / ${appliedLaborRate.job_type}` : ''} •{' '}
+                      {money(Number(appliedLaborRate.typical_rate || 0))}/{appliedLaborRate.unit || 'hour'} •{' '}
+                      {getLaborConfidenceLabel(appliedLaborRate.confidence, appliedLaborRate.human_verified)}
+                    </div>
+                  ) : (
+                    <div style={styles.noticeBox}>
+                      No verified labor rate is currently applied. You can enter labor manually, or approve rates in Labor Rates first.
+                    </div>
+                  )}
+
+                  <div style={styles.grid3}>
+                    <input
+                      style={styles.input}
+                      type="number"
+                      placeholder="Labor units / hours"
+                      value={estimateLaborUnits}
+                      onChange={(e) => setEstimateLaborUnits(e.target.value)}
+                    />
+                    <input
+                      style={styles.input}
+                      type="number"
+                      placeholder="Minimum charge"
+                      value={estimateMinimumCharge}
+                      onChange={(e) => setEstimateMinimumCharge(e.target.value)}
+                    />
+                    <input
+                      style={styles.input}
+                      type="number"
+                      placeholder="Trip charge"
+                      value={estimateTripCharge}
+                      onChange={(e) => setEstimateTripCharge(e.target.value)}
+                    />
+                  </div>
+
+                  <div style={styles.grid2}>
+                    <input
+                      style={styles.input}
+                      type="number"
+                      placeholder="Disposal fee"
+                      value={estimateDisposalFee}
+                      onChange={(e) => setEstimateDisposalFee(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => selectedEstimateRequest && applyBestLaborRateForRequest(selectedEstimateRequest, true)}
+                    >
+                      Re-Apply Best Labor Rate
+                    </button>
+                  </div>
+                </div>
+
+                <div style={styles.grid2}>
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="Labor total / manual override"
+                    value={estimateLaborCost}
+                    onChange={(e) => setEstimateLaborCost(e.target.value)}
+                  />
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="Markup %"
+                    value={estimateMarkupPercent}
+                    onChange={(e) => setEstimateMarkupPercent(e.target.value)}
+                  />
+                </div>
+
+                <input
+                  style={styles.input}
+                  type="number"
+                  placeholder="Contingency %"
+                  value={estimateContingencyPercent}
+                  onChange={(e) => setEstimateContingencyPercent(e.target.value)}
+                />
+
+                <textarea
+                  style={{ ...styles.input, minHeight: 100 }}
+                  placeholder="Estimate notes and assumptions"
+                  value={estimateNotes}
+                  onChange={(e) => setEstimateNotes(e.target.value)}
+                />
+
+                <div style={styles.aiBox}>
+                  <strong>Estimate Summary</strong>
+                  <p>Materials: {money(estimateMaterialSubtotal)}</p>
+                  <p>Labor: {money(estimateLaborNumber)}</p>
+                  {appliedLaborRate && (
+                    <p style={styles.small}>
+                      Labor base: {money(estimateLaborBaseNumber)} • Minimum:{' '}
+                      {money(estimateLaborMinimumNumber)} • Trip:{' '}
+                      {money(estimateTripChargeNumber)} • Disposal:{' '}
+                      {money(estimateDisposalFeeNumber)}
+                    </p>
+                  )}
+                  <p>
+                    Markup: {estimateMarkupPercent}% = {money(estimateMarkupDollars)}
+                  </p>
+                  <p>
+                    Contingency: {estimateContingencyPercent}% ={' '}
+                    {money(estimateContingencyDollars)}
+                  </p>
+                  <p>
+                    Suggested range: {money(estimateLowTotal)} - {money(estimatePremiumTotal)}
+                  </p>
+                  <h3>Standard estimate: {money(estimateStandardTotal)}</h3>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+                  <button style={styles.primaryButton} onClick={addManualEstimateItem}>
+                    Add Manual Line Item
+                  </button>
+                  <button style={styles.outlineButton} onClick={approveAllEstimateItems}>
+                    Approve All Line Items
+                  </button>
+                  <button style={styles.primaryButton} onClick={generateEstimatePdf}>
+                    Generate Draft PDF
+                  </button>
+                  <button style={styles.outlineButton} onClick={generateInvoicePdf}>
+                    Generate Draft Invoice
+                  </button>
+                  <button
+                    style={styles.outlineButton}
+                    onClick={() => selectedEstimateRequest && openEstimateReview(selectedEstimateRequest)}
+                    disabled={estimateLoading}
+                  >
+                    {estimateLoading ? 'Loading...' : 'Refresh Items'}
+                  </button>
+                </div>
+
+                {estimateItems.length === 0 && (
+                  <div style={styles.empty}>
+                    No estimate items yet. Run AI Research Materials from the Dashboard, or add a
+                    manual line item.
+                  </div>
+                )}
+
+                {estimateItems.map((item) => (
+                  <div key={item.id} style={styles.requestCard}>
+                    <div style={styles.grid2}>
+                      <input
+                        style={styles.input}
+                        value={item.item_name || ''}
+                        onChange={(e) =>
+                          updateLocalEstimateItem(item.id, { item_name: e.target.value })
+                        }
+                      />
+                      <input
+                        style={styles.input}
+                        value={item.source || ''}
+                        placeholder="Source"
+                        onChange={(e) =>
+                          updateLocalEstimateItem(item.id, { source: e.target.value })
+                        }
+                      />
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <input
+                        style={styles.input}
+                        type="number"
+                        value={Number(item.quantity || 0)}
+                        onChange={(e) =>
+                          updateLocalEstimateItem(item.id, {
+                            quantity: Number(e.target.value),
+                          })
+                        }
+                      />
+                      <input
+                        style={styles.input}
+                        type="number"
+                        value={Number(item.unit_price || 0)}
+                        onChange={(e) =>
+                          updateLocalEstimateItem(item.id, {
+                            unit_price: Number(e.target.value),
+                          })
+                        }
+                      />
+                      <input
+                        style={styles.input}
+                        value={money(Number(item.total_price || 0))}
+                        readOnly
+                      />
+                    </div>
+
+                    <input
+                      style={styles.input}
+                      placeholder="Source URL"
+                      value={item.source_url || ''}
+                      onChange={(e) =>
+                        updateLocalEstimateItem(item.id, { source_url: e.target.value })
+                      }
+                    />
+
+                    <p style={styles.small}>
+                      Confidence: {item.confidence || 'needs_review'} • Status:{' '}
+                      {item.human_approved ? 'Human approved' : 'Needs review'}
+                    </p>
+
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button
+                        style={styles.primaryButton}
+                        onClick={() => saveEstimateItem(item)}
+                        disabled={estimateSavingId === item.id}
+                      >
+                        {estimateSavingId === item.id ? 'Saving...' : 'Save Line Item'}
+                      </button>
+                      <button
+                        style={styles.outlineButton}
+                        onClick={() => toggleEstimateItemApproved(item)}
+                      >
+                        {item.human_approved ? 'Unapprove' : 'Approve'}
+                      </button>
+                      {item.source_url && (
+                        <button
+                          style={styles.linkButton}
+                          onClick={() => window.open(item.source_url || '', '_blank')}
+                        >
+                          Open Source
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {estimateResearchRows.length > 0 && (
+                  <div style={{ marginTop: 22 }}>
+                    <h3>Research Screenshots</h3>
+                    <div style={styles.fileGrid}>
+                      {estimateResearchRows.map((row) => (
+                        <div key={row.id} style={styles.fileBox}>
+                          <strong>{row.source || 'Source'}</strong>
+                          <p style={styles.small}>{row.search_query}</p>
+                          {row.screenshot_url ? (
+                            <button
+                              style={styles.linkButton}
+                              onClick={() => window.open(row.screenshot_url || '', '_blank')}
+                            >
+                              Open Screenshot
+                            </button>
+                          ) : (
+                            <p style={styles.small}>No screenshot saved.</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </section>
         )}
       </main>
