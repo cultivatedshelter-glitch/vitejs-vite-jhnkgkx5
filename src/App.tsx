@@ -307,7 +307,7 @@ type MissingInfoRequest = {
 }
 
 const STORAGE_KEY = 'shelter-prep-requests-v1'
-const ADMIN_PIN = '0202'
+const ADMIN_PIN = '6303'
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
