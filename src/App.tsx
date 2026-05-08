@@ -537,6 +537,8 @@ export default function App() {
   const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
   const [takeoffLoadingId, setTakeoffLoadingId] = useState<string | null>(null)
   const [autoWorkflowLoadingId, setAutoWorkflowLoadingId] = useState<string | null>(null)
+  const [sellerPrepLoadingId, setSellerPrepLoadingId] = useState<string | null>(null)
+const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [intakeText, setIntakeText] = useState('')
   const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
   const [intakeDraft, setIntakeDraft] = useState<IntakeDraft | null>(null)
@@ -1331,6 +1333,45 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Seller Prep analysis failed.')
+    }
+  }
+  async function openSellerPrepReview(request: WorkRequest) {
+    setSellerPrepLoadingId(request.id)
+  
+    try {
+      const { data: analyses, error: analysisError } = await supabase
+        .from('seller_prep_analyses')
+        .select('*')
+        .eq('lead_id', request.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+  
+      if (analysisError) throw analysisError
+  
+      const analysis = analyses?.[0]
+  
+      if (!analysis) {
+        alert('No Seller Prep analysis found yet. Click Run Seller Prep Analysis first.')
+        return
+      }
+ 
+      const { data: items, error: itemsError } = await supabase
+        .from('seller_prep_items')
+        .select('*')
+        .eq('analysis_id', analysis.id)
+        .order('sort_order', { ascending: true })
+  
+      if (itemsError) throw itemsError
+  
+      setSellerPrepReview({
+        analysis,
+        items: items || [],
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not open Seller Prep Review.')
+    } finally {
+      setSellerPrepLoadingId(null)
     }
   }
   async function ensureLeadExists(request: WorkRequest) {
@@ -3323,6 +3364,19 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 >
   Run Seller Prep Analysis
 </button>
+<button
+  type="button"
+  style={{
+    ...styles.wideButton,
+    background: '#f7efe7',
+    color: '#4c3b2f',
+    border: '1px solid #d8c2ad',
+  }}
+  disabled={sellerPrepLoadingId === request.id}
+  onClick={() => openSellerPrepReview(request)}
+>
+  {sellerPrepLoadingId === request.id ? 'Opening Seller Prep...' : 'Open Seller Prep Review'}
+</button>
                         <button
                           type="button"
                           style={{
@@ -4324,7 +4378,165 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
       </main>
+      {sellerPrepReview && (
+  <div style={styles.overlay}>
+    <div
+      style={{
+        ...styles.modal,
+        maxWidth: 980,
+        maxHeight: '90vh',
+        overflow: 'auto',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <h2 style={{ marginTop: 0, color: '#06542d' }}>
+            Seller Prep Review
+          </h2>
+          <p style={{ marginTop: 0 }}>
+            Powered by AI. Approved by humans.
+          </p>
+        </div>
 
+        <button
+          type="button"
+          style={styles.secondaryButton}
+          onClick={() => setSellerPrepReview(null)}
+        >
+          Close
+        </button>
+      </div>
+
+      <div
+        style={{
+          background: '#e8f5eb',
+          border: '1px solid #b7dfc1',
+          borderRadius: 16,
+          padding: 16,
+          marginBottom: 16,
+        }}
+      >
+        <strong>Total Repair Range:</strong>{' '}
+        ${sellerPrepReview.analysis.total_repair_low || 0} - $
+        {sellerPrepReview.analysis.total_repair_high || 0}
+        <br />
+
+        <strong>Possible Value / Negotiation Impact:</strong>{' '}
+        ${sellerPrepReview.analysis.total_value_impact_low || 0} - $
+        {sellerPrepReview.analysis.total_value_impact_high || 0}
+        <br />
+
+        <strong>Seller Net Impact:</strong>{' '}
+        ${sellerPrepReview.analysis.seller_net_low || 0} - $
+        {sellerPrepReview.analysis.seller_net_high || 0}
+        <br />
+
+        <strong>Average Buyer Impact:</strong>{' '}
+        {sellerPrepReview.analysis.average_buyer_impact_score || 0}/10
+        <br />
+
+        <strong>Average Inspection Risk:</strong>{' '}
+        {sellerPrepReview.analysis.average_inspection_risk_score || 0}/10
+      </div>
+
+      <div
+        style={{
+          background: '#fff7df',
+          border: '1px solid #eed38a',
+          borderRadius: 16,
+          padding: 14,
+          marginBottom: 16,
+          color: '#6b4a00',
+        }}
+      >
+        AI-assisted analysis only. Human review is required before sending,
+        approving, ordering, submitting, or making final recommendations.
+      </div>
+
+      <h3>Agent Summary</h3>
+      <p>{sellerPrepReview.analysis.agent_summary || 'No summary available.'}</p>
+
+      <h3>Seller Summary</h3>
+      <p>{sellerPrepReview.analysis.seller_summary || 'No summary available.'}</p>
+
+      <h3>Repair Items</h3>
+
+      <div style={{ display: 'grid', gap: 12 }}>
+        {sellerPrepReview.items.length === 0 ? (
+          <div>No seller prep items found.</div>
+        ) : (
+          sellerPrepReview.items.map((item: any) => (
+            <div
+              key={item.id}
+              style={{
+                border: '1px solid #ddd',
+                borderRadius: 16,
+                padding: 16,
+                background: '#fff',
+              }}
+            >
+              <h4 style={{ margin: '0 0 8px 0', color: '#06542d' }}>
+                {item.repair_item}
+              </h4>
+
+              <p style={{ marginTop: 0 }}>
+                {item.scope_summary || 'No scope summary.'}
+              </p>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div>
+                  <strong>Trade:</strong> {item.trade_category || 'General'}
+                </div>
+
+                <div>
+                  <strong>Cost Range:</strong> ${item.estimated_cost_low || 0} - $
+                  {item.estimated_cost_high || 0}
+                </div>
+
+                <div>
+                  <strong>Buyer Impact Score:</strong>{' '}
+                  {item.buyer_impact_score || 0}/10
+                </div>
+
+                <div>
+                  <strong>Inspection Risk Score:</strong>{' '}
+                  {item.inspection_risk_score || 0}/10
+                </div>
+
+                <div>
+                  <strong>Possible Value / Negotiation Impact:</strong>{' '}
+                  ${item.estimated_value_impact_low || 0} - $
+                  {item.estimated_value_impact_high || 0}
+                </div>
+
+                <div>
+                  <strong>Seller Net Impact:</strong>{' '}
+                  ${item.seller_net_impact_low || 0} - $
+                  {item.seller_net_impact_high || 0}
+                </div>
+
+                <div>
+                  <strong>Recommendation:</strong>{' '}
+                  {String(item.recommendation || 'needs_human_review').replaceAll('_', ' ')}
+                </div>
+
+                <div>
+                  <strong>Confidence:</strong>{' '}
+                  {String(item.confidence || 'needs_review').replaceAll('_', ' ')}
+                </div>
+
+                <div>
+                  <strong>Human Review:</strong>{' '}
+                  {String(item.human_review_status || 'needs_review').replaceAll('_', ' ')}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  </div>
+)}
       {showLogin && (
         <div style={styles.overlay} onClick={() => setShowLogin(false)}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
