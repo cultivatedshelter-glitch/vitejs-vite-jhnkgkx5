@@ -1012,21 +1012,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   async function loadArchivedRequestsFromSupabase() {
     setArchivedLoading(true)
-
+  
     try {
       const { data, error } = await supabase
         .from('leads')
         .select('*')
         .eq('archived', true)
         .order('archived_at', { ascending: false })
-
-      if (error) throw error
-
+  
+      if (error) {
+        console.error('Archived leads load error:', error)
+        setArchivedRequests([])
+        return
+      }
+  
       const mapped = (data || []).map(mapLeadRowToWorkRequest)
       setArchivedRequests(mapped)
     } catch (error: any) {
-      console.error(error)
-      alert(error?.message || 'Could not load archived leads from Supabase.')
+      console.error('Archived leads fetch failed:', error)
+      setArchivedRequests([])
     } finally {
       setArchivedLoading(false)
     }
