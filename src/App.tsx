@@ -536,7 +536,7 @@ export default function App() {
   const [researchingId, setResearchingId] = useState<string | null>(null)
   const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
   const [takeoffLoadingId, setTakeoffLoadingId] = useState<string | null>(null)
-
+  const [autoWorkflowLoadingId, setAutoWorkflowLoadingId] = useState<string | null>(null)
   const [intakeText, setIntakeText] = useState('')
   const [intakeScreenshotFile, setIntakeScreenshotFile] = useState<File | null>(null)
   const [intakeDraft, setIntakeDraft] = useState<IntakeDraft | null>(null)
@@ -1255,7 +1255,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           files: [...request.photos, ...request.documents],
         },
       })
-
+      
       if (error) {
         console.error(error)
         alert('AI error: ' + error.message)
@@ -1286,7 +1286,53 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setAiLoadingId(null)
     }
   }
-
+  
+  
+  // PASTE SELLER PREP FUNCTION HERE
+  async function runSellerPrepAnalysis(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will create Seller Prep Intelligence: buyer impact score, inspection risk score, repair-vs-credit recommendation, and seller net impact. Continue?'
+    )
+  
+    if (!confirmStart) return
+  
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      return
+    }
+  
+    try {
+      const response = await fetch(`${AGENT_API_URL}/run-seller-prep-analysis`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          leadId: request.id,
+          description: request.description,
+          workType: request.workType || '',
+          zip: request.zip || '',
+          request,
+        }),
+      })
+  
+      const result = await response.json()
+  
+      if (!response.ok) {
+        throw new Error(result.error || 'Seller Prep analysis failed.')
+      }
+  
+      alert(
+        `Seller Prep analysis created. Items: ${result.itemCount || 0}. Human review required.`
+      )
+  
+      await loadRequestsFromSupabase()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Seller Prep analysis failed.')
+    }
+  }
   async function ensureLeadExists(request: WorkRequest) {
     const { data: existing, error: selectError } = await supabase
       .from('leads')
@@ -1459,7 +1505,60 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setTakeoffLoadingId(null)
     }
   }
-
+  async function autoProcessLead(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will auto-process the lead: AI intake review, quantity takeoff, material pricing, missing-info draft, and status update. It will NOT send emails, submit proposals, order materials, or approve estimates. Human review is still required.'
+    )
+  
+    if (!confirmStart) return
+  
+    if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
+      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      return
+    }
+  
+    setAutoWorkflowLoadingId(request.id)
+  
+    try {
+      await ensureLeadExists(request)
+  
+      const response = await fetch(`${AGENT_API_URL}/auto-process-lead`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-key': AGENT_API_KEY,
+        },
+        body: JSON.stringify({
+          leadId: request.id,
+          description: request.description,
+          workType: request.workType,
+          zip: request.zip,
+          request,
+        }),
+      })
+  
+      const result = await response.json().catch(() => ({}))
+  
+      if (!response.ok) {
+        throw new Error(result?.error || 'Auto workflow failed.')
+      }
+  
+      alert(
+        `Auto workflow complete. Status: ${
+          result.nextStatus || 'review'
+        }. ${result.itemCount || 0} draft items created. ${
+          result.missingInfo?.length || 0
+        } missing-info items found. Human review required.`
+      )
+  
+      await loadRequests()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Auto workflow failed.')
+    } finally {
+      setAutoWorkflowLoadingId(null)
+    }
+  }
 
   async function applyBestLaborRateForRequest(request: WorkRequest, showAlert = true) {
     try {
@@ -3212,7 +3311,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         >
                           {aiLoadingId === request.id ? 'Running AI...' : 'Run AI Estimate'}
                         </button>
-
+                        <button
+  type="button"
+  style={{
+    ...styles.wideButton,
+    background: '#ffffff',
+    color: '#06542d',
+    border: '1px solid #06542d',
+  }}
+  onClick={() => runSellerPrepAnalysis(request)}
+>
+  Run Seller Prep Analysis
+</button>
                         <button
                           type="button"
                           style={{
