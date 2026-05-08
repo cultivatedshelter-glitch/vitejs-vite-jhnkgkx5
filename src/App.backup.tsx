@@ -366,6 +366,7 @@ function ProjectCard({ project }: { project: ProjectSample }) {
 }
 
 export default function App() {
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('request')
   const [showLogin, setShowLogin] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')

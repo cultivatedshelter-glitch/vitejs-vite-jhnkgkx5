@@ -2930,12 +2930,69 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             New Request
           </button>
 
-          <button
-            style={activeTab === 'gallery' ? styles.navActive : styles.navButton}
-            onClick={() => setActiveTab('gallery')}
-          >
-            Gallery
-          </button>
+          <div style={{ position: 'relative' }}>
+  <button
+    type="button"
+    style={styles.navButton}
+    onClick={() => setShowMoreMenu((current) => !current)}
+  >
+    More ▾
+  </button>
+
+  {showMoreMenu && (
+    <div
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        right: 0,
+        minWidth: 220,
+        background: '#ffffff',
+        border: '1px solid #d8cfc4',
+        borderRadius: 16,
+        boxShadow: '0 18px 45px rgba(0,0,0,0.14)',
+        padding: 8,
+        zIndex: 100,
+      }}
+    >
+      {[
+        { label: 'Gallery', tab: 'gallery' },
+        ...(isAdmin
+          ? [
+              { label: 'AI Intake', tab: 'intake' },
+              { label: 'Messages', tab: 'messages' },
+              { label: 'Archived Leads', tab: 'archived' },
+              { label: 'Invoices', tab: 'invoices' },
+              { label: 'Material Costs', tab: 'materials' },
+              { label: 'Labor Rates', tab: 'labor' },
+              { label: 'AI Estimator', tab: 'estimates' },
+            ]
+          : []),
+      ].map((item) => (
+        <button
+          key={item.tab}
+          type="button"
+          style={{
+            width: '100%',
+            textAlign: 'left',
+            padding: '12px 14px',
+            border: 'none',
+            borderRadius: 12,
+            background: activeTab === item.tab ? '#e8f5eb' : '#ffffff',
+            color: '#123225',
+            fontWeight: 800,
+            cursor: 'pointer',
+          }}
+          onClick={() => {
+            setActiveTab(item.tab as Tab)
+            setShowMoreMenu(false)
+          }}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )}
+</div>
 
 
           {isAdmin && (
