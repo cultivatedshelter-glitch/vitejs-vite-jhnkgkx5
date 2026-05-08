@@ -1358,7 +1358,199 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         alert('No Seller Prep analysis found yet. Click Run Seller Prep Analysis first.')
         return
       }
- 
+      function formatSellerPrepMoney(value: any) {
+        const number = Number(value || 0)
+        return new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          maximumFractionDigits: 0,
+        }).format(number)
+      }
+      
+      function cleanSellerPrepText(value: any) {
+        return String(value || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;')
+      }
+      
+      function sellerPrepLabel(value: any) {
+        return String(value || 'needs_human_review')
+          .replaceAll('_', ' ')
+          .replace(/\b\w/g, (letter) => letter.toUpperCase())
+      }
+      
+      function printSellerPrepReport() {
+        if (!sellerPrepReview) {
+          alert('Open a Seller Prep Review first.')
+          return
+        }
+      
+        const analysis = sellerPrepReview.analysis || {}
+        const items = sellerPrepReview.items || []
+      
+        const itemRows = items
+          .map(
+            (item: any) => `
+              <div class="item">
+                <h3>${cleanSellerPrepText(item.repair_item)}</h3>
+                <p>${cleanSellerPrepText(item.scope_summary || 'No scope summary.')}</p>
+      
+                <div class="grid">
+                  <div><strong>Trade:</strong> ${cleanSellerPrepText(item.trade_category || 'General')}</div>
+                  <div><strong>Cost Range:</strong> ${formatSellerPrepMoney(item.estimated_cost_low)} - ${formatSellerPrepMoney(item.estimated_cost_high)}</div>
+                  <div><strong>Buyer Impact:</strong> ${item.buyer_impact_score || 0}/10</div>
+                  <div><strong>Inspection Risk:</strong> ${item.inspection_risk_score || 0}/10</div>
+                  <div><strong>Value / Negotiation Impact:</strong> ${formatSellerPrepMoney(item.estimated_value_impact_low)} - ${formatSellerPrepMoney(item.estimated_value_impact_high)}</div>
+                  <div><strong>Seller Net Impact:</strong> ${formatSellerPrepMoney(item.seller_net_impact_low)} - ${formatSellerPrepMoney(item.seller_net_impact_high)}</div>
+                  <div><strong>Recommendation:</strong> ${sellerPrepLabel(item.recommendation)}</div>
+                  <div><strong>Confidence:</strong> ${sellerPrepLabel(item.confidence)}</div>
+                </div>
+              </div>
+            `
+          )
+          .join('')
+      
+        const html = `
+          <!doctype html>
+          <html>
+            <head>
+              <title>Seller Prep Report</title>
+              <style>
+                body {
+                  font-family: Arial, sans-serif;
+                  color: #123225;
+                  padding: 36px;
+                  line-height: 1.45;
+                }
+      
+                .brand {
+                  letter-spacing: 8px;
+                  color: #06542d;
+                  font-size: 28px;
+                  font-weight: 800;
+                  margin-bottom: 4px;
+                }
+      
+                .subbrand {
+                  letter-spacing: 5px;
+                  font-size: 12px;
+                  font-weight: 700;
+                  margin-bottom: 28px;
+                }
+      
+                .summary {
+                  background: #e8f5eb;
+                  border: 1px solid #b7dfc1;
+                  border-radius: 14px;
+                  padding: 18px;
+                  margin: 18px 0;
+                }
+      
+                .warning {
+                  background: #fff7df;
+                  border: 1px solid #eed38a;
+                  color: #6b4a00;
+                  border-radius: 14px;
+                  padding: 14px;
+                  margin: 18px 0;
+                }
+      
+                .grid {
+                  display: grid;
+                  grid-template-columns: 1fr 1fr;
+                  gap: 8px 18px;
+                }
+      
+                .item {
+                  border: 1px solid #ddd;
+                  border-radius: 14px;
+                  padding: 16px;
+                  margin: 14px 0;
+                  page-break-inside: avoid;
+                }
+      
+                h1, h2, h3 {
+                  color: #06542d;
+                }
+      
+                .footer {
+                  margin-top: 32px;
+                  font-size: 12px;
+                  color: #555;
+                  border-top: 1px solid #ddd;
+                  padding-top: 12px;
+                }
+      
+                @media print {
+                  button {
+                    display: none;
+                  }
+      
+                  body {
+                    padding: 20px;
+                  }
+                }
+              </style>
+            </head>
+      
+            <body>
+              <div class="brand">SHELTER PREP</div>
+              <div class="subbrand">HOME SERVICES</div>
+      
+              <h1>Seller Prep Report</h1>
+              <p><strong>Powered by AI. Approved by humans.</strong></p>
+      
+              <div class="summary">
+                <h2>Property Summary</h2>
+                <p><strong>Address:</strong> ${cleanSellerPrepText(analysis.property_address || 'Not provided')}</p>
+                <p><strong>Total Repair Range:</strong> ${formatSellerPrepMoney(analysis.total_repair_low)} - ${formatSellerPrepMoney(analysis.total_repair_high)}</p>
+                <p><strong>Possible Value / Negotiation Impact:</strong> ${formatSellerPrepMoney(analysis.total_value_impact_low)} - ${formatSellerPrepMoney(analysis.total_value_impact_high)}</p>
+                <p><strong>Seller Net Impact:</strong> ${formatSellerPrepMoney(analysis.seller_net_low)} - ${formatSellerPrepMoney(analysis.seller_net_high)}</p>
+                <p><strong>Average Buyer Impact:</strong> ${analysis.average_buyer_impact_score || 0}/10</p>
+                <p><strong>Average Inspection Risk:</strong> ${analysis.average_inspection_risk_score || 0}/10</p>
+              </div>
+      
+              <div class="warning">
+                AI-assisted analysis only. Human review is required before sending, approving,
+                ordering materials, submitting proposals, or making final recommendations.
+              </div>
+      
+              <h2>Agent Summary</h2>
+              <p>${cleanSellerPrepText(analysis.agent_summary || 'No agent summary available.')}</p>
+      
+              <h2>Seller Summary</h2>
+              <p>${cleanSellerPrepText(analysis.seller_summary || 'No seller summary available.')}</p>
+      
+              <h2>Repair Items</h2>
+              ${itemRows || '<p>No seller prep items found.</p>'}
+      
+              <div class="footer">
+                Shelter Prep report. AI-assisted draft. Human review required.
+              </div>
+      
+              <script>
+                window.onload = function () {
+                  window.print()
+                }
+              </script>
+            </body>
+          </html>
+        `
+      
+        const printWindow = window.open('', '_blank')
+      
+        if (!printWindow) {
+          alert('Popup blocked. Please allow popups, then try again.')
+          return
+        }
+      
+        printWindow.document.open()
+        printWindow.document.write(html)
+        printWindow.document.close()
+      }
       const { data: items, error: itemsError } = await supabase
         .from('seller_prep_items')
         .select('*')
@@ -4401,7 +4593,21 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             Powered by AI. Approved by humans.
           </p>
         </div>
-
+        <button
+  type="button"
+  style={{
+    background: '#06542d',
+    color: '#ffffff',
+    border: '1px solid #06542d',
+    borderRadius: 12,
+    padding: '10px 14px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  }}
+  onClick={printSellerPrepReport}
+>
+  Print / Save PDF Report
+</button>
         <button
           type="button"
           style={styles.secondaryButton}
