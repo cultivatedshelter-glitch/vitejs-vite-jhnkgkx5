@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import Gallery from './components/Gallery'
+import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts } from './propertyLookup'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
@@ -34,6 +35,7 @@ type WorkRequest = {
   urgency: string
   occupancy: string
   timeline: string
+  propertyFacts?: PropertyFacts
   description: string
   photos: StoredFile[]
   documents: StoredFile[]
@@ -492,6 +494,7 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     urgency: row.urgency || 'Standard',
     occupancy: row.occupancy || 'Unknown',
     timeline: row.timeline || '',
+    propertyFacts: emptyPropertyFacts(),
     description: row.description || row.scope || row.notes || '',
     photos: [],
     documents: [],
@@ -522,6 +525,9 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [workType, setWorkType] = useState(WORK_TYPES[0])
   const [propertyAddress, setPropertyAddress] = useState('')
+  const [propertyFacts, setPropertyFacts] = useState<PropertyFacts>(emptyPropertyFacts())
+  const [propertyLookupLoading, setPropertyLookupLoading] = useState(false)
+  const [propertyLookupMessage, setPropertyLookupMessage] = useState('')
   const [city, setCity] = useState('')
   const [stateValue, setStateValue] = useState('')
   const [zip, setZip] = useState('')
@@ -666,6 +672,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     setPhone('')
     setWorkType(WORK_TYPES[0])
     setPropertyAddress('')
+    setPropertyFacts(emptyPropertyFacts())
+    setPropertyLookupMessage('')
     setCity('')
     setStateValue('')
     setZip('')
@@ -765,6 +773,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       alert('Copied.')
     } catch {
       alert(value)
+    }
+  }
+
+  async function pullPropertyInfo() {
+    setPropertyLookupMessage('')
+    setPropertyLookupLoading(true)
+
+    try {
+      const facts = await lookupPropertyFacts(propertyAddress)
+      setPropertyFacts(facts)
+      setPropertyLookupMessage(
+        facts.source === 'api'
+          ? `Property info pulled with ${facts.confidence} confidence.`
+          : facts.notes || 'Using report-ready placeholders until the property API is deployed.'
+      )
+    } catch (error: any) {
+      setPropertyLookupMessage(error?.message || 'Property lookup failed.')
+    } finally {
+      setPropertyLookupLoading(false)
     }
   }
 
@@ -1174,6 +1201,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         urgency,
         occupancy,
         timeline,
+        propertyFacts,
         description,
         photos,
         documents,
@@ -3244,8 +3272,47 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   style={styles.input}
                   placeholder="Property address *"
                   value={propertyAddress}
-                  onChange={(e) => setPropertyAddress(e.target.value)}
+                  onChange={(e) => {
+                    setPropertyAddress(e.target.value)
+                    setPropertyLookupMessage('')
+                  }}
                 />
+
+                <div style={styles.propertyInfoPanel}>
+                  <div>
+                    <strong>Property report facts</strong>
+                    <p style={{ ...styles.small, margin: '6px 0 0' }}>
+                      Pull public-record style facts into the agent report, then verify before sending.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    style={styles.outlineButton}
+                    onClick={pullPropertyInfo}
+                    disabled={propertyLookupLoading}
+                  >
+                    {propertyLookupLoading ? 'Pulling...' : 'Pull property info'}
+                  </button>
+                </div>
+
+                <div style={styles.grid5}>
+                  {[
+                    ['Sq ft', propertyFacts.squareFeet],
+                    ['Built', propertyFacts.yearBuilt],
+                    ['Beds', propertyFacts.bedrooms],
+                    ['Baths', propertyFacts.bathrooms],
+                    ['Lot', propertyFacts.lotSize],
+                  ].map(([label, value]) => (
+                    <div key={label} style={styles.factCard}>
+                      <span>{label}</span>
+                      <strong>{value || 'Not pulled'}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                {propertyLookupMessage && (
+                  <p style={{ ...styles.small, marginTop: 0 }}>{propertyLookupMessage}</p>
+                )}
 
                 <div style={styles.grid3}>
                   <input
@@ -5157,6 +5224,33 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(3,minmax(0,1fr))',
     gap: 12,
+  },
+  grid5: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))',
+    gap: 10,
+    marginBottom: 12,
+  },
+  propertyInfoPanel: {
+    border: '1px solid #d7dfd3',
+    background: '#fbfcfa',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  factCard: {
+    border: '1px solid #d7dfd3',
+    background: '#f7faf5',
+    borderRadius: 14,
+    padding: 12,
+    display: 'grid',
+    gap: 4,
+    color: '#173425',
   },
   uploadBox: {
     border: '1px solid #d7dfd3',
