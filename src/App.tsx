@@ -312,7 +312,7 @@ const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'KillBill0202x' // <-- replace only this value with your Railway AGENT_API_KEY
+const AGENT_API_KEY = 'Dina' // <-- replace only this value with your Railway AGENT_API_KEY
 
 const WORK_TYPES = [
   'General Repair',
@@ -4963,7 +4963,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         <div style={styles.overlay} onClick={() => setShowLogin(false)}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2>Admin Login</h2>
-            <p style={styles.muted}>Admin PIN: 0202</p>
+            <p style={styles.muted}>Admin PIN: 2750</p>
 
             <input
               style={styles.input}
