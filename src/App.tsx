@@ -123,6 +123,17 @@ type MaterialCost = {
   notes?: string | null
 }
 
+type MaterialEditorDraft = {
+  name: string
+  unit: string
+  typicalPrice: string
+  lowPrice: string
+  highPrice: string
+  category: string
+  zip: string
+  source: string
+}
+
 
 type LaborRate = {
   id: string
@@ -307,12 +318,12 @@ type MissingInfoRequest = {
 }
 
 const STORAGE_KEY = 'shelter-prep-requests-v1'
-const ADMIN_PIN = '0202'
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || ''
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
-const AGENT_API_KEY = 'KillBill0202x' // <-- replace only this value with your Railway AGENT_API_KEY
+const AGENT_API_KEY = import.meta.env.VITE_AGENT_API_KEY || ''
 
 const WORK_TYPES = [
   'General Repair',
@@ -386,8 +397,50 @@ function getConfidenceLabel(value: string | null | undefined, verified?: boolean
   return value || 'needs_review'
 }
 
-function countItems(value: any[] | null | undefined) {
+function countItems(value: unknown[] | null | undefined) {
   return Array.isArray(value) ? value.length : 0
+}
+
+function calculateEstimateTotals(
+  items: EstimateItem[],
+  laborCost: string,
+  markupPercent: string,
+  contingencyPercent: string
+) {
+  const materialSubtotal = items.reduce(
+    (sum, item) => sum + Number(item.total_price || 0),
+    0
+  )
+  const labor = Number(laborCost || 0)
+  const markup = Number(markupPercent || 0)
+  const contingency = Number(contingencyPercent || 0)
+  const directCost = materialSubtotal + labor
+  const markupDollars = directCost * (markup / 100)
+  const contingencyDollars = directCost * (contingency / 100)
+  const standardTotal = directCost + markupDollars + contingencyDollars
+
+  return {
+    materialSubtotal,
+    labor,
+    markup,
+    contingency,
+    directCost,
+    markupDollars,
+    contingencyDollars,
+    standardTotal,
+    lowTotal: standardTotal * 0.9,
+    premiumTotal: standardTotal * 1.15,
+    approvedCount: items.filter((item) => item.human_approved).length,
+  }
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 function fileToDataUrl(file: File) {
@@ -459,7 +512,7 @@ function localIntakeFallback(text = ''): IntakeDraft {
 }
 
 
-function normalizeRequestStatus(value: any): RequestStatus {
+function normalizeRequestStatus(value: string | null | undefined): RequestStatus {
   const raw = String(value || '').toLowerCase().trim()
 
   if (raw === 'needs info' || raw === 'needs_info' || raw === 'need info' || raw === 'missing info') {
@@ -570,6 +623,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [materialLoading, setMaterialLoading] = useState(false)
   const [materialUpdating, setMaterialUpdating] = useState(false)
   const [materialSavingId, setMaterialSavingId] = useState<string | null>(null)
+  const [materialEditorItem, setMaterialEditorItem] = useState<MaterialCost | null>(null)
+  const [materialEditorDraft, setMaterialEditorDraft] = useState<MaterialEditorDraft | null>(null)
 
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])
   const [laborTrade, setLaborTrade] = useState('')
@@ -645,6 +700,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function handleLogin() {
+    if (!ADMIN_PIN) {
+      alert('Admin PIN is not configured. Add VITE_ADMIN_PIN to your environment variables.')
+      return
+    }
+
     if (adminPinInput === ADMIN_PIN) {
       setIsAdmin(true)
       setShowLogin(false)
@@ -1304,10 +1364,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmStart) return
   
     if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      alert('Please add VITE_AGENT_API_KEY to your environment variables first.')
       return
     }
   
+    setSellerPrepLoadingId(request.id)
+
     try {
       const response = await fetch(`${AGENT_API_URL}/run-seller-prep-analysis`, {
         method: 'POST',
@@ -1338,6 +1400,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Seller Prep analysis failed.')
+    } finally {
+      setSellerPrepLoadingId(null)
     }
   }
 
@@ -1352,12 +1416,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   function cleanSellerPrepText(value: any) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
+    return escapeHtml(value)
   }
 
   function sellerPrepLabel(value: any) {
@@ -1471,199 +1530,6 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         alert('No Seller Prep analysis found yet. Click Run Seller Prep Analysis first.')
         return
       }
-      function formatSellerPrepMoney(value: any) {
-        const number = Number(value || 0)
-        return new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: 'USD',
-          maximumFractionDigits: 0,
-        }).format(number)
-      }
-      
-      function cleanSellerPrepText(value: any) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#039;')
-      }
-      
-      function sellerPrepLabel(value: any) {
-        return String(value || 'needs_human_review')
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, (letter) => letter.toUpperCase())
-      }
-      
-      function printSellerPrepReport() {
-        if (!sellerPrepReview) {
-          alert('Open a Seller Prep Review first.')
-          return
-        }
-      
-        const analysis = sellerPrepReview.analysis || {}
-        const items = sellerPrepReview.items || []
-      
-        const itemRows = items
-          .map(
-            (item: any) => `
-              <div class="item">
-                <h3>${cleanSellerPrepText(item.repair_item)}</h3>
-                <p>${cleanSellerPrepText(item.scope_summary || 'No scope summary.')}</p>
-      
-                <div class="grid">
-                  <div><strong>Trade:</strong> ${cleanSellerPrepText(item.trade_category || 'General')}</div>
-                  <div><strong>Cost Range:</strong> ${formatSellerPrepMoney(item.estimated_cost_low)} - ${formatSellerPrepMoney(item.estimated_cost_high)}</div>
-                  <div><strong>Buyer Impact:</strong> ${item.buyer_impact_score || 0}/10</div>
-                  <div><strong>Inspection Risk:</strong> ${item.inspection_risk_score || 0}/10</div>
-                  <div><strong>Value / Negotiation Impact:</strong> ${formatSellerPrepMoney(item.estimated_value_impact_low)} - ${formatSellerPrepMoney(item.estimated_value_impact_high)}</div>
-                  <div><strong>Seller Net Impact:</strong> ${formatSellerPrepMoney(item.seller_net_impact_low)} - ${formatSellerPrepMoney(item.seller_net_impact_high)}</div>
-                  <div><strong>Recommendation:</strong> ${sellerPrepLabel(item.recommendation)}</div>
-                  <div><strong>Confidence:</strong> ${sellerPrepLabel(item.confidence)}</div>
-                </div>
-              </div>
-            `
-          )
-          .join('')
-      
-        const html = `
-          <!doctype html>
-          <html>
-            <head>
-              <title>Seller Prep Report</title>
-              <style>
-                body {
-                  font-family: Arial, sans-serif;
-                  color: #123225;
-                  padding: 36px;
-                  line-height: 1.45;
-                }
-      
-                .brand {
-                  letter-spacing: 8px;
-                  color: #06542d;
-                  font-size: 28px;
-                  font-weight: 800;
-                  margin-bottom: 4px;
-                }
-      
-                .subbrand {
-                  letter-spacing: 5px;
-                  font-size: 12px;
-                  font-weight: 700;
-                  margin-bottom: 28px;
-                }
-      
-                .summary {
-                  background: #e8f5eb;
-                  border: 1px solid #b7dfc1;
-                  border-radius: 14px;
-                  padding: 18px;
-                  margin: 18px 0;
-                }
-      
-                .warning {
-                  background: #fff7df;
-                  border: 1px solid #eed38a;
-                  color: #6b4a00;
-                  border-radius: 14px;
-                  padding: 14px;
-                  margin: 18px 0;
-                }
-      
-                .grid {
-                  display: grid;
-                  grid-template-columns: 1fr 1fr;
-                  gap: 8px 18px;
-                }
-      
-                .item {
-                  border: 1px solid #ddd;
-                  border-radius: 14px;
-                  padding: 16px;
-                  margin: 14px 0;
-                  page-break-inside: avoid;
-                }
-      
-                h1, h2, h3 {
-                  color: #06542d;
-                }
-      
-                .footer {
-                  margin-top: 32px;
-                  font-size: 12px;
-                  color: #555;
-                  border-top: 1px solid #ddd;
-                  padding-top: 12px;
-                }
-      
-                @media print {
-                  button {
-                    display: none;
-                  }
-      
-                  body {
-                    padding: 20px;
-                  }
-                }
-              </style>
-            </head>
-      
-            <body>
-              <div class="brand">SHELTER PREP</div>
-              <div class="subbrand">HOME SERVICES</div>
-      
-              <h1>Seller Prep Report</h1>
-              <p><strong>Powered by AI. Approved by humans.</strong></p>
-      
-              <div class="summary">
-                <h2>Property Summary</h2>
-                <p><strong>Address:</strong> ${cleanSellerPrepText(analysis.property_address || 'Not provided')}</p>
-                <p><strong>Total Repair Range:</strong> ${formatSellerPrepMoney(analysis.total_repair_low)} - ${formatSellerPrepMoney(analysis.total_repair_high)}</p>
-                <p><strong>Possible Value / Negotiation Impact:</strong> ${formatSellerPrepMoney(analysis.total_value_impact_low)} - ${formatSellerPrepMoney(analysis.total_value_impact_high)}</p>
-                <p><strong>Seller Net Impact:</strong> ${formatSellerPrepMoney(analysis.seller_net_low)} - ${formatSellerPrepMoney(analysis.seller_net_high)}</p>
-                <p><strong>Average Buyer Impact:</strong> ${analysis.average_buyer_impact_score || 0}/10</p>
-                <p><strong>Average Inspection Risk:</strong> ${analysis.average_inspection_risk_score || 0}/10</p>
-              </div>
-      
-              <div class="warning">
-                AI-assisted analysis only. Human review is required before sending, approving,
-                ordering materials, submitting proposals, or making final recommendations.
-              </div>
-      
-              <h2>Agent Summary</h2>
-              <p>${cleanSellerPrepText(analysis.agent_summary || 'No agent summary available.')}</p>
-      
-              <h2>Seller Summary</h2>
-              <p>${cleanSellerPrepText(analysis.seller_summary || 'No seller summary available.')}</p>
-      
-              <h2>Repair Items</h2>
-              ${itemRows || '<p>No seller prep items found.</p>'}
-      
-              <div class="footer">
-                Shelter Prep report. AI-assisted draft. Human review required.
-              </div>
-      
-              <script>
-                window.onload = function () {
-                  window.print()
-                }
-              </script>
-            </body>
-          </html>
-        `
-      
-        const printWindow = window.open('', '_blank')
-      
-        if (!printWindow) {
-          alert('Popup blocked. Please allow popups, then try again.')
-          return
-        }
-      
-        printWindow.document.open()
-        printWindow.document.write(html)
-        printWindow.document.close()
-      }
       const { data: items, error: itemsError } = await supabase
         .from('seller_prep_items')
         .select('*')
@@ -1717,7 +1583,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmStart) return
 
     if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      alert('Please add VITE_AGENT_API_KEY to your environment variables first.')
       return
     }
 
@@ -1765,7 +1631,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmStart) return
 
     if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      alert('Please add VITE_AGENT_API_KEY to your environment variables first.')
       return
     }
 
@@ -1815,7 +1681,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmStart) return
 
     if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      alert('Please add VITE_AGENT_API_KEY to your environment variables first.')
       return
     }
 
@@ -1863,7 +1729,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmStart) return
   
     if (!AGENT_API_KEY || AGENT_API_KEY === 'PASTE_YOUR_AGENT_API_KEY_HERE') {
-      alert('Please add your AGENT_API_KEY at the top of App.tsx first.')
+      alert('Please add VITE_AGENT_API_KEY to your environment variables first.')
       return
     }
   
@@ -2147,11 +2013,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return
     }
 
-    const materialSubtotal = estimateItems.reduce(
-      (sum, item) => sum + Number(item.total_price || 0),
-      0
+    const totals = calculateEstimateTotals(
+      estimateItems,
+      estimateLaborCost,
+      estimateMarkupPercent,
+      estimateContingencyPercent
     )
-    const labor = Number(estimateLaborCost || 0)
     const laborRateLabel = appliedLaborRate
       ? `${appliedLaborRate.trade}${appliedLaborRate.job_type ? ` / ${appliedLaborRate.job_type}` : ''} at ${money(Number(appliedLaborRate.typical_rate || 0))}/${appliedLaborRate.unit || 'hour'}`
       : 'Manual labor entry'
@@ -2159,23 +2026,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const laborMinimum = Number(estimateMinimumCharge || 0)
     const laborTrip = Number(estimateTripCharge || 0)
     const laborDisposal = Number(estimateDisposalFee || 0)
-    const markupPercent = Number(estimateMarkupPercent || 0)
-    const contingencyPercent = Number(estimateContingencyPercent || 0)
-    const directCost = materialSubtotal + labor
-    const markup = directCost * (markupPercent / 100)
-    const contingency = directCost * (contingencyPercent / 100)
-    const standardTotal = directCost + markup + contingency
-    const lowTotal = standardTotal * 0.9
-    const premiumTotal = standardTotal * 1.15
-    const approvedCount = estimateItems.filter((item) => item.human_approved).length
-    const allApproved = estimateItems.length > 0 && approvedCount === estimateItems.length
+    const allApproved = estimateItems.length > 0 && totals.approvedCount === estimateItems.length
 
     const rows = estimateItems
       .map(
         (item) => `
           <tr>
-            <td>${item.item_name || ''}</td>
-            <td>${item.source || ''}</td>
+            <td>${escapeHtml(item.item_name)}</td>
+            <td>${escapeHtml(item.source)}</td>
             <td>${Number(item.quantity || 0).toFixed(2)}</td>
             <td>${money(Number(item.unit_price || 0))}</td>
             <td>${money(Number(item.total_price || 0))}</td>
@@ -2205,16 +2063,16 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           <h1>Shelter Prep Estimate Draft</h1>
           <div class="muted">Powered by AI. Approved by humans.</div>
           <div class="box">
-            <strong>Client:</strong> ${selectedEstimateRequest.requesterName}<br />
-            <strong>Email:</strong> ${selectedEstimateRequest.email}<br />
-            <strong>Phone:</strong> ${selectedEstimateRequest.phone || 'Not provided'}<br />
-            <strong>Property:</strong> ${selectedEstimateRequest.propertyAddress}, ${selectedEstimateRequest.city}, ${selectedEstimateRequest.state} ${selectedEstimateRequest.zip}<br />
-            <strong>Work Type:</strong> ${selectedEstimateRequest.workType}<br />
-            <strong>Urgency:</strong> ${selectedEstimateRequest.urgency}
+            <strong>Client:</strong> ${escapeHtml(selectedEstimateRequest.requesterName)}<br />
+            <strong>Email:</strong> ${escapeHtml(selectedEstimateRequest.email)}<br />
+            <strong>Phone:</strong> ${escapeHtml(selectedEstimateRequest.phone || 'Not provided')}<br />
+            <strong>Property:</strong> ${escapeHtml(selectedEstimateRequest.propertyAddress)}, ${escapeHtml(selectedEstimateRequest.city)}, ${escapeHtml(selectedEstimateRequest.state)} ${escapeHtml(selectedEstimateRequest.zip)}<br />
+            <strong>Work Type:</strong> ${escapeHtml(selectedEstimateRequest.workType)}<br />
+            <strong>Urgency:</strong> ${escapeHtml(selectedEstimateRequest.urgency)}
           </div>
           <div class="box">
             <strong>Scope Summary</strong><br />
-            ${selectedEstimateRequest.description}
+            ${escapeHtml(selectedEstimateRequest.description)}
           </div>
           <div class="warning">
             ${allApproved ? 'All line items are human-approved.' : 'Draft only: some line items still require human review before sending.'}
@@ -2233,19 +2091,19 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             <tbody>${rows}</tbody>
           </table>
           <div class="box">
-            <p><strong>Materials:</strong> ${money(materialSubtotal)}</p>
-            <p><strong>Labor:</strong> ${money(labor)}</p>
-            <p><strong>Labor source:</strong> ${laborRateLabel}</p>
+            <p><strong>Materials:</strong> ${money(totals.materialSubtotal)}</p>
+            <p><strong>Labor:</strong> ${money(totals.labor)}</p>
+            <p><strong>Labor source:</strong> ${escapeHtml(laborRateLabel)}</p>
             <p><strong>Labor units:</strong> ${laborUnits}</p>
             <p><strong>Minimum / Trip / Disposal:</strong> ${money(laborMinimum)} / ${money(laborTrip)} / ${money(laborDisposal)}</p>
-            <p><strong>Markup:</strong> ${markupPercent}% = ${money(markup)}</p>
-            <p><strong>Contingency:</strong> ${contingencyPercent}% = ${money(contingency)}</p>
-            <p class="total">Standard Estimate: ${money(standardTotal)}</p>
-            <p><strong>Suggested Range:</strong> ${money(lowTotal)} - ${money(premiumTotal)}</p>
+            <p><strong>Markup:</strong> ${totals.markup}% = ${money(totals.markupDollars)}</p>
+            <p><strong>Contingency:</strong> ${totals.contingency}% = ${money(totals.contingencyDollars)}</p>
+            <p class="total">Standard Estimate: ${money(totals.standardTotal)}</p>
+            <p><strong>Suggested Range:</strong> ${money(totals.lowTotal)} - ${money(totals.premiumTotal)}</p>
           </div>
           <div class="box">
             <strong>Notes / Assumptions</strong><br />
-            ${estimateNotes}
+            ${escapeHtml(estimateNotes)}
           </div>
         </body>
       </html>
@@ -2270,19 +2128,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return
     }
 
-    const materialSubtotal = estimateItems.reduce(
-      (sum, item) => sum + Number(item.total_price || 0),
-      0
+    const totals = calculateEstimateTotals(
+      estimateItems,
+      estimateLaborCost,
+      estimateMarkupPercent,
+      estimateContingencyPercent
     )
-    const labor = Number(estimateLaborCost || 0)
-    const markupPercent = Number(estimateMarkupPercent || 0)
-    const contingencyPercent = Number(estimateContingencyPercent || 0)
-    const directCost = materialSubtotal + labor
-    const adjustmentTotal =
-      directCost * (markupPercent / 100) + directCost * (contingencyPercent / 100)
-    const amountDue = directCost + adjustmentTotal
-    const approvedCount = estimateItems.filter((item) => item.human_approved).length
-    const allApproved = estimateItems.length === 0 || approvedCount === estimateItems.length
+    const amountDue = totals.standardTotal
+    const allApproved = estimateItems.length === 0 || totals.approvedCount === estimateItems.length
 
     if (amountDue <= 0) {
       alert('Add estimate items or labor before generating an invoice.')
@@ -2319,23 +2172,23 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               <div class="muted">Professional services invoice</div>
             </div>
             <div class="box">
-              <strong>Invoice #:</strong> ${invoiceNumber}<br />
-              <strong>Date:</strong> ${invoiceDate}<br />
+              <strong>Invoice #:</strong> ${escapeHtml(invoiceNumber)}<br />
+              <strong>Date:</strong> ${escapeHtml(invoiceDate)}<br />
               <strong>Status:</strong> Draft / Review
             </div>
           </div>
 
           <div class="box">
-            <strong>Bill To:</strong> ${selectedEstimateRequest.requesterName}<br />
-            <strong>Email:</strong> ${selectedEstimateRequest.email}<br />
-            <strong>Phone:</strong> ${selectedEstimateRequest.phone || 'Not provided'}<br />
-            <strong>Property:</strong> ${selectedEstimateRequest.propertyAddress}, ${selectedEstimateRequest.city}, ${selectedEstimateRequest.state} ${selectedEstimateRequest.zip}<br />
-            <strong>Work Type:</strong> ${selectedEstimateRequest.workType}
+            <strong>Bill To:</strong> ${escapeHtml(selectedEstimateRequest.requesterName)}<br />
+            <strong>Email:</strong> ${escapeHtml(selectedEstimateRequest.email)}<br />
+            <strong>Phone:</strong> ${escapeHtml(selectedEstimateRequest.phone || 'Not provided')}<br />
+            <strong>Property:</strong> ${escapeHtml(selectedEstimateRequest.propertyAddress)}, ${escapeHtml(selectedEstimateRequest.city)}, ${escapeHtml(selectedEstimateRequest.state)} ${escapeHtml(selectedEstimateRequest.zip)}<br />
+            <strong>Work Type:</strong> ${escapeHtml(selectedEstimateRequest.workType)}
           </div>
 
           <div class="box">
             <strong>Scope / Description</strong><br />
-            ${selectedEstimateRequest.description}
+            ${escapeHtml(selectedEstimateRequest.description)}
           </div>
 
           <table>
@@ -2431,42 +2284,47 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return
     }
 
-    const { data, error } = await supabase
-      .from('invoice_cost_analyses')
-      .select('*')
-      .in('invoice_id', invoiceIds)
-      .order('created_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('invoice_cost_analyses')
+        .select('*')
+        .in('invoice_id', invoiceIds)
+        .order('created_at', { ascending: false })
 
-    if (error) {
+      if (error) throw error
+
+      const map: Record<string, InvoiceCostAnalysis> = {}
+      ;((data || []) as InvoiceCostAnalysis[]).forEach((analysis) => {
+        if (!map[analysis.invoice_id]) map[analysis.invoice_id] = analysis
+      })
+
+      setInvoiceAnalyses(map)
+    } catch (error: any) {
       console.error(error)
-      return
+      alert(error?.message || 'Could not load invoice analyses.')
     }
-
-    const map: Record<string, InvoiceCostAnalysis> = {}
-    ;((data || []) as InvoiceCostAnalysis[]).forEach((analysis) => {
-      if (!map[analysis.invoice_id]) map[analysis.invoice_id] = analysis
-    })
-
-    setInvoiceAnalyses(map)
   }
 
   async function loadInvoices() {
     setInvoiceLoading(true)
 
-    const { data, error } = await supabase
-      .from('invoices')
-      .select('*')
-      .order('created_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      alert(error.message)
-    } else {
+      if (error) throw error
+
       const rows = (data || []) as Invoice[]
       setInvoices(rows)
       await loadInvoiceAnalyses(rows.map((invoice) => invoice.id))
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load invoices.')
+    } finally {
+      setInvoiceLoading(false)
     }
-
-    setInvoiceLoading(false)
   }
 
   async function extractInvoiceData(invoiceId: string) {
@@ -2519,16 +2377,21 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   async function loadMaterials() {
     setMaterialLoading(true)
 
-    const { data, error } = await supabase
-      .from('material_costs')
-      .select('*')
-      .order('human_verified', { ascending: true })
-      .order('updated_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('material_costs')
+        .select('*')
+        .order('human_verified', { ascending: true })
+        .order('updated_at', { ascending: false })
 
-    if (error) alert(error.message)
-    else setMaterials((data || []) as MaterialCost[])
-
-    setMaterialLoading(false)
+      if (error) throw error
+      setMaterials((data || []) as MaterialCost[])
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load material costs.')
+    } finally {
+      setMaterialLoading(false)
+    }
   }
 
   async function updateMaterialCostsNow() {
@@ -2570,7 +2433,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       high_price: Math.round(price * 1.15 * 100) / 100,
       source: materialSource || 'manual_admin_entry',
       store_name: materialSource || 'Manual entry',
-      zip: zip || '',
+      zip: '',
       confidence: 'database_review',
       human_verified: false,
       last_checked: new Date().toISOString(),
@@ -2590,70 +2453,66 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     await loadMaterials()
   }
 
-  async function editMaterialCost(item: MaterialCost) {
+  function editMaterialCost(item: MaterialCost) {
     const currentName = getMaterialName(item)
     const currentTypical = getMaterialTypicalPrice(item)
+    const typical = currentTypical || 0
 
-    const nextName = window.prompt('Material name', currentName)
-    if (nextName === null) return
+    setMaterialEditorItem(item)
+    setMaterialEditorDraft({
+      name: currentName,
+      unit: item.unit || 'each',
+      typicalPrice: String(typical),
+      lowPrice: String(item.low_price ?? Math.round(typical * 0.9 * 100) / 100),
+      highPrice: String(item.high_price ?? Math.round(typical * 1.15 * 100) / 100),
+      category: item.category || 'Material',
+      zip: item.zip || '',
+      source: item.source || item.store_name || 'admin_review',
+    })
+  }
 
-    const nextUnit = window.prompt('Unit, ex: each / bag / sqft', item.unit || 'each')
-    if (nextUnit === null) return
+  function closeMaterialEditor() {
+    setMaterialEditorItem(null)
+    setMaterialEditorDraft(null)
+  }
 
-    const nextTypicalText = window.prompt('Typical price', String(currentTypical || 0))
-    if (nextTypicalText === null) return
+  async function saveMaterialEditor() {
+    if (!materialEditorItem || !materialEditorDraft) return
 
-    const nextTypical = parseMoneyInput(nextTypicalText)
+    const nextTypical = parseMoneyInput(materialEditorDraft.typicalPrice)
     if (!Number.isFinite(nextTypical) || nextTypical <= 0) {
       alert('Please enter a valid typical price.')
       return
     }
 
-    const nextLowText = window.prompt(
-      'Low price',
-      String(item.low_price ?? Math.round(nextTypical * 0.9 * 100) / 100)
-    )
-    if (nextLowText === null) return
-
-    const nextHighText = window.prompt(
-      'High price',
-      String(item.high_price ?? Math.round(nextTypical * 1.15 * 100) / 100)
-    )
-    if (nextHighText === null) return
-
-    const nextCategory = window.prompt('Category', item.category || 'Material')
-    if (nextCategory === null) return
-
-    const nextZip = window.prompt('ZIP or service area', item.zip || '')
-    if (nextZip === null) return
-
-    const nextSource = window.prompt('Source/store', item.source || item.store_name || 'admin_review')
-    if (nextSource === null) return
-
-    setMaterialSavingId(item.id)
+    setMaterialSavingId(materialEditorItem.id)
 
     const { error } = await supabase
       .from('material_costs')
       .update({
-        item_name: nextName,
-        normalized_name: normalizeMaterialName(nextName),
-        category: nextCategory || 'Material',
-        unit: nextUnit || 'each',
-        low_price: Number(nextLowText) || nextTypical,
+        item_name: materialEditorDraft.name,
+        normalized_name: normalizeMaterialName(materialEditorDraft.name),
+        category: materialEditorDraft.category || 'Material',
+        unit: materialEditorDraft.unit || 'each',
+        low_price: parseMoneyInput(materialEditorDraft.lowPrice) || nextTypical,
         typical_price: nextTypical,
-        high_price: Number(nextHighText) || nextTypical,
-        source: nextSource || 'admin_review',
-        store_name: nextSource || 'Admin review',
-        zip: nextZip || '',
-        confidence: item.human_verified ? 'database_verified' : 'database_review',
+        high_price: parseMoneyInput(materialEditorDraft.highPrice) || nextTypical,
+        source: materialEditorDraft.source || 'admin_review',
+        store_name: materialEditorDraft.source || 'Admin review',
+        zip: materialEditorDraft.zip || '',
+        confidence: materialEditorItem.human_verified ? 'database_verified' : 'database_review',
         last_checked: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         notes: 'Edited in Material Cost Review. Human review required unless approved as verified.',
       })
-      .eq('id', item.id)
+      .eq('id', materialEditorItem.id)
 
-    if (error) alert(error.message)
-    else await loadMaterials()
+    if (error) {
+      alert(error.message)
+    } else {
+      closeMaterialEditor()
+      await loadMaterials()
+    }
 
     setMaterialSavingId(null)
   }
@@ -2662,21 +2521,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const currentName = getMaterialName(item)
     const currentTypical = getMaterialTypicalPrice(item)
 
-    const approvedPriceText = window.prompt(
-      `Approve verified typical price for ${currentName}`,
-      String(currentTypical || 0)
-    )
-
-    if (approvedPriceText === null) return
-
-    const approvedPrice = parseMoneyInput(approvedPriceText)
+    const approvedPrice = currentTypical
     if (!Number.isFinite(approvedPrice) || approvedPrice <= 0) {
-      alert('Please enter a valid approved price.')
+      alert('Edit this material and add a valid typical price before approving it.')
       return
     }
-
-    const approvedUnit = window.prompt('Approved unit', item.unit || 'each')
-    if (approvedUnit === null) return
 
     setMaterialSavingId(item.id)
 
@@ -2685,7 +2534,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       .update({
         item_name: currentName,
         normalized_name: normalizeMaterialName(currentName),
-        unit: approvedUnit || 'each',
+        unit: item.unit || 'each',
         low_price: Math.round(approvedPrice * 0.95 * 100) / 100,
         typical_price: approvedPrice,
         high_price: Math.round(approvedPrice * 1.1 * 100) / 100,
@@ -2744,7 +2593,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       minimum_charge: parseMoneyInput(laborMinimumCharge),
       trip_charge: parseMoneyInput(laborTripCharge),
       disposal_fee: parseMoneyInput(laborDisposalFee),
-      zip: zip || '',
+      zip: '',
       region: laborRegion || '',
       source: 'manual_admin_entry',
       confidence: 'labor_review',
@@ -2846,28 +2695,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function approveLaborRate(rate: LaborRate) {
-    const approvedTypicalText = window.prompt(
-      `Approve verified labor rate for ${rate.trade}`,
-      String(rate.typical_rate || 0)
-    )
-
-    if (approvedTypicalText === null) return
-
-    const approvedTypical = parseMoneyInput(approvedTypicalText)
+    const approvedTypical = Number(rate.typical_rate || 0)
     if (!Number.isFinite(approvedTypical) || approvedTypical <= 0) {
-      alert('Please enter a valid approved labor rate.')
+      alert('Edit this labor rate and add a valid typical rate before approving it.')
       return
     }
-
-    const approvedUnit = window.prompt('Approved unit', rate.unit || 'hour')
-    if (approvedUnit === null) return
 
     setLaborSavingId(rate.id)
 
     const { error } = await supabase
       .from('labor_rates')
       .update({
-        unit: approvedUnit || 'hour',
+        unit: rate.unit || 'hour',
         low_rate: Math.round(approvedTypical * 0.9 * 100) / 100,
         typical_rate: approvedTypical,
         high_rate: Math.round(approvedTypical * 1.15 * 100) / 100,
@@ -3002,11 +2841,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     'pending_approval',
   ]
 
-  const estimateMaterialSubtotal = estimateItems.reduce(
-    (sum, item) => sum + Number(item.total_price || 0),
-    0
+  const estimateTotals = calculateEstimateTotals(
+    estimateItems,
+    estimateLaborCost,
+    estimateMarkupPercent,
+    estimateContingencyPercent
   )
-  const estimateLaborNumber = Number(estimateLaborCost || 0)
+  const estimateMaterialSubtotal = estimateTotals.materialSubtotal
+  const estimateLaborNumber = estimateTotals.labor
   const estimateLaborUnitsNumber = Number(estimateLaborUnits || 0)
   const estimateLaborBaseNumber = appliedLaborRate
     ? Number(appliedLaborRate.typical_rate || 0) * estimateLaborUnitsNumber
@@ -3014,16 +2856,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const estimateLaborMinimumNumber = Number(estimateMinimumCharge || 0)
   const estimateTripChargeNumber = Number(estimateTripCharge || 0)
   const estimateDisposalFeeNumber = Number(estimateDisposalFee || 0)
-  const estimateMarkupNumber = Number(estimateMarkupPercent || 0)
-  const estimateContingencyNumber = Number(estimateContingencyPercent || 0)
-  const estimateDirectCost = estimateMaterialSubtotal + estimateLaborNumber
-  const estimateMarkupDollars = estimateDirectCost * (estimateMarkupNumber / 100)
-  const estimateContingencyDollars = estimateDirectCost * (estimateContingencyNumber / 100)
-  const estimateStandardTotal =
-    estimateDirectCost + estimateMarkupDollars + estimateContingencyDollars
-  const estimateLowTotal = estimateStandardTotal * 0.9
-  const estimatePremiumTotal = estimateStandardTotal * 1.15
-  const approvedEstimateCount = estimateItems.filter((item) => item.human_approved).length
+  const estimateMarkupNumber = estimateTotals.markup
+  const estimateContingencyNumber = estimateTotals.contingency
+  const estimateDirectCost = estimateTotals.directCost
+  const estimateMarkupDollars = estimateTotals.markupDollars
+  const estimateContingencyDollars = estimateTotals.contingencyDollars
+  const estimateStandardTotal = estimateTotals.standardTotal
+  const estimateLowTotal = estimateTotals.lowTotal
+  const estimatePremiumTotal = estimateTotals.premiumTotal
+  const approvedEstimateCount = estimateTotals.approvedCount
   const allEstimateItemsApproved =
     estimateItems.length > 0 && approvedEstimateCount === estimateItems.length
 
@@ -3841,6 +3682,22 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       onClick={() => openEstimateReview(request)}
     >
       Open Estimate Review
+    </button>
+
+    <button
+      type="button"
+      style={{
+        ...styles.wideButton,
+        background: '#173425',
+        color: '#ffffff',
+        border: '1px solid #173425',
+      }}
+      disabled={autoWorkflowLoadingId === request.id}
+      onClick={() => autoProcessLead(request)}
+    >
+      {autoWorkflowLoadingId === request.id
+        ? 'Auto Processing...'
+        : 'Auto Run Research + Takeoff'}
     </button>
 
     <button
@@ -4785,8 +4642,94 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
       </main>
+      {materialEditorItem && materialEditorDraft && (
+        <div style={styles.overlay} onClick={closeMaterialEditor}>
+          <div style={{ ...styles.modal, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+            <h2>Edit Material Cost</h2>
+            <div style={styles.grid2}>
+              <input
+                style={styles.input}
+                placeholder="Material name"
+                value={materialEditorDraft.name}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, name: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="Unit"
+                value={materialEditorDraft.unit}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, unit: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="Typical price"
+                value={materialEditorDraft.typicalPrice}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, typicalPrice: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="Category"
+                value={materialEditorDraft.category}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, category: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="Low price"
+                value={materialEditorDraft.lowPrice}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, lowPrice: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="High price"
+                value={materialEditorDraft.highPrice}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, highPrice: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="ZIP or service area"
+                value={materialEditorDraft.zip}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, zip: e.target.value } : draft)
+                }
+              />
+              <input
+                style={styles.input}
+                placeholder="Source / store"
+                value={materialEditorDraft.source}
+                onChange={(e) =>
+                  setMaterialEditorDraft((draft) => draft ? { ...draft, source: e.target.value } : draft)
+                }
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" style={styles.secondaryButton} onClick={closeMaterialEditor}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={materialSavingId === materialEditorItem.id}
+                onClick={saveMaterialEditor}
+              >
+                {materialSavingId === materialEditorItem.id ? 'Saving...' : 'Save Material'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {sellerPrepReview && (
-  <div style={styles.overlay}>
+  <div style={styles.overlay} onClick={() => setSellerPrepReview(null)}>
     <div
       style={{
         ...styles.modal,
@@ -4794,6 +4737,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         maxHeight: '90vh',
         overflow: 'auto',
       }}
+      onClick={(e) => e.stopPropagation()}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
         <div>
@@ -4962,7 +4906,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         <div style={styles.overlay} onClick={() => setShowLogin(false)}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2>Admin Login</h2>
-            <p style={styles.muted}>Admin PIN: 0202</p>
+            <p style={styles.muted}>Enter the admin PIN to continue.</p>
 
             <input
               style={styles.input}
@@ -5182,6 +5126,15 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontWeight: 900,
   },
+  secondaryButton: {
+    border: '1px solid #d7dfd3',
+    background: '#f8faf7',
+    color: '#173425',
+    padding: '10px 14px',
+    borderRadius: 12,
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
   wideButton: {
     width: '100%',
     border: 'none',
@@ -5228,6 +5181,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
     gap: 14,
+  },
+  fileBox: {
+    background: '#fbfcfa',
+    border: '1px solid #d7dfd3',
+    borderRadius: 14,
+    padding: 14,
   },
   linkButton: {
     display: 'block',
