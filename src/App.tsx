@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { supabase } from './supabase'
+import { isSupabaseConfigured, supabase } from './supabase'
 import Gallery from './components/Gallery'
 import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts } from './propertyLookup'
 
@@ -3220,6 +3220,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         </div>
       </header>
 
+      {!isSupabaseConfigured && (
+        <div style={styles.previewBanner}>
+          <strong>Preview mode:</strong> Supabase is not configured in this environment. The UI is available for review,
+          but saving leads, uploading files, loading dashboards, and live property lookup require StackBlitz secrets.
+        </div>
+      )}
+
       <main style={styles.main}>
         {activeTab === 'new' && (
           <div style={styles.twoColumn}>
@@ -3421,6 +3428,29 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
             {isAdmin && (
               <aside style={styles.sideCard}>
+                <h2>Service Health</h2>
+                <div style={styles.healthGrid}>
+                  <div style={styles.healthRow}>
+                    <span>Supabase</span>
+                    <strong style={isSupabaseConfigured ? styles.healthOk : styles.healthNeedsSetup}>
+                      {isSupabaseConfigured ? 'Connected' : 'Needs setup'}
+                    </strong>
+                  </div>
+                  <div style={styles.healthRow}>
+                    <span>Property Lookup</span>
+                    <strong style={isSupabaseConfigured ? styles.healthOk : styles.healthNeedsSetup}>
+                      {isSupabaseConfigured ? 'Ready to call Edge Function' : 'Fallback only'}
+                    </strong>
+                  </div>
+                </div>
+
+                {!isSupabaseConfigured && (
+                  <p style={styles.small}>
+                    Add <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> in StackBlitz
+                    secrets to enable saved app data.
+                  </p>
+                )}
+
                 <h2>AI Foundation</h2>
                 <p style={styles.muted}>
                   Invoice upload, extraction, cost analysis, material monitoring, and AI
@@ -5162,6 +5192,15 @@ const styles: Record<string, React.CSSProperties> = {
   main: {
     padding: '12px 42px 60px',
   },
+  previewBanner: {
+    margin: '0 42px 18px',
+    padding: '14px 18px',
+    border: '1px solid #d9b35f',
+    borderRadius: 16,
+    background: '#fff8e8',
+    color: '#5b410b',
+    lineHeight: 1.45,
+  },
   twoColumn: {
     display: 'grid',
     gridTemplateColumns: '1fr 0.45fr',
@@ -5181,6 +5220,27 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 22,
     padding: 24,
     alignSelf: 'start',
+  },
+  healthGrid: {
+    display: 'grid',
+    gap: 10,
+    margin: '12px 0 16px',
+  },
+  healthRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 12,
+    alignItems: 'center',
+    background: '#ffffff',
+    border: '1px solid #d7dfd3',
+    borderRadius: 12,
+    padding: '10px 12px',
+  },
+  healthOk: {
+    color: '#0f542d',
+  },
+  healthNeedsSetup: {
+    color: '#8a5b00',
   },
   hero: {
     background: 'linear-gradient(135deg,#0f542d,#07391f)',
