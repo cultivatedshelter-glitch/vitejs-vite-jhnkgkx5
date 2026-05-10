@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "security:agent": "node scripts/security-agent.mjs",
+    "security:audit": "npm audit --audit-level=high"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
@@ -19,6 +21,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
+    "rollup": "npm:@rollup/wasm-node@^4.60.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.5.3",
     "vite": "^5.4.2"

@@ -1,10 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { supabase } from './supabase'
+import { isSupabaseConfigured, supabase } from './supabase'
 import Gallery from './components/Gallery'
+import HistoricalUpload from './components/historical/HistoricalUpload'
+import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts } from './propertyLookup'
+import { buildPropertyResearchPack } from './propertyIntelligence'
+import {
+  buildEstimateIntelligence,
+  type EstimateIntelligenceResult,
+} from './estimateIntelligence'
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
   name: string
@@ -34,6 +41,7 @@ type WorkRequest = {
   urgency: string
   occupancy: string
   timeline: string
+  propertyFacts?: PropertyFacts
   description: string
   photos: StoredFile[]
   documents: StoredFile[]
@@ -323,6 +331,8 @@ const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
 const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
+const AGENT_API_URL =
+  import.meta.env.VITE_AGENT_API_URL || 'https://shelter-prep-agent-production.up.railway.app'
 const AGENT_API_KEY = import.meta.env.VITE_AGENT_API_KEY || ''
 
 const WORK_TYPES = [
@@ -531,6 +541,10 @@ function normalizeRequestStatus(value: string | null | undefined): RequestStatus
 }
 
 function mapLeadRowToWorkRequest(row: any): WorkRequest {
+  const rowPropertyFacts = row.property_facts && typeof row.property_facts === 'object'
+    ? row.property_facts
+    : {}
+
   return {
     id: row.id,
     createdAt: row.created_at ? new Date(row.created_at).toLocaleString() : '',
@@ -545,6 +559,15 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     urgency: row.urgency || 'Standard',
     occupancy: row.occupancy || 'Unknown',
     timeline: row.timeline || '',
+    propertyFacts: {
+      ...emptyPropertyFacts(),
+      ...rowPropertyFacts,
+      propertyType: row.property_type || rowPropertyFacts.propertyType || '',
+      jurisdiction: row.property_jurisdiction || rowPropertyFacts.jurisdiction || '',
+      zoning: row.zoning || rowPropertyFacts.zoning || '',
+      parcelNumber: row.parcel_number || rowPropertyFacts.parcelNumber || '',
+      verified: Boolean(row.property_verified || rowPropertyFacts.verified),
+    },
     description: row.description || row.scope || row.notes || '',
     photos: [],
     documents: [],
@@ -575,6 +598,14 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [workType, setWorkType] = useState(WORK_TYPES[0])
   const [propertyAddress, setPropertyAddress] = useState('')
+  const [propertyFacts, setPropertyFacts] = useState<PropertyFacts>(emptyPropertyFacts())
+  const [propertyLookupLoading, setPropertyLookupLoading] = useState(false)
+  const [propertyLookupMessage, setPropertyLookupMessage] = useState('')
+  const [propertyType, setPropertyType] = useState('')
+  const [jurisdiction, setJurisdiction] = useState('')
+  const [zoning, setZoning] = useState('')
+  const [parcelNumber, setParcelNumber] = useState('')
+  const [verificationNotes, setVerificationNotes] = useState('')
   const [city, setCity] = useState('')
   const [stateValue, setStateValue] = useState('')
   const [zip, setZip] = useState('')
@@ -654,6 +685,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [estimateMarkupPercent, setEstimateMarkupPercent] = useState('20')
   const [estimateContingencyPercent, setEstimateContingencyPercent] = useState('10')
   const [estimateNotes, setEstimateNotes] = useState('Draft estimate. Final price requires human review and site verification.')
+  const [estimateIntelligence, setEstimateIntelligence] = useState<EstimateIntelligenceResult | null>(null)
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -726,6 +758,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     setPhone('')
     setWorkType(WORK_TYPES[0])
     setPropertyAddress('')
+    setPropertyFacts(emptyPropertyFacts())
+    setPropertyLookupMessage('')
+    setPropertyType('')
+    setJurisdiction('')
+    setZoning('')
+    setParcelNumber('')
+    setVerificationNotes('')
     setCity('')
     setStateValue('')
     setZip('')
@@ -825,6 +864,30 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       alert('Copied.')
     } catch {
       alert(value)
+    }
+  }
+
+  async function pullPropertyInfo() {
+    setPropertyLookupMessage('')
+    setPropertyLookupLoading(true)
+
+    try {
+      const facts = await lookupPropertyFacts(propertyAddress)
+      setPropertyFacts(facts)
+      setPropertyType(facts.propertyType || propertyType)
+      setJurisdiction(facts.jurisdiction || jurisdiction || propertyResearchPack.jurisdiction)
+      setZoning(facts.zoning || zoning)
+      setParcelNumber(facts.parcelNumber || parcelNumber)
+      setVerificationNotes(facts.verificationNotes || verificationNotes)
+      setPropertyLookupMessage(
+        facts.source === 'api'
+          ? `Property info pulled with ${facts.confidence} confidence.`
+          : facts.notes || 'Using report-ready placeholders until the property API is deployed.'
+      )
+    } catch (error: any) {
+      setPropertyLookupMessage(error?.message || 'Property lookup failed.')
+    } finally {
+      setPropertyLookupLoading(false)
     }
   }
 
@@ -1215,6 +1278,32 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       if (leadError) throw leadError
 
+      const verifiedPropertyFacts = {
+        ...propertyFacts,
+        propertyType,
+        jurisdiction: jurisdiction || propertyResearchPack.jurisdiction,
+        zoning,
+        parcelNumber,
+        verified: true,
+        verificationNotes,
+      }
+
+      const { error: propertyUpdateError } = await supabase
+        .from('leads')
+        .update({
+          property_facts: verifiedPropertyFacts,
+          property_verified: true,
+          property_jurisdiction: verifiedPropertyFacts.jurisdiction,
+          property_type: propertyType,
+          zoning,
+          parcel_number: parcelNumber,
+        })
+        .eq('id', leadRow.id)
+
+      if (propertyUpdateError) {
+        console.warn('Lead saved, but property intelligence fields were not saved:', propertyUpdateError)
+      }
+
       const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id)
       const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id)
 
@@ -1234,6 +1323,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         urgency,
         occupancy,
         timeline,
+        propertyFacts: verifiedPropertyFacts,
         description,
         photos,
         documents,
@@ -1300,6 +1390,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         setSelectedEstimateRequest(null)
         setEstimateItems([])
         setEstimateResearchRows([])
+        setEstimateIntelligence(null)
       }
     } catch (error: any) {
       console.error(error)
@@ -1876,6 +1967,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       setEstimateItems((items || []) as EstimateItem[])
       setEstimateResearchRows((researchRows || []) as EstimateResearchRow[])
+      setEstimateIntelligence(null)
       await applyBestLaborRateForRequest(request, false)
 
       if (!items || items.length === 0) {
@@ -1886,6 +1978,92 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       alert(error?.message || 'Could not load estimate review.')
     } finally {
       setEstimateLoading(false)
+    }
+  }
+
+  async function buildLocalEstimateIntelligence(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'This will build a local Shelter Prep estimate intelligence draft: rough quantities, material allowances, urgency labor, overhead, coordination, risk buffers, and a contractor packet. Human review is required before use.'
+    )
+
+    if (!confirmStart) return
+
+    const result = buildEstimateIntelligence({
+      id: request.id,
+      workType: request.workType,
+      description: request.description,
+      urgency: request.urgency,
+      occupancy: request.occupancy,
+      timeline: request.timeline,
+      city: request.city,
+      state: request.state,
+      zip: request.zip,
+      propertyFacts: request.propertyFacts,
+      photoCount: request.photos.length,
+      documentCount: request.documents.length,
+    })
+
+    setEstimateIntelligence(result)
+    setEstimateLaborUnits(String(result.laborHours))
+    setEstimateLaborCost(String(result.laborSubtotal))
+    setEstimateMinimumCharge('0')
+    setEstimateTripCharge('0')
+    setEstimateDisposalFee('0')
+    setAppliedLaborRate(null)
+    setEstimateMarkupPercent(String(result.overheadPercent + result.coordinationPercent))
+    setEstimateContingencyPercent(String(result.riskPercent))
+    setEstimateLaborMessage(
+      `Applied Shelter Prep ${result.primaryTrade} intelligence: ${result.laborHours} hours at ${money(result.laborRate)}/hr blended ${result.urgencyMultiplier > 1 ? 'urgent' : 'standard'} rate.`
+    )
+    setEstimateNotes(
+      [
+        'Shelter Prep Estimate Intelligence draft. Human/site verification required.',
+        `Trades: ${result.tradeBreakdown.join(', ')}`,
+        `Quantity basis: ${result.quantityBasis.join('; ')}`,
+        `Missing info: ${result.missingInfo.join(', ') || 'none obvious'}`,
+        `Risk flags: ${result.riskFlags.join('; ') || 'standard risk'}`,
+      ].join('\n')
+    )
+
+    const shouldSaveItems = window.confirm(
+      `Draft range: ${money(result.suggestedLow)} - ${money(result.suggestedHigh)}. Save ${result.draftItems.length} draft material/allowance line items into Estimate Review?`
+    )
+
+    if (!shouldSaveItems) {
+      setActiveTab('estimates')
+      setSelectedEstimateRequest(request)
+      return
+    }
+
+    try {
+      await ensureLeadExists(request)
+
+      const inserts = result.draftItems.map((item) => ({
+        lead_id: request.id,
+        item_name: `${item.itemName} (${item.unit})`,
+        source: item.source,
+        source_url: null,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total_price: item.quantity * item.unitPrice,
+        confidence: item.confidence,
+        human_approved: false,
+      }))
+
+      const { data, error } = await supabase
+        .from('estimate_items')
+        .insert(inserts)
+        .select()
+
+      if (error) throw error
+
+      setActiveTab('estimates')
+      setSelectedEstimateRequest(request)
+      setEstimateItems((prev) => [...prev, ...((data || []) as EstimateItem[])])
+      alert('Estimate intelligence draft saved. Review and approve line items before sending anything.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save estimate intelligence draft items.')
     }
   }
 
@@ -2867,6 +3045,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const approvedEstimateCount = estimateTotals.approvedCount
   const allEstimateItemsApproved =
     estimateItems.length > 0 && approvedEstimateCount === estimateItems.length
+  const propertyResearchPack = useMemo(
+    () => buildPropertyResearchPack(propertyAddress, city, stateValue || 'OR', zip),
+    [propertyAddress, city, stateValue, zip]
+  )
 
   return (
     <div style={styles.page}>
@@ -2916,6 +3098,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               { label: 'Messages', tab: 'messages' },
               { label: 'Archived Leads', tab: 'archived' },
               { label: 'Invoices', tab: 'invoices' },
+              { label: 'Historical Upload', tab: 'history' },
               { label: 'Material Costs', tab: 'materials' },
               { label: 'Labor Rates', tab: 'labor' },
               { label: 'AI Estimator', tab: 'estimates' },
@@ -2991,6 +3174,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </button>
 
               <button
+                style={activeTab === 'history' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('history')}
+              >
+                Historical Upload
+              </button>
+
+              <button
                 style={activeTab === 'materials' ? styles.navActive : styles.navButton}
                 onClick={() => requireAdmin('materials')}
               >
@@ -3032,6 +3222,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           )}
         </div>
       </header>
+
+      {!isSupabaseConfigured && (
+        <div style={styles.previewBanner}>
+          <strong>Preview mode:</strong> Supabase is not configured in this environment. The UI is available for review,
+          but saving leads, uploading files, loading dashboards, and live property lookup require StackBlitz secrets.
+        </div>
+      )}
 
       <main style={styles.main}>
         {activeTab === 'new' && (
@@ -3085,8 +3282,148 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   style={styles.input}
                   placeholder="Property address *"
                   value={propertyAddress}
-                  onChange={(e) => setPropertyAddress(e.target.value)}
+                  onChange={(e) => {
+                    setPropertyAddress(e.target.value)
+                    setPropertyLookupMessage('')
+                  }}
                 />
+
+                <div style={styles.propertyInfoPanel}>
+                  <div>
+                    <strong>Property report facts</strong>
+                    <p style={{ ...styles.small, margin: '6px 0 0' }}>
+                      Pull public-record style facts into the agent report, then verify before sending.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    style={styles.outlineButton}
+                    onClick={pullPropertyInfo}
+                    disabled={propertyLookupLoading}
+                  >
+                    {propertyLookupLoading ? 'Pulling...' : 'Pull property info'}
+                  </button>
+                </div>
+
+                <div style={styles.grid5}>
+                  {[
+                    ['Sq ft', propertyFacts.squareFeet],
+                    ['Built', propertyFacts.yearBuilt],
+                    ['Beds', propertyFacts.bedrooms],
+                    ['Baths', propertyFacts.bathrooms],
+                    ['Lot', propertyFacts.lotSize],
+                  ].map(([label, value]) => (
+                    <div key={label} style={styles.factCard}>
+                      <span>{label}</span>
+                      <strong>{value || 'Not pulled'}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                {propertyLookupMessage && (
+                  <p style={{ ...styles.small, marginTop: 0 }}>{propertyLookupMessage}</p>
+                )}
+
+                <div style={styles.reviewBox}>
+                  <h3 style={{ marginTop: 0 }}>Verified Property Profile</h3>
+                  <p style={styles.small}>
+                    Confirm or edit the facts before Shelter Prep uses them for renovation planning, permit checks, or estimates.
+                  </p>
+
+                  <div style={styles.grid3}>
+                    <input
+                      style={styles.input}
+                      placeholder="Bedrooms"
+                      value={propertyFacts.bedrooms}
+                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bedrooms: e.target.value, verified: true }))}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Bathrooms"
+                      value={propertyFacts.bathrooms}
+                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bathrooms: e.target.value, verified: true }))}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Square feet"
+                      value={propertyFacts.squareFeet}
+                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, squareFeet: e.target.value, verified: true }))}
+                    />
+                  </div>
+
+                  <div style={styles.grid3}>
+                    <input
+                      style={styles.input}
+                      placeholder="Lot size"
+                      value={propertyFacts.lotSize}
+                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, lotSize: e.target.value, verified: true }))}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Year built"
+                      value={propertyFacts.yearBuilt}
+                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, yearBuilt: e.target.value, verified: true }))}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Property type, ex: single-family"
+                      value={propertyType}
+                      onChange={(e) => setPropertyType(e.target.value)}
+                    />
+                  </div>
+
+                  <div style={styles.grid3}>
+                    <input
+                      style={styles.input}
+                      placeholder="Jurisdiction"
+                      value={jurisdiction || propertyResearchPack.jurisdiction}
+                      onChange={(e) => setJurisdiction(e.target.value)}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Zoning"
+                      value={zoning}
+                      onChange={(e) => setZoning(e.target.value)}
+                    />
+                    <input
+                      style={styles.input}
+                      placeholder="Parcel / account #"
+                      value={parcelNumber}
+                      onChange={(e) => setParcelNumber(e.target.value)}
+                    />
+                  </div>
+
+                  <textarea
+                    style={{ ...styles.input, minHeight: 90 }}
+                    placeholder="Verification notes, ex: finished basement, converted garage, addition, ADU, access constraints"
+                    value={verificationNotes}
+                    onChange={(e) => setVerificationNotes(e.target.value)}
+                  />
+
+                  <div style={styles.noticeBox}>
+                    Permit office: <strong>{propertyResearchPack.permitOffice}</strong>
+                  </div>
+
+                  <div style={styles.grid2}>
+                    {propertyResearchPack.links.map((link) => (
+                      <button
+                        key={link.label}
+                        type="button"
+                        style={styles.linkPanel}
+                        onClick={() => window.open(link.url, '_blank', 'noopener,noreferrer')}
+                      >
+                        <strong>{link.label}</strong>
+                        <span>{link.note}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <ul style={styles.mutedList}>
+                    {propertyResearchPack.riskFlags.map((flag) => (
+                      <li key={flag}>{flag}</li>
+                    ))}
+                  </ul>
+                </div>
 
                 <div style={styles.grid3}>
                   <input
@@ -3195,6 +3532,29 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
             {isAdmin && (
               <aside style={styles.sideCard}>
+                <h2>Service Health</h2>
+                <div style={styles.healthGrid}>
+                  <div style={styles.healthRow}>
+                    <span>Supabase</span>
+                    <strong style={isSupabaseConfigured ? styles.healthOk : styles.healthNeedsSetup}>
+                      {isSupabaseConfigured ? 'Connected' : 'Needs setup'}
+                    </strong>
+                  </div>
+                  <div style={styles.healthRow}>
+                    <span>Property Lookup</span>
+                    <strong style={isSupabaseConfigured ? styles.healthOk : styles.healthNeedsSetup}>
+                      {isSupabaseConfigured ? 'Ready to call Edge Function' : 'Fallback only'}
+                    </strong>
+                  </div>
+                </div>
+
+                {!isSupabaseConfigured && (
+                  <p style={styles.small}>
+                    Add <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> in StackBlitz
+                    secrets to enable saved app data.
+                  </p>
+                )}
+
                 <h2>AI Foundation</h2>
                 <p style={styles.muted}>
                   Invoice upload, extraction, cost analysis, material monitoring, and AI
@@ -3530,6 +3890,40 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         </p>
                         <p>{request.description}</p>
 
+                        {request.propertyFacts && (
+                          <div style={styles.propertyProfileCard}>
+                            <strong>Verified Property Profile</strong>
+                            <div style={styles.compactFactGrid}>
+                              <span>Beds: {request.propertyFacts.bedrooms || 'TBD'}</span>
+                              <span>Baths: {request.propertyFacts.bathrooms || 'TBD'}</span>
+                              <span>Sq ft: {request.propertyFacts.squareFeet || 'TBD'}</span>
+                              <span>Built: {request.propertyFacts.yearBuilt || 'TBD'}</span>
+                              <span>Type: {request.propertyFacts.propertyType || 'TBD'}</span>
+                              <span>Jurisdiction: {request.propertyFacts.jurisdiction || 'Review'}</span>
+                            </div>
+                            {request.propertyFacts.verificationNotes && (
+                              <p style={styles.small}>Notes: {request.propertyFacts.verificationNotes}</p>
+                            )}
+                            <div style={styles.buttonRow}>
+                              {buildPropertyResearchPack(
+                                request.propertyAddress,
+                                request.city,
+                                request.state,
+                                request.zip
+                              ).links.slice(0, 3).map((link) => (
+                                <button
+                                  key={`${request.id}-${link.label}`}
+                                  type="button"
+                                  style={styles.linkButton}
+                                  onClick={() => window.open(link.url, '_blank', 'noopener,noreferrer')}
+                                >
+                                  {link.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {request.photos.length > 0 && <strong>Photos</strong>}
                         {request.photos.map((file) => (
                           <button
@@ -3675,6 +4069,19 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       type="button"
       style={{
         ...styles.wideButton,
+        background: '#0f542d',
+        color: '#ffffff',
+        border: '1px solid #0f542d',
+      }}
+      onClick={() => buildLocalEstimateIntelligence(request)}
+    >
+      Build Estimate Intelligence
+    </button>
+
+    <button
+      type="button"
+      style={{
+        ...styles.wideButton,
         background: '#f4f1ec',
         color: '#173425',
         border: '1px solid #d7dfd3',
@@ -3682,6 +4089,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       onClick={() => openEstimateReview(request)}
     >
       Open Estimate Review
+      
     </button>
 
     <button
@@ -3953,6 +4361,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             </div>
           </section>
         )}
+
+        {isAdmin && activeTab === 'history' && <HistoricalUpload />}
 
         {isAdmin && activeTab === 'materials' && (
           <section style={styles.card}>
@@ -4381,6 +4791,78 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   </div>
                 </div>
 
+                {estimateIntelligence && (
+                  <div style={styles.intelligencePanel}>
+                    <div style={styles.buttonRow}>
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{ marginTop: 0 }}>Estimate Intelligence Core</h3>
+                        <p style={styles.small}>
+                          Draft only. Quantities, labor, materials, overhead, and risk buffers need human/site review.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        onClick={() => copyToClipboard(estimateIntelligence.contractorPacket)}
+                      >
+                        Copy Contractor Packet
+                      </button>
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <div style={styles.factCard}>
+                        <span>Trades</span>
+                        <strong>{estimateIntelligence.tradeBreakdown.join(', ')}</strong>
+                      </div>
+                      <div style={styles.factCard}>
+                        <span>Labor</span>
+                        <strong>
+                          {estimateIntelligence.laborHours} hrs @ {money(estimateIntelligence.laborRate)}/hr
+                        </strong>
+                      </div>
+                      <div style={styles.factCard}>
+                        <span>Draft Range</span>
+                        <strong>
+                          {money(estimateIntelligence.suggestedLow)} - {money(estimateIntelligence.suggestedHigh)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div style={styles.grid3}>
+                      <div>
+                        <strong>Quantity Basis</strong>
+                        <ul style={styles.smallList}>
+                          {estimateIntelligence.quantityBasis.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <strong>Missing Info</strong>
+                        <ul style={styles.smallList}>
+                          {(estimateIntelligence.missingInfo.length
+                            ? estimateIntelligence.missingInfo
+                            : ['None obvious']).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <strong>Risk Flags</strong>
+                        <ul style={styles.smallList}>
+                          {(estimateIntelligence.riskFlags.length
+                            ? estimateIntelligence.riskFlags
+                            : ['Standard risk']).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <pre style={styles.packetBox}>{estimateIntelligence.contractorPacket}</pre>
+                  </div>
+                )}
+
                 <div style={styles.aiBox}>
                   <strong>Labor Rate Auto-Fill</strong>
                   <p style={styles.small}>{estimateLaborMessage}</p>
@@ -4500,6 +4982,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
                   <button style={styles.primaryButton} onClick={addManualEstimateItem}>
                     Add Manual Line Item
+                  </button>
+                  <button
+                    style={styles.primaryButton}
+                    onClick={() => selectedEstimateRequest && buildLocalEstimateIntelligence(selectedEstimateRequest)}
+                  >
+                    Build Estimate Intelligence
                   </button>
                   <button style={styles.outlineButton} onClick={approveAllEstimateItems}>
                     Approve All Line Items
@@ -4907,6 +5395,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2>Admin Login</h2>
             <p style={styles.muted}>Enter the admin PIN to continue.</p>
+            <p style={styles.muted}>Admin PIN: 2750</p>
 
             <input
               style={styles.input}
@@ -4979,6 +5468,51 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 12,
     color: '#1f2a30',
   },
+  linkPanel: {
+    border: '1px solid #cbd8ca',
+    background: '#ffffff',
+    borderRadius: 8,
+    padding: 14,
+    textAlign: 'left',
+    cursor: 'pointer',
+    color: '#173425',
+    display: 'grid',
+    gap: 6,
+    lineHeight: 1.4,
+  },
+  propertyProfileCard: {
+    border: '1px solid #cbd8ca',
+    background: '#fbfdf9',
+    borderRadius: 8,
+    padding: 12,
+    margin: '12px 0',
+  },
+  compactFactGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: 8,
+    marginTop: 10,
+    fontSize: 13,
+    color: '#36463b',
+  },
+  intelligencePanel: {
+    border: '1px solid #9fc6a7',
+    background: '#f4fbf5',
+    borderRadius: 8,
+    padding: 16,
+    margin: '16px 0',
+  },
+  packetBox: {
+    whiteSpace: 'pre-wrap',
+    background: '#ffffff',
+    border: '1px solid #d7dfd3',
+    borderRadius: 8,
+    padding: 12,
+    color: '#173425',
+    fontFamily: 'Inter, Arial, sans-serif',
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
   page: {
     minHeight: '100vh',
     background: '#f4f1ec',
@@ -5038,6 +5572,15 @@ const styles: Record<string, React.CSSProperties> = {
   main: {
     padding: '12px 42px 60px',
   },
+  previewBanner: {
+    margin: '0 42px 18px',
+    padding: '14px 18px',
+    border: '1px solid #d9b35f',
+    borderRadius: 16,
+    background: '#fff8e8',
+    color: '#5b410b',
+    lineHeight: 1.45,
+  },
   twoColumn: {
     display: 'grid',
     gridTemplateColumns: '1fr 0.45fr',
@@ -5057,6 +5600,27 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 22,
     padding: 24,
     alignSelf: 'start',
+  },
+  healthGrid: {
+    display: 'grid',
+    gap: 10,
+    margin: '12px 0 16px',
+  },
+  healthRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 12,
+    alignItems: 'center',
+    background: '#ffffff',
+    border: '1px solid #d7dfd3',
+    borderRadius: 12,
+    padding: '10px 12px',
+  },
+  healthOk: {
+    color: '#0f542d',
+  },
+  healthNeedsSetup: {
+    color: '#8a5b00',
   },
   hero: {
     background: 'linear-gradient(135deg,#0f542d,#07391f)',
@@ -5100,6 +5664,33 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(3,minmax(0,1fr))',
     gap: 12,
+  },
+  grid5: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))',
+    gap: 10,
+    marginBottom: 12,
+  },
+  propertyInfoPanel: {
+    border: '1px solid #d7dfd3',
+    background: '#fbfcfa',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  factCard: {
+    border: '1px solid #d7dfd3',
+    background: '#f7faf5',
+    borderRadius: 14,
+    padding: 12,
+    display: 'grid',
+    gap: 4,
+    color: '#173425',
   },
   uploadBox: {
     border: '1px solid #d7dfd3',
