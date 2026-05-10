@@ -45,6 +45,21 @@ PROPERTY_DATA_API_KEY=
 
 If the Edge Function or provider is not configured, the intake form falls back to report-ready placeholders.
 
+## Pilot Roadmap
+
+The two-week pilot strategy lives in:
+
+```text
+STRATEGIC_SUMMARY.md
+PILOT_BUILD_PLAN.md
+```
+
+The first pilot migration adds property intelligence and contractor profile foundations:
+
+```text
+supabase/migrations/202605090001_property_intelligence_pilot.sql
+```
+
 ## Active Branch
 
 Use `full-agent-intake-report-api` for the current full-app work.
@@ -56,3 +71,11 @@ Do not use `shelter-prep-agent-intake`; that branch came from a small prototype 
 ```bash
 npm run build
 ```
+
+## Security Agent
+
+```bash
+npm run security:agent
+```
+
+The security agent checks for hard-coded secrets, risky browser APIs, Supabase Edge Function guardrails, build health, and high-severity dependency audit findings. See `SECURITY_AGENT.md` for the production checklist.

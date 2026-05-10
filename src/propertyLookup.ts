@@ -6,6 +6,12 @@ export type PropertyFacts = {
   bedrooms: string
   bathrooms: string
   lotSize: string
+  propertyType?: string
+  jurisdiction?: string
+  zoning?: string
+  parcelNumber?: string
+  verified?: boolean
+  verificationNotes?: string
   source: 'api' | 'fallback'
   confidence: 'high' | 'medium' | 'low'
   notes?: string
