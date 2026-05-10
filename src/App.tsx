@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { isSupabaseConfigured, supabase } from './supabase'
 import Gallery from './components/Gallery'
 import HistoricalUpload from './components/historical/HistoricalUpload'
-import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts } from './propertyLookup'
+import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts, type PropertyLookupStatus } from './propertyLookup'
 import { buildPropertyResearchPack } from './propertyIntelligence'
 import {
   buildEstimateIntelligence,
@@ -11,11 +11,14 @@ import {
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'sellerPrep' | 'pricingMemory' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
+  id?: string
   name: string
   path: string
+  url?: string
+  bucket?: string
   type: 'photo' | 'document'
 }
 
@@ -142,6 +145,60 @@ type MaterialEditorDraft = {
   source: string
 }
 
+type SellerPrepAnalysisV1 = {
+  id: string
+  lead_id?: string | null
+  property_address: string | null
+  summary: string | null
+  total_low_estimate: number | null
+  total_high_estimate: number | null
+  seller_net_impact: string | null
+  confidence: string | null
+  human_review_status: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+type SellerPrepItemV1 = {
+  id: string
+  analysis_id: string
+  repair_item: string
+  trade_category: string | null
+  estimated_low: number | null
+  estimated_high: number | null
+  buyer_impact_score: number | null
+  inspection_risk_score: number | null
+  recommendation: string | null
+  missing_info: string | null
+  ai_notes: string | null
+  human_review_status: string
+  created_at?: string | null
+}
+
+type PricingMemoryEntry = {
+  id: string
+  created_at?: string | null
+  item_name: string | null
+  category: string | null
+  unit: string | null
+  verified_price: number | null
+  zip: string | null
+  source: string | null
+  human_verified: boolean | null
+  notes: string | null
+  last_checked?: string | null
+}
+
+type LeadPropertyProfile = {
+  beds?: string
+  baths?: string
+  sqft?: string
+  yearBuilt?: string
+  propertyType?: string
+  jurisdiction?: string
+  parcelNumber?: string
+  raw?: unknown
+}
 
 type LaborRate = {
   id: string
@@ -330,7 +387,6 @@ const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || ''
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
 
-const AGENT_API_URL = 'https://shelter-prep-agent-production.up.railway.app'
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || 'https://shelter-prep-agent-production.up.railway.app'
 const AGENT_API_KEY = import.meta.env.VITE_AGENT_API_KEY || ''
@@ -367,9 +423,83 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '-')
 }
 
+function storagePathFromPublicUrl(fileUrl = '', bucket = REQUEST_FILES_BUCKET) {
+  const marker = `/storage/v1/object/public/${bucket}/`
+  const index = fileUrl.indexOf(marker)
+  if (index === -1) return ''
+  return decodeURIComponent(fileUrl.slice(index + marker.length))
+}
+
+function inferStoredFileType(row: any): 'photo' | 'document' {
+  const rawType = String(row.file_type || row.type || '').toLowerCase()
+  const path = String(row.storage_path || row.file_url || row.file_name || '').toLowerCase()
+  const mime = String(row.mime_type || '').toLowerCase()
+
+  if (rawType === 'photo' || path.includes('/photos/') || mime.startsWith('image/')) return 'photo'
+  if (/\.(jpg|jpeg|png|gif|webp|heic|heif)$/i.test(path)) return 'photo'
+  return 'document'
+}
+
+function mapFileRowToStoredFile(row: any): StoredFile {
+  const bucket = row.storage_bucket || row.bucket || REQUEST_FILES_BUCKET
+  const path = row.storage_path || storagePathFromPublicUrl(row.file_url || '', bucket)
+
+  return {
+    id: row.id,
+    name: row.file_name || row.name || path.split('/').pop() || 'Uploaded file',
+    path,
+    url: row.file_url || '',
+    bucket,
+    type: inferStoredFileType(row),
+  }
+}
+
+async function attachFilesToRequests(items: WorkRequest[]) {
+  const ids = items.map((item) => item.id).filter(Boolean)
+
+  if (ids.length === 0) return items
+
+  const { data, error } = await supabase
+    .from('files')
+    .select('*')
+    .in('lead_id', ids)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.warn('Leads loaded, but uploaded files could not be loaded:', error)
+    return items
+  }
+
+  const grouped = (data || []).reduce((acc: Record<string, StoredFile[]>, row: any) => {
+    const leadId = row.lead_id
+    if (!leadId) return acc
+    acc[leadId] = [...(acc[leadId] || []), mapFileRowToStoredFile(row)]
+    return acc
+  }, {})
+
+  return items.map((item) => {
+    const files = grouped[item.id] || []
+    return {
+      ...item,
+      photos: files.filter((file) => file.type === 'photo'),
+      documents: files.filter((file) => file.type === 'document'),
+    }
+  })
+}
+
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Not set'
   return `$${Number(value).toFixed(2)}`
+}
+
+function propertyLookupStatusLabel(status: PropertyLookupStatus) {
+  if (status === 'function_missing') return 'function missing'
+  if (status === 'function_unavailable') return 'function unavailable'
+  if (status === 'provider_not_configured') return 'provider missing'
+  if (status === 'no_records_found') return 'provider returned no data'
+  if (status === 'data_found') return 'data found'
+  if (status === 'error') return 'lookup error'
+  return 'not pulled'
 }
 
 function parseMoneyInput(value: string | number | null | undefined) {
@@ -601,6 +731,10 @@ export default function App() {
   const [propertyFacts, setPropertyFacts] = useState<PropertyFacts>(emptyPropertyFacts())
   const [propertyLookupLoading, setPropertyLookupLoading] = useState(false)
   const [propertyLookupMessage, setPropertyLookupMessage] = useState('')
+  const [propertyLookupStatus, setPropertyLookupStatus] = useState<PropertyLookupStatus>('idle')
+  const [propertyProfilesByLeadId, setPropertyProfilesByLeadId] = useState<Record<string, LeadPropertyProfile>>({})
+  const [propertyProfileLoadingByLeadId, setPropertyProfileLoadingByLeadId] = useState<Record<string, boolean>>({})
+  const [propertyProfileErrorsByLeadId, setPropertyProfileErrorsByLeadId] = useState<Record<string, string>>({})
   const [propertyType, setPropertyType] = useState('')
   const [jurisdiction, setJurisdiction] = useState('')
   const [zoning, setZoning] = useState('')
@@ -657,6 +791,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [materialEditorItem, setMaterialEditorItem] = useState<MaterialCost | null>(null)
   const [materialEditorDraft, setMaterialEditorDraft] = useState<MaterialEditorDraft | null>(null)
 
+  const [sellerPrepSelectedId, setSellerPrepSelectedId] = useState('')
+  const [sellerPrepAnalysisV1, setSellerPrepAnalysisV1] = useState<SellerPrepAnalysisV1 | null>(null)
+  const [sellerPrepItemsV1, setSellerPrepItemsV1] = useState<SellerPrepItemV1[]>([])
+  const [sellerPrepSavingId, setSellerPrepSavingId] = useState<string | null>(null)
+  const [pricingMemoryEntries, setPricingMemoryEntries] = useState<PricingMemoryEntry[]>([])
+  const [pricingMemoryLoading, setPricingMemoryLoading] = useState(false)
+
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])
   const [laborTrade, setLaborTrade] = useState('')
   const [laborJobType, setLaborJobType] = useState('')
@@ -700,6 +841,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (isAdmin && activeTab === 'labor') loadLaborRates()
     if (isAdmin && activeTab === 'messages') loadMessageCenter()
     if (isAdmin && activeTab === 'archived') loadArchivedRequestsFromSupabase()
+    if (isAdmin && activeTab === 'pricingMemory') loadPricingMemoryEntries()
   }, [isAdmin, activeTab])
 
   useEffect(() => {
@@ -869,25 +1011,120 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   async function pullPropertyInfo() {
     setPropertyLookupMessage('')
+    setPropertyLookupStatus('idle')
     setPropertyLookupLoading(true)
 
     try {
       const facts = await lookupPropertyFacts(propertyAddress)
+      const lookupStatus = facts.lookupStatus || (facts.source === 'api' ? 'data_found' : 'error')
       setPropertyFacts(facts)
       setPropertyType(facts.propertyType || propertyType)
       setJurisdiction(facts.jurisdiction || jurisdiction || propertyResearchPack.jurisdiction)
       setZoning(facts.zoning || zoning)
       setParcelNumber(facts.parcelNumber || parcelNumber)
       setVerificationNotes(facts.verificationNotes || verificationNotes)
+      setPropertyLookupStatus(lookupStatus)
       setPropertyLookupMessage(
-        facts.source === 'api'
-          ? `Property info pulled with ${facts.confidence} confidence.`
-          : facts.notes || 'Using report-ready placeholders until the property API is deployed.'
+        lookupStatus === 'data_found'
+          ? `data found — property info pulled with ${facts.confidence} confidence.`
+          : `${propertyLookupStatusLabel(lookupStatus)} — ${facts.notes || 'Manual entry still works.'}`
       )
     } catch (error: any) {
+      setPropertyLookupStatus('error')
       setPropertyLookupMessage(error?.message || 'Property lookup failed.')
     } finally {
       setPropertyLookupLoading(false)
+    }
+  }
+
+  async function refreshLeadPropertyProfile(lead: WorkRequest, force = false) {
+    if (!lead.id || !lead.propertyAddress.trim()) return
+    if (!force && (propertyProfilesByLeadId[lead.id] || propertyProfileLoadingByLeadId[lead.id])) return
+
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+    const functionUrl = `${supabaseUrl}/functions/v1/property-lookup`
+    const requestBody = {
+      address: lead.propertyAddress,
+      propertyAddress: lead.propertyAddress,
+      address_line_1: lead.propertyAddress,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+    }
+
+    setPropertyProfileLoadingByLeadId((prev) => ({ ...prev, [lead.id]: true }))
+    setPropertyProfileErrorsByLeadId((prev) => {
+      const next = { ...prev }
+      delete next[lead.id]
+      return next
+    })
+
+    try {
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase frontend env vars are missing.')
+      }
+
+      console.info('[lead property-lookup] calling function', { leadId: lead.id, url: functionUrl })
+      console.info('[lead property-lookup] request body', requestBody)
+
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          apikey: supabaseAnonKey,
+        },
+        body: JSON.stringify(requestBody),
+      })
+
+      const responseText = await response.text()
+      let data: any = null
+
+      try {
+        data = responseText ? JSON.parse(responseText) : null
+      } catch {
+        data = null
+      }
+
+      console.info('[lead property-lookup] raw response', {
+        leadId: lead.id,
+        status: response.status,
+        ok: response.ok,
+        data,
+        raw: responseText,
+      })
+
+      if (!response.ok) {
+        throw new Error(data?.message || data?.error || `Function returned ${response.status}.`)
+      }
+
+      if (data?.status !== 'data_found' || !data?.property) {
+        throw new Error(data?.message || 'Property lookup returned no data.')
+      }
+
+      const property = data.property
+      setPropertyProfilesByLeadId((prev) => ({
+        ...prev,
+        [lead.id]: {
+          beds: property.bedrooms || property.beds,
+          baths: property.bathrooms || property.baths,
+          sqft: property.squareFeet || property.sqft,
+          yearBuilt: property.yearBuilt,
+          propertyType: property.propertyType,
+          jurisdiction: property.jurisdiction,
+          parcelNumber: property.parcelNumber,
+          raw: data,
+        },
+      }))
+    } catch (error: any) {
+      console.error('[lead property-lookup] failed', { leadId: lead.id, error })
+      setPropertyProfileErrorsByLeadId((prev) => ({
+        ...prev,
+        [lead.id]: error?.message || 'Property lookup failed.',
+      }))
+    } finally {
+      setPropertyProfileLoadingByLeadId((prev) => ({ ...prev, [lead.id]: false }))
     }
   }
 
@@ -1126,7 +1363,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       if (error) throw error
 
-      const mapped = (data || []).map(mapLeadRowToWorkRequest)
+      const mapped = await attachFilesToRequests((data || []).map(mapLeadRowToWorkRequest))
       setRequests(mapped)
     } catch (error: any) {
       console.error(error)
@@ -1150,7 +1387,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         return
       }
   
-      const mapped = (data || []).map(mapLeadRowToWorkRequest)
+      const mapped = await attachFilesToRequests((data || []).map(mapLeadRowToWorkRequest))
       setArchivedRequests(mapped)
     } catch (error: any) {
       console.error('Archived leads fetch failed:', error)
@@ -1218,6 +1455,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           lead_id: leadId,
           file_url: publicUrlData.publicUrl,
           file_name: file.name,
+          storage_path: path,
+          file_type: type,
+          mime_type: file.type || null,
+          file_size: file.size,
         })
 
         if (fileInsertError) {
@@ -1228,6 +1469,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       uploaded.push({
         name: file.name,
         path,
+        url: publicUrlData.publicUrl,
+        bucket: REQUEST_FILES_BUCKET,
         type,
       })
     }
@@ -1235,17 +1478,34 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return uploaded
   }
 
-  async function openRequestFile(file: StoredFile) {
-    const { data, error } = await supabase.storage
-      .from(REQUEST_FILES_BUCKET)
-      .createSignedUrl(file.path, 60 * 10)
+  async function createRequestFileUrl(file: StoredFile, download = false) {
+    const bucket = file.bucket || REQUEST_FILES_BUCKET
+    const path = file.path || storagePathFromPublicUrl(file.url || '', bucket)
 
-    if (error || !data?.signedUrl) {
-      alert('Could not open file. Check Supabase storage bucket/policies.')
-      return
+    if (!path) {
+      if (file.url) return file.url
+      throw new Error('Missing file storage path.')
     }
 
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(path, 60 * 10, download ? { download: file.name } : undefined)
+
+    if (error || !data?.signedUrl) {
+      throw error || new Error('Signed URL was not returned.')
+    }
+
+    return data.signedUrl
+  }
+
+  async function openRequestFile(file: StoredFile, download = false) {
+    try {
+      const signedUrl = await createRequestFileUrl(file, download)
+      window.open(signedUrl, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      console.error(error)
+      alert('Could not open file. Check Supabase storage bucket/policies.')
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -1640,6 +1900,283 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setSellerPrepLoadingId(null)
     }
   }
+
+  function buildSellerPrepDraft(request: WorkRequest) {
+    const intelligence = buildEstimateIntelligence({
+      id: request.id,
+      workType: request.workType,
+      description: request.description,
+      urgency: request.urgency,
+      occupancy: request.occupancy,
+      timeline: request.timeline,
+      city: request.city,
+      state: request.state,
+      zip: request.zip,
+      propertyFacts: request.propertyFacts,
+      photoCount: request.photos.length,
+      documentCount: request.documents.length,
+    })
+
+    const missing = getMissingInfoItems(request)
+    const highRisk = normalizeLaborText([request.description, request.workType].join(' '))
+    const baseItems = intelligence.draftItems.slice(0, 4).map((item, index) => {
+      const total = Number(item.quantity || 0) * Number(item.unitPrice || 0)
+      const mustFix =
+        highRisk.includes('inspection') ||
+        highRisk.includes('roof') ||
+        highRisk.includes('leak') ||
+        highRisk.includes('electrical') ||
+        highRisk.includes('plumb')
+
+      return {
+        id: makeId(),
+        analysis_id: '',
+        repair_item: item.itemName.replace(/\s*\([^)]*\)\s*$/, ''),
+        trade_category: intelligence.tradeBreakdown[index] || intelligence.primaryTrade,
+        estimated_low: Math.round(total * 0.9),
+        estimated_high: Math.round(total * 1.25 + intelligence.laborSubtotal / Math.max(intelligence.draftItems.length, 1)),
+        buyer_impact_score: mustFix ? 8 : index === 0 ? 7 : 5,
+        inspection_risk_score: mustFix ? 8 : missing.length ? 6 : 4,
+        recommendation: mustFix ? 'must_fix' : index % 2 === 0 ? 'optional' : 'buyer_credit_candidate',
+        missing_info: missing.join(', ') || 'None obvious',
+        ai_notes: `Rule-based V1 draft. Quantity basis: ${intelligence.quantityBasis.join('; ')}`,
+        human_review_status: 'needs_review',
+      } satisfies SellerPrepItemV1
+    })
+
+    const items = baseItems.length
+      ? baseItems
+      : [
+          {
+            id: makeId(),
+            analysis_id: '',
+            repair_item: request.workType || 'General seller prep repair',
+            trade_category: 'General Repair',
+            estimated_low: Math.round(intelligence.suggestedLow),
+            estimated_high: Math.round(intelligence.suggestedHigh),
+            buyer_impact_score: 6,
+            inspection_risk_score: missing.length ? 6 : 4,
+            recommendation: 'needs_human_review',
+            missing_info: missing.join(', ') || 'None obvious',
+            ai_notes: 'Rule-based V1 fallback item. Human review required.',
+            human_review_status: 'needs_review',
+          },
+        ]
+
+    const totalLow = items.reduce((sum, item) => sum + Number(item.estimated_low || 0), 0)
+    const totalHigh = items.reduce((sum, item) => sum + Number(item.estimated_high || 0), 0)
+    const analysis: SellerPrepAnalysisV1 = {
+      id: makeId(),
+      lead_id: request.id,
+      property_address: request.propertyAddress,
+      summary: `${request.workType} seller-prep draft for ${request.propertyAddress || 'the property'}. Review ${items.length} item(s), missing info, likely buyer impact, and inspection risk before sharing.`,
+      total_low_estimate: totalLow,
+      total_high_estimate: totalHigh,
+      seller_net_impact:
+        totalHigh > 0
+          ? `Draft prep range is ${money(totalLow)} - ${money(totalHigh)}. Must-fix items may reduce buyer credits or inspection friction, but human review is required before recommendations.`
+          : 'No priced seller-prep range yet. Add details and review manually.',
+      confidence: missing.length ? 'medium_with_missing_info' : 'medium_rule_based',
+      human_review_status: 'draft',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    return { analysis, items }
+  }
+
+  async function runSellerPrepDraftV1(request: WorkRequest) {
+    const { analysis, items } = buildSellerPrepDraft(request)
+    setSellerPrepAnalysisV1(analysis)
+    setSellerPrepItemsV1(items)
+    setSellerPrepSelectedId(request.id)
+    setActiveTab('sellerPrep')
+
+    try {
+      const { data: savedAnalysis, error: analysisError } = await supabase
+        .from('seller_prep_analyses')
+        .insert({
+          lead_id: request.id,
+          property_address: request.propertyAddress,
+          summary: analysis.summary,
+          total_low_estimate: analysis.total_low_estimate,
+          total_high_estimate: analysis.total_high_estimate,
+          seller_net_impact: analysis.seller_net_impact,
+          confidence: analysis.confidence,
+          human_review_status: 'draft',
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single()
+
+      if (analysisError) throw analysisError
+
+      const nextItems = items.map((item) => ({
+        analysis_id: savedAnalysis.id,
+        repair_item: item.repair_item,
+        trade_category: item.trade_category,
+        estimated_low: item.estimated_low,
+        estimated_high: item.estimated_high,
+        buyer_impact_score: item.buyer_impact_score,
+        inspection_risk_score: item.inspection_risk_score,
+        recommendation: item.recommendation,
+        missing_info: item.missing_info,
+        ai_notes: item.ai_notes,
+        human_review_status: 'needs_review',
+      }))
+
+      const { data: savedItems, error: itemsError } = await supabase
+        .from('seller_prep_items')
+        .insert(nextItems)
+        .select()
+
+      if (itemsError) throw itemsError
+
+      setSellerPrepAnalysisV1(savedAnalysis as SellerPrepAnalysisV1)
+      setSellerPrepItemsV1((savedItems || []) as SellerPrepItemV1[])
+      alert('Seller Prep draft saved. Human approval is required before final report/send.')
+    } catch (error: any) {
+      console.error(error)
+      alert(
+        `${error?.message || 'Could not save Seller Prep draft to Supabase.'} Showing local draft only. Run the Seller Prep migration if needed.`
+      )
+    }
+  }
+
+  async function loadSellerPrepDraftForRequest(request: WorkRequest) {
+    setSellerPrepSelectedId(request.id)
+    setActiveTab('sellerPrep')
+
+    const { data: analyses, error } = await supabase
+      .from('seller_prep_analyses')
+      .select('*')
+      .eq('lead_id', request.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (error || !analyses?.[0]) {
+      runSellerPrepDraftV1(request)
+      return
+    }
+
+    const analysis = analyses[0] as SellerPrepAnalysisV1
+    const { data: items, error: itemsError } = await supabase
+      .from('seller_prep_items')
+      .select('*')
+      .eq('analysis_id', analysis.id)
+      .order('created_at', { ascending: true })
+
+    if (itemsError) {
+      alert(itemsError.message)
+      return
+    }
+
+    setSellerPrepAnalysisV1(analysis)
+    setSellerPrepItemsV1((items || []) as SellerPrepItemV1[])
+  }
+
+  function updateSellerPrepItemLocal(id: string, changes: Partial<SellerPrepItemV1>) {
+    setSellerPrepItemsV1((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...changes } : item))
+    )
+  }
+
+  async function saveSellerPrepItem(item: SellerPrepItemV1) {
+    setSellerPrepSavingId(item.id)
+
+    try {
+      const { data, error } = await supabase
+        .from('seller_prep_items')
+        .update({
+          estimated_low: Number(item.estimated_low || 0),
+          estimated_high: Number(item.estimated_high || 0),
+          recommendation: item.recommendation || 'needs_human_review',
+          human_review_status: item.human_review_status || 'needs_review',
+          missing_info: item.missing_info || '',
+          ai_notes: item.ai_notes || '',
+        })
+        .eq('id', item.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      updateSellerPrepItemLocal(item.id, data as SellerPrepItemV1)
+    } catch (error: any) {
+      alert(error?.message || 'Could not save Seller Prep item.')
+    } finally {
+      setSellerPrepSavingId(null)
+    }
+  }
+
+  async function markSellerPrepAnalysisApproved() {
+    if (!sellerPrepAnalysisV1) return
+    const unapproved = sellerPrepItemsV1.some((item) => item.human_review_status !== 'approved')
+
+    if (unapproved) {
+      alert('Approve or reject each Seller Prep item before marking the analysis human approved.')
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('seller_prep_analyses')
+      .update({ human_review_status: 'human_approved', updated_at: new Date().toISOString() })
+      .eq('id', sellerPrepAnalysisV1.id)
+      .select()
+      .single()
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    setSellerPrepAnalysisV1(data as SellerPrepAnalysisV1)
+  }
+
+  async function saveSellerPrepItemAsPricingMemory(item: SellerPrepItemV1) {
+    const selected = requests.find((request) => request.id === sellerPrepSelectedId)
+
+    if (item.human_review_status !== 'approved') {
+      alert('Approve the Seller Prep item before saving it as pricing memory.')
+      return
+    }
+
+    const verifiedPrice = Number(item.estimated_high || item.estimated_low || 0)
+    if (verifiedPrice <= 0) {
+      alert('Add a verified estimate amount before saving pricing memory.')
+      return
+    }
+
+    const { error } = await supabase.from('pricing_memory_entries').insert({
+      item_name: item.repair_item,
+      category: item.recommendation || 'seller_prep',
+      trade: item.trade_category || '',
+      repair_type: item.repair_item,
+      description: item.ai_notes || '',
+      city: selected?.city || '',
+      state: selected?.state || '',
+      zip: selected?.zip || '',
+      property_type: selected?.propertyFacts?.propertyType || '',
+      unit: 'project',
+      verified_price: verifiedPrice,
+      unit_cost: verifiedPrice,
+      total_cost: verifiedPrice,
+      source: 'seller_prep_human_approved',
+      confidence_level: 'medium',
+      human_verified: true,
+      notes: `Saved from Seller Prep item ${item.id}. Human approved before pricing memory.`,
+      last_checked: new Date().toISOString(),
+    })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    alert('Saved as verified pricing memory.')
+    await loadPricingMemoryEntries()
+  }
+
   async function ensureLeadExists(request: WorkRequest) {
     const { data: existing, error: selectError } = await supabase
       .from('leads')
@@ -2572,6 +3109,27 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
+  async function loadPricingMemoryEntries() {
+    setPricingMemoryLoading(true)
+
+    try {
+      const { data, error } = await supabase
+        .from('pricing_memory_entries')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+
+      setPricingMemoryEntries((data || []) as PricingMemoryEntry[])
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not load pricing memory. Run the pricing memory migration if needed.')
+    } finally {
+      setPricingMemoryLoading(false)
+    }
+  }
+
   async function updateMaterialCostsNow() {
     setMaterialUpdating(true)
 
@@ -2991,6 +3549,25 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     })
   }, [requests, filter, search])
 
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'dashboard') return
+
+    filteredRequests.forEach((request) => {
+      if (!request.propertyAddress.trim()) return
+      if (propertyProfilesByLeadId[request.id]) return
+      if (propertyProfileLoadingByLeadId[request.id]) return
+      if (propertyProfileErrorsByLeadId[request.id]) return
+      refreshLeadPropertyProfile(request)
+    })
+  }, [
+    activeTab,
+    filteredRequests,
+    isAdmin,
+    propertyProfileErrorsByLeadId,
+    propertyProfileLoadingByLeadId,
+    propertyProfilesByLeadId,
+  ])
+
   const filteredArchivedRequests = useMemo(() => {
     return archivedRequests.filter((r) => {
       const text = [
@@ -3011,6 +3588,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return text.includes(archivedSearch.toLowerCase())
     })
   }, [archivedRequests, archivedSearch])
+
+  const sellerPrepSelectedRequest = useMemo(() => {
+    return requests.find((request) => request.id === sellerPrepSelectedId) || requests[0] || null
+  }, [requests, sellerPrepSelectedId])
 
   const columns: RequestStatus[] = [
     'new',
@@ -3099,6 +3680,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               { label: 'Archived Leads', tab: 'archived' },
               { label: 'Invoices', tab: 'invoices' },
               { label: 'Historical Upload', tab: 'history' },
+              { label: 'Seller Prep', tab: 'sellerPrep' },
+              { label: 'Pricing Memory', tab: 'pricingMemory' },
               { label: 'Material Costs', tab: 'materials' },
               { label: 'Labor Rates', tab: 'labor' },
               { label: 'AI Estimator', tab: 'estimates' },
@@ -3181,6 +3764,20 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </button>
 
               <button
+                style={activeTab === 'sellerPrep' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('sellerPrep')}
+              >
+                Seller Prep
+              </button>
+
+              <button
+                style={activeTab === 'pricingMemory' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('pricingMemory')}
+              >
+                Pricing Memory
+              </button>
+
+              <button
                 style={activeTab === 'materials' ? styles.navActive : styles.navButton}
                 onClick={() => requireAdmin('materials')}
               >
@@ -3225,8 +3822,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       {!isSupabaseConfigured && (
         <div style={styles.previewBanner}>
-          <strong>Preview mode:</strong> Supabase is not configured in this environment. The UI is available for review,
-          but saving leads, uploading files, loading dashboards, and live property lookup require StackBlitz secrets.
+          <strong>Admin warning:</strong> Supabase env vars are missing. Add{' '}
+          <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong>.
+          Preview/manual entry still works, but saving, uploads, dashboards, and signed file links need Supabase.
         </div>
       )}
 
@@ -3285,6 +3883,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   onChange={(e) => {
                     setPropertyAddress(e.target.value)
                     setPropertyLookupMessage('')
+                    setPropertyLookupStatus('idle')
                   }}
                 />
 
@@ -3321,7 +3920,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 </div>
 
                 {propertyLookupMessage && (
-                  <p style={{ ...styles.small, marginTop: 0 }}>{propertyLookupMessage}</p>
+                  <div style={{ ...styles.noticeBox, marginTop: 0 }}>
+                    <strong>Property lookup status: {propertyLookupStatusLabel(propertyLookupStatus)}</strong>
+                    <p style={{ margin: '6px 0 0' }}>{propertyLookupMessage}</p>
+                    {propertyLookupStatus === 'provider_not_configured' && (
+                      <p style={{ margin: '6px 0 0' }}>
+                        No property data provider connected yet. Use county/ORMAP links or enter facts manually.
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 <div style={styles.reviewBox}>
@@ -3879,7 +4486,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                     {items.length === 0 && <div style={styles.empty}>No requests</div>}
 
-                    {items.map((request) => (
+                    {items.map((request) => {
+                      const profile = propertyProfilesByLeadId[request.id]
+                      const profileLoading = Boolean(propertyProfileLoadingByLeadId[request.id])
+                      const profileError = propertyProfileErrorsByLeadId[request.id]
+
+                      return (
                       <div key={request.id} style={styles.requestCard}>
                         <strong>{request.propertyAddress}</strong>
                         <p style={styles.small}>
@@ -3894,17 +4506,29 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           <div style={styles.propertyProfileCard}>
                             <strong>Verified Property Profile</strong>
                             <div style={styles.compactFactGrid}>
-                              <span>Beds: {request.propertyFacts.bedrooms || 'TBD'}</span>
-                              <span>Baths: {request.propertyFacts.bathrooms || 'TBD'}</span>
-                              <span>Sq ft: {request.propertyFacts.squareFeet || 'TBD'}</span>
-                              <span>Built: {request.propertyFacts.yearBuilt || 'TBD'}</span>
-                              <span>Type: {request.propertyFacts.propertyType || 'TBD'}</span>
-                              <span>Jurisdiction: {request.propertyFacts.jurisdiction || 'Review'}</span>
+                              <span>Beds: {profile?.beds || request.propertyFacts.bedrooms || 'TBD'}</span>
+                              <span>Baths: {profile?.baths || request.propertyFacts.bathrooms || 'TBD'}</span>
+                              <span>Sq ft: {profile?.sqft || request.propertyFacts.squareFeet || 'TBD'}</span>
+                              <span>Built: {profile?.yearBuilt || request.propertyFacts.yearBuilt || 'TBD'}</span>
+                              <span>Type: {profile?.propertyType || request.propertyFacts.propertyType || 'TBD'}</span>
+                              <span>Jurisdiction: {profile?.jurisdiction || request.propertyFacts.jurisdiction || 'Review'}</span>
                             </div>
+                            {profileLoading && <p style={styles.small}>Loading property profile...</p>}
+                            {profileError && (
+                              <p style={styles.small}>Property lookup failed: {profileError}</p>
+                            )}
                             {request.propertyFacts.verificationNotes && (
                               <p style={styles.small}>Notes: {request.propertyFacts.verificationNotes}</p>
                             )}
                             <div style={styles.buttonRow}>
+                              <button
+                                type="button"
+                                style={styles.linkButton}
+                                disabled={profileLoading}
+                                onClick={() => refreshLeadPropertyProfile(request, true)}
+                              >
+                                Refresh Property Profile
+                              </button>
                               {buildPropertyResearchPack(
                                 request.propertyAddress,
                                 request.city,
@@ -3926,24 +4550,44 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                         {request.photos.length > 0 && <strong>Photos</strong>}
                         {request.photos.map((file) => (
-                          <button
-                            key={file.path}
-                            style={styles.linkButton}
-                            onClick={() => openRequestFile(file)}
-                          >
-                            Open {file.name}
-                          </button>
+                          <div key={file.id || file.path || file.name} style={styles.fileActionRow}>
+                            <span style={styles.fileName}>{file.name}</span>
+                            <button
+                              type="button"
+                              style={styles.linkButton}
+                              onClick={() => openRequestFile(file)}
+                            >
+                              View Photo
+                            </button>
+                            <button
+                              type="button"
+                              style={styles.linkButton}
+                              onClick={() => openRequestFile(file, true)}
+                            >
+                              Download
+                            </button>
+                          </div>
                         ))}
 
                         {request.documents.length > 0 && <strong>Documents</strong>}
                         {request.documents.map((file) => (
-                          <button
-                            key={file.path}
-                            style={styles.linkButton}
-                            onClick={() => openRequestFile(file)}
-                          >
-                            Open {file.name}
-                          </button>
+                          <div key={file.id || file.path || file.name} style={styles.fileActionRow}>
+                            <span style={styles.fileName}>{file.name}</span>
+                            <button
+                              type="button"
+                              style={styles.linkButton}
+                              onClick={() => openRequestFile(file)}
+                            >
+                              Open File
+                            </button>
+                            <button
+                              type="button"
+                              style={styles.linkButton}
+                              onClick={() => openRequestFile(file, true)}
+                            >
+                              Download
+                            </button>
+                          </div>
                         ))}
 
 <details
@@ -3994,11 +4638,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         border: '1px solid #06542d',
       }}
       disabled={sellerPrepLoadingId === request.id}
-      onClick={() => runSellerPrepAnalysis(request)}
+      onClick={() => runSellerPrepDraftV1(request)}
     >
       {sellerPrepLoadingId === request.id
         ? 'Running Seller Prep...'
-        : 'Run Seller Prep Analysis'}
+        : 'Run Seller Prep Draft'}
     </button>
 
     <button
@@ -4010,11 +4654,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         border: '1px solid #d8c2ad',
       }}
       disabled={sellerPrepLoadingId === request.id}
-      onClick={() => openSellerPrepReview(request)}
+      onClick={() => loadSellerPrepDraftForRequest(request)}
     >
       {sellerPrepLoadingId === request.id
         ? 'Opening Seller Prep...'
-        : 'Open Seller Prep Review'}
+        : 'Open Seller Prep V1'}
     </button>
 
     <button
@@ -4169,7 +4813,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           Archive Lead
                         </button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -4363,6 +5008,223 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         )}
 
         {isAdmin && activeTab === 'history' && <HistoricalUpload />}
+
+        {isAdmin && activeTab === 'sellerPrep' && (
+          <section style={styles.card}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <h2>Seller Prep Intelligence V1</h2>
+                <p style={styles.muted}>
+                  Rule-based draft for seller-prep scope, buyer impact, inspection risk, and net-impact notes.
+                  Powered by AI-style logic. Approved by humans.
+                </p>
+              </div>
+              <select
+                style={{ ...styles.input, maxWidth: 360, marginBottom: 0 }}
+                value={sellerPrepSelectedRequest?.id || ''}
+                onChange={(event) => {
+                  const next = requests.find((request) => request.id === event.target.value)
+                  if (next) loadSellerPrepDraftForRequest(next)
+                }}
+              >
+                <option value="">Select lead</option>
+                {requests.map((request) => (
+                  <option key={request.id} value={request.id}>
+                    {request.propertyAddress || request.description.slice(0, 50) || request.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={styles.noticeBox}>
+              Safety rule: final report/send actions stay disabled until a human approves the Seller Prep analysis.
+              This V1 draft does not send emails, submit proposals, order materials, approve contractor bids, or make final decisions.
+            </div>
+
+            {sellerPrepSelectedRequest ? (
+              <>
+                <div style={styles.requestCard}>
+                  <strong>{sellerPrepSelectedRequest.propertyAddress || 'Untitled property'}</strong>
+                  <p style={styles.small}>
+                    {sellerPrepSelectedRequest.city}, {sellerPrepSelectedRequest.state} {sellerPrepSelectedRequest.zip} •{' '}
+                    {sellerPrepSelectedRequest.workType}
+                  </p>
+                  <p>{sellerPrepSelectedRequest.description}</p>
+                  <div style={styles.buttonRow}>
+                    <button
+                      type="button"
+                      style={styles.primaryButton}
+                      onClick={() => runSellerPrepDraftV1(sellerPrepSelectedRequest)}
+                    >
+                      Run Seller Prep Draft
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => loadSellerPrepDraftForRequest(sellerPrepSelectedRequest)}
+                    >
+                      Load Latest Draft
+                    </button>
+                  </div>
+                </div>
+
+                {sellerPrepAnalysisV1 && (
+                  <div style={styles.aiBox}>
+                    <div style={styles.buttonRow}>
+                      <div style={{ flex: 1 }}>
+                        <strong>Property Summary</strong>
+                        <p>{sellerPrepAnalysisV1.summary}</p>
+                        <p>
+                          Total prep range: {money(sellerPrepAnalysisV1.total_low_estimate)} -{' '}
+                          {money(sellerPrepAnalysisV1.total_high_estimate)}
+                        </p>
+                        <p>Seller net impact: {sellerPrepAnalysisV1.seller_net_impact}</p>
+                        <p style={styles.small}>
+                          Confidence: {sellerPrepAnalysisV1.confidence || 'draft'} • Human review:{' '}
+                          {sellerPrepAnalysisV1.human_review_status}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        style={styles.primaryButton}
+                        onClick={markSellerPrepAnalysisApproved}
+                        disabled={sellerPrepAnalysisV1.human_review_status === 'human_approved'}
+                      >
+                        Mark Analysis Human Approved
+                      </button>
+                    </div>
+
+                    <div style={styles.noticeBox}>
+                      Final Report / Send buttons:{' '}
+                      <strong>
+                        {sellerPrepAnalysisV1.human_review_status === 'human_approved'
+                          ? 'Enabled for future report workflow'
+                          : 'Disabled until human approved'}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+
+                {sellerPrepItemsV1.length === 0 ? (
+                  <div style={styles.empty}>No Seller Prep draft loaded yet.</div>
+                ) : (
+                  sellerPrepItemsV1.map((item) => (
+                    <div key={item.id} style={styles.requestCard}>
+                      <div style={styles.grid3}>
+                        <div>
+                          <strong>{item.repair_item}</strong>
+                          <p style={styles.small}>{item.trade_category || 'General'} • {item.recommendation || 'needs review'}</p>
+                        </div>
+                        <div>
+                          <strong>Buyer Impact</strong>
+                          <p style={styles.small}>{item.buyer_impact_score || 0}/10</p>
+                        </div>
+                        <div>
+                          <strong>Inspection Risk</strong>
+                          <p style={styles.small}>{item.inspection_risk_score || 0}/10</p>
+                        </div>
+                      </div>
+
+                      <div style={styles.grid3}>
+                        <input
+                          style={styles.input}
+                          type="number"
+                          value={Number(item.estimated_low || 0)}
+                          onChange={(event) => updateSellerPrepItemLocal(item.id, { estimated_low: Number(event.target.value) })}
+                        />
+                        <input
+                          style={styles.input}
+                          type="number"
+                          value={Number(item.estimated_high || 0)}
+                          onChange={(event) => updateSellerPrepItemLocal(item.id, { estimated_high: Number(event.target.value) })}
+                        />
+                        <select
+                          style={styles.input}
+                          value={item.human_review_status || 'needs_review'}
+                          onChange={(event) => updateSellerPrepItemLocal(item.id, { human_review_status: event.target.value })}
+                        >
+                          <option value="needs_review">needs_review</option>
+                          <option value="approved">approved</option>
+                          <option value="revise">revise</option>
+                          <option value="rejected">rejected</option>
+                        </select>
+                      </div>
+
+                      <input
+                        style={styles.input}
+                        value={item.recommendation || ''}
+                        placeholder="Recommendation"
+                        onChange={(event) => updateSellerPrepItemLocal(item.id, { recommendation: event.target.value })}
+                      />
+
+                      <p style={styles.small}>Missing info: {item.missing_info || 'None obvious'}</p>
+                      <p style={styles.small}>Notes: {item.ai_notes || 'No notes.'}</p>
+
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.primaryButton}
+                          disabled={sellerPrepSavingId === item.id}
+                          onClick={() => saveSellerPrepItem(item)}
+                        >
+                          {sellerPrepSavingId === item.id ? 'Saving...' : 'Save Item'}
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          onClick={() => saveSellerPrepItemAsPricingMemory(item)}
+                          disabled={item.human_review_status !== 'approved'}
+                        >
+                          Approve as Pricing Memory
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </>
+            ) : (
+              <div style={styles.empty}>No leads loaded yet.</div>
+            )}
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'pricingMemory' && (
+          <section style={styles.card}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <h2>Pricing Memory</h2>
+                <p style={styles.muted}>
+                  Human-verified prices saved from Seller Prep and historical/project review.
+                </p>
+              </div>
+              <button type="button" style={styles.outlineButton} disabled={pricingMemoryLoading} onClick={loadPricingMemoryEntries}>
+                {pricingMemoryLoading ? 'Loading...' : 'Refresh Pricing Memory'}
+              </button>
+            </div>
+
+            {pricingMemoryEntries.length === 0 ? (
+              <div style={styles.empty}>No pricing memory yet. Approve a Seller Prep item first.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {pricingMemoryEntries.map((entry) => (
+                  <div key={entry.id} style={styles.requestCard}>
+                    <strong>{entry.item_name || 'Unnamed pricing item'}</strong>
+                    <p style={styles.small}>
+                      {entry.category || 'seller_prep'} • {entry.unit || 'project'} • ZIP {entry.zip || 'not set'}
+                    </p>
+                    <p>Verified price: {money(entry.verified_price)}</p>
+                    <p style={styles.small}>Source: {entry.source || 'not set'}</p>
+                    <p style={styles.small}>
+                      Human verified: {entry.human_verified ? 'Yes' : 'No'} • Last checked:{' '}
+                      {entry.last_checked ? new Date(entry.last_checked).toLocaleDateString() : 'not set'}
+                    </p>
+                    {entry.notes && <p style={styles.small}>Notes: {entry.notes}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {isAdmin && activeTab === 'materials' && (
           <section style={styles.card}>
@@ -5778,6 +6640,20 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #d7dfd3',
     borderRadius: 14,
     padding: 14,
+  },
+  fileActionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    padding: '6px 0',
+  },
+  fileName: {
+    color: '#173425',
+    fontSize: 14,
+    fontWeight: 800,
+    minWidth: 180,
+    overflowWrap: 'anywhere',
   },
   linkButton: {
     display: 'block',

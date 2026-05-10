@@ -8,7 +8,6 @@ const setupError = {
   message:
     'Supabase is not configured in this preview. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable saved leads, files, reports, and app data.',
 }
-
 function createMissingSupabaseClient() {
   function createQueryBuilder() {
     let mode: 'read' | 'write' = 'read'
@@ -79,6 +78,6 @@ function createMissingSupabaseClient() {
 
 export const isSupabaseConfigured = !missingSupabaseEnv
 
-export const supabase = missingSupabaseEnv
-  ? (createMissingSupabaseClient() as ReturnType<typeof createClient>)
-  : createClient(supabaseUrl, supabaseKey)
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseKey)
+  : (createMissingSupabaseClient() as unknown as ReturnType<typeof createClient>)

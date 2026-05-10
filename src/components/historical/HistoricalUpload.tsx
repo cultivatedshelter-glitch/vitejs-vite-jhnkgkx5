@@ -1,4 +1,5 @@
-import { CSSProperties, FormEvent, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { supabase } from '../../supabase'
 import type { HistoricalProject, HistoricalProjectFile } from '../../types/historical'
 
@@ -136,6 +137,14 @@ const styles: Record<string, CSSProperties> = {
     marginTop: 10,
     background: '#fbfcfa',
   },
+  projectCardOpen: {
+    background: '#ffffff',
+    border: '1px solid #0f542d',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    boxShadow: '0 8px 24px rgba(15,84,45,0.08)',
+  },
 }
 
 export default function HistoricalUpload() {
@@ -153,6 +162,7 @@ export default function HistoricalUpload() {
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<HistoricalProject[]>([])
   const [filesByProject, setFilesByProject] = useState<Record<string, HistoricalProjectFile[]>>({})
+  const [openProjectId, setOpenProjectId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
 
   const canSubmit = useMemo(() => {
@@ -291,17 +301,26 @@ export default function HistoricalUpload() {
     }
   }
 
-  async function openHistoricalFile(item: HistoricalProjectFile) {
+  async function createHistoricalFileUrl(item: HistoricalProjectFile, download = false) {
     const { data, error } = await supabase.storage
       .from(item.storage_bucket || BUCKET)
-      .createSignedUrl(item.storage_path, 60 * 10)
+      .createSignedUrl(item.storage_path, 60 * 10, download ? { download: item.file_name } : undefined)
 
     if (error || !data?.signedUrl) {
-      alert('Could not open file. Check Supabase storage bucket and policies.')
-      return
+      throw error || new Error('Signed URL was not returned.')
     }
 
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    return data.signedUrl
+  }
+
+  async function openHistoricalFile(item: HistoricalProjectFile, download = false) {
+    try {
+      const signedUrl = await createHistoricalFileUrl(item, download)
+      window.open(signedUrl, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      console.error(error)
+      alert('Could not open file. Check Supabase storage bucket and policies.')
+    }
   }
 
   return (
@@ -418,7 +437,22 @@ export default function HistoricalUpload() {
         </p>
       ) : (
         projects.map((project) => (
-          <div key={project.id} style={styles.projectCard}>
+          <div
+            key={project.id}
+            style={{
+              ...(openProjectId === project.id ? styles.projectCardOpen : styles.projectCard),
+              cursor: 'pointer',
+            }}
+            role="button"
+            tabIndex={0}
+            onClick={() => setOpenProjectId((current) => (current === project.id ? null : project.id))}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                setOpenProjectId((current) => (current === project.id ? null : project.id))
+              }
+            }}
+          >
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
                 <strong>{project.project_type}</strong>
@@ -430,33 +464,57 @@ export default function HistoricalUpload() {
               <span style={project.human_verified ? styles.verifiedPill : styles.statusPill}>
                 {statusLabel(project.review_status)}
               </span>
+              <button type="button" style={styles.outlineButton}>
+                {openProjectId === project.id ? 'Close Project' : 'Open Project'}
+              </button>
             </div>
 
-            <div style={styles.grid3}>
-              <p style={styles.small}>Estimate: {money(project.estimated_amount)}</p>
-              <p style={styles.small}>Final: {money(project.final_invoice_amount)}</p>
-              <p style={styles.small}>
-                Privacy: {project.anonymized ? 'Anonymized' : 'Customer info kept'}
-              </p>
-            </div>
-
-            {project.notes && <p style={styles.small}>Notes: {project.notes}</p>}
-
-            {(filesByProject[project.id] || []).map((item) => (
-              <div key={item.id} style={styles.fileRow}>
-                <div style={styles.buttonRow}>
-                  <div style={{ flex: 1 }}>
-                    <strong>{item.file_name}</strong>
-                    <p style={styles.small}>
-                      {item.file_type} • Extraction: {item.extraction_status || 'not_started'} • Needs human review
-                    </p>
-                  </div>
-                  <button type="button" style={styles.outlineButton} onClick={() => openHistoricalFile(item)}>
-                    View / Download
-                  </button>
+            {openProjectId === project.id && (
+              <>
+                <div style={styles.grid3}>
+                  <p style={styles.small}>Estimate: {money(project.estimated_amount)}</p>
+                  <p style={styles.small}>Final: {money(project.final_invoice_amount)}</p>
+                  <p style={styles.small}>
+                    Privacy: {project.anonymized ? 'Anonymized' : 'Customer info kept'}
+                  </p>
                 </div>
-              </div>
-            ))}
+
+                {project.notes && <p style={styles.small}>Notes: {project.notes}</p>}
+
+                {(filesByProject[project.id] || []).map((item) => (
+                  <div key={item.id} style={styles.fileRow}>
+                    <div style={styles.buttonRow}>
+                      <div style={{ flex: 1 }}>
+                        <strong>{item.file_name}</strong>
+                        <p style={styles.small}>
+                          {item.file_type} • Extraction: {item.extraction_status || 'not_started'} • Needs human review
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openHistoricalFile(item)
+                        }}
+                      >
+                        Open File
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openHistoricalFile(item, true)
+                        }}
+                      >
+                        Download
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         ))
       )}

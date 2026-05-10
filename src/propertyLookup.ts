@@ -1,5 +1,3 @@
-import { supabase } from './supabase'
-
 export type PropertyFacts = {
   squareFeet: string
   yearBuilt: string
@@ -15,11 +13,23 @@ export type PropertyFacts = {
   source: 'api' | 'fallback'
   confidence: 'high' | 'medium' | 'low'
   notes?: string
+  lookupStatus?: PropertyLookupStatus
 }
 
+export type PropertyLookupStatus =
+  | 'idle'
+  | 'function_missing'
+  | 'function_unavailable'
+  | 'provider_not_configured'
+  | 'no_records_found'
+  | 'data_found'
+  | 'error'
+
 type PropertyLookupResponse = {
-  property?: Partial<PropertyFacts>
+  property?: Partial<PropertyFacts> | null
   error?: string
+  status?: PropertyLookupStatus
+  message?: string
 }
 
 export function emptyPropertyFacts(): PropertyFacts {
@@ -31,6 +41,7 @@ export function emptyPropertyFacts(): PropertyFacts {
     lotSize: '',
     source: 'fallback',
     confidence: 'low',
+    lookupStatus: 'idle',
   }
 }
 
@@ -41,35 +52,118 @@ export async function lookupPropertyFacts(address: string): Promise<PropertyFact
     throw new Error('Enter a property address before pulling property info.')
   }
 
-  const { data, error } = await supabase.functions.invoke<PropertyLookupResponse>('property-lookup', {
-    body: { address: cleanAddress },
-  })
+  const payload = { address: cleanAddress }
+  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/property-lookup`
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+  console.info('[property-lookup] request payload', payload)
 
-  if (error) {
-    return fallbackPropertyFacts('Property lookup API is not deployed yet. Using report placeholders.')
+  if (!functionUrl.startsWith('http') || !anonKey) {
+    return fallbackPropertyFacts(
+      'function unavailable',
+      'Property lookup is not connected to Supabase in this deployment. Use county/ORMAP links or enter facts manually.',
+      'function_unavailable'
+    )
   }
 
-  if (data?.error) {
-    throw new Error(data.error)
-  }
+  try {
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
 
-  return {
-    ...fallbackPropertyFacts(),
-    ...data?.property,
-    source: data?.property?.source || 'api',
-    confidence: data?.property?.confidence || 'medium',
+    const responseText = await response.text()
+    let data: PropertyLookupResponse | null = null
+
+    try {
+      data = responseText ? JSON.parse(responseText) : null
+    } catch {
+      data = null
+    }
+
+    console.info('[property-lookup] response', {
+      status: response.status,
+      ok: response.ok,
+      data,
+      raw: responseText,
+    })
+
+    if (response.status === 404) {
+      return fallbackPropertyFacts(
+        'function missing',
+        'Property lookup function is missing. Use county/ORMAP links or enter facts manually.',
+        'function_missing'
+      )
+    }
+
+    if (!response.ok) {
+      return fallbackPropertyFacts(
+        'function unavailable',
+        data?.message || data?.error || 'Property lookup function is unavailable. Use county/ORMAP links or enter facts manually.',
+        'function_unavailable'
+      )
+    }
+
+    if (data?.error) {
+      return fallbackPropertyFacts(
+        data.status === 'provider_not_configured' ? 'provider missing' : 'lookup error',
+        data.message || data.error,
+        data.status || 'error'
+      )
+    }
+
+    if (data?.status === 'provider_not_configured') {
+      return fallbackPropertyFacts(
+        'provider missing',
+        data.message || 'No property data provider connected yet. Use county/ORMAP links or enter facts manually.',
+        'provider_not_configured'
+      )
+    }
+
+    if (data?.status === 'no_records_found') {
+      return fallbackPropertyFacts(
+        'provider returned no data',
+        data.message || 'Provider returned no data. Use county/ORMAP links or enter facts manually.',
+        'no_records_found'
+      )
+    }
+
+    return {
+      ...emptyPropertyFacts(),
+      ...data?.property,
+      source: data?.property?.source || 'api',
+      confidence: data?.property?.confidence || 'high',
+      lookupStatus: data?.status || 'data_found',
+      notes: data?.message || 'data found',
+    }
+  } catch (error) {
+    console.info('[property-lookup] response', { error })
+    return fallbackPropertyFacts(
+      'function unavailable',
+      'Property lookup function is unavailable. Use county/ORMAP links or enter facts manually.',
+      'function_unavailable'
+    )
   }
 }
 
-function fallbackPropertyFacts(notes = 'Connect a property data provider to enable live public records.'): PropertyFacts {
+function fallbackPropertyFacts(
+  notes = 'Property lookup unavailable — manual entry still works.',
+  message = notes,
+  lookupStatus: PropertyLookupStatus = 'function_unavailable'
+): PropertyFacts {
   return {
-    squareFeet: 'Confirm with listing data',
-    yearBuilt: 'Public record pending',
-    bedrooms: 'TBD',
-    bathrooms: 'TBD',
-    lotSize: 'TBD',
+    squareFeet: '',
+    yearBuilt: '',
+    bedrooms: '',
+    bathrooms: '',
+    lotSize: '',
     source: 'fallback',
     confidence: 'low',
-    notes,
+    lookupStatus,
+    notes: message || notes,
   }
 }
