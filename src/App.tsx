@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { isSupabaseConfigured, supabase } from './supabase'
 import Gallery from './components/Gallery'
+import HistoricalUpload from './components/historical/HistoricalUpload'
 import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts } from './propertyLookup'
 import { buildPropertyResearchPack } from './propertyIntelligence'
 import {
@@ -10,7 +11,7 @@ import {
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'materials' | 'labor' | 'estimates'
 
 type StoredFile = {
   name: string
@@ -3255,6 +3256,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               { label: 'Messages', tab: 'messages' },
               { label: 'Archived Leads', tab: 'archived' },
               { label: 'Invoices', tab: 'invoices' },
+              { label: 'Historical Upload', tab: 'history' },
               { label: 'Material Costs', tab: 'materials' },
               { label: 'Labor Rates', tab: 'labor' },
               { label: 'AI Estimator', tab: 'estimates' },
@@ -3327,6 +3329,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 onClick={() => requireAdmin('invoices')}
               >
                 Invoices
+              </button>
+
+              <button
+                style={activeTab === 'history' ? styles.navActive : styles.navButton}
+                onClick={() => requireAdmin('history')}
+              >
+                Historical Upload
               </button>
 
               <button
@@ -4494,6 +4503,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             </div>
           </section>
         )}
+
+        {isAdmin && activeTab === 'history' && <HistoricalUpload />}
 
         {isAdmin && activeTab === 'materials' && (
           <section style={styles.card}>
