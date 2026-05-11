@@ -7,18 +7,33 @@ type PropertyLookupRequest = {
   zip?: string
 }
 
-type ProviderName = 'attom' | 'estated' | 'custom'
+type AttomLookupStatus =
+  | 'data_found'
+  | 'provider_not_configured'
+  | 'no_records_found'
+  | 'attom_unauthorized'
+  | 'attom_forbidden'
+  | 'attom_bad_request'
+  | 'attom_not_found'
+  | 'attom_request_failed'
+  | 'error'
 
-type ProviderProperty = {
-  squareFeet?: string | number
-  yearBuilt?: string | number
-  bedrooms?: string | number
-  bathrooms?: string | number
-  lotSize?: string | number
-  propertyType?: string | number
-  jurisdiction?: string | number
-  zoning?: string | number
-  parcelNumber?: string | number
+type NormalizedProperty = {
+  beds?: string
+  baths?: string
+  bedrooms?: string
+  bathrooms?: string
+  squareFeet?: string
+  yearBuilt?: string
+  propertyType?: string
+  lotSize?: string
+  ownerName?: string
+  parcelNumber?: string
+  apn?: string
+  jurisdiction?: string
+  zoning?: string
+  source: 'api'
+  confidence: 'high' | 'medium' | 'low'
 }
 
 const corsHeaders = {
@@ -27,8 +42,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-const ATTOM_DEFAULT_URL = 'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/basicprofile'
-const ESTATED_DEFAULT_URL = 'https://apis.estated.com/v4/property'
+const ATTOM_BASE_URL = 'https://api.gateway.attomdata.com/propertyapi/v1.0.0'
+const ATTOM_BASIC_PROFILE_PATH = '/property/basicprofile'
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
@@ -42,276 +57,239 @@ Deno.serve(async (request) => {
   try {
     const body = (await request.json()) as PropertyLookupRequest
     const address = buildLookupAddress(body)
-    console.log('[property-lookup] request payload', { body, address })
+    console.log('[property-lookup] request received', { hasAddress: Boolean(address) })
 
     if (!address) {
-      return jsonResponse({ status: 'error', error: 'Address is required.' }, 400)
+      return jsonResponse({ status: 'attom_bad_request', error: 'Address is required.' }, 400)
     }
 
-    const provider = getProviderConfig()
+    const attomKey = Deno.env.get('ATTOM_API_KEY') || Deno.env.get('PROPERTY_DATA_API_KEY')
 
-    if (!provider) {
-      const responseBody = {
+    if (!attomKey) {
+      return jsonResponse({
         status: 'provider_not_configured',
         message: 'No property data provider connected yet. Use county/ORMAP links or enter facts manually.',
         property: null,
-      }
-      console.log('[property-lookup] response', responseBody)
-      return jsonResponse(responseBody)
+      })
     }
 
-    const property = await fetchPropertyFromProvider(address, provider)
+    const attomResult = await fetchAttomProperty(address, attomKey)
+
+    if (!attomResult.ok) {
+      return jsonResponse(
+        {
+          status: attomResult.status,
+          message: attomResult.message,
+          property: null,
+          provider: 'attom',
+        },
+        attomResult.httpStatus
+      )
+    }
+
+    const property = normalizeAttomPayload(attomResult.payload)
 
     if (!hasPropertyData(property)) {
-      const responseBody = {
+      return jsonResponse({
         status: 'no_records_found',
-        message: 'Provider returned no data for this address. Use county/ORMAP links or enter facts manually.',
+        message: 'ATTOM returned no property facts for this address. Use county/ORMAP links or enter facts manually.',
         property: null,
-        provider: provider.name,
-      }
-      console.log('[property-lookup] response', responseBody)
-      return jsonResponse(responseBody)
+        provider: 'attom',
+        raw: summarizeAttomPayload(attomResult.payload),
+      })
     }
 
-    const responseBody = {
+    return jsonResponse({
       status: 'data_found',
-      message: `Property data found from ${provider.name}. Verify before using in estimates or reports.`,
-      provider: provider.name,
-      property: {
-        squareFeet: toDisplayValue(property.squareFeet),
-        yearBuilt: toDisplayValue(property.yearBuilt),
-        bedrooms: toDisplayValue(property.bedrooms),
-        bathrooms: toDisplayValue(property.bathrooms),
-        lotSize: toDisplayValue(property.lotSize),
-        propertyType: toDisplayValue(property.propertyType),
-        jurisdiction: toDisplayValue(property.jurisdiction),
-        zoning: toDisplayValue(property.zoning),
-        parcelNumber: toDisplayValue(property.parcelNumber),
-        source: 'api',
-        confidence: 'medium',
-      },
-    }
-
-    console.log('[property-lookup] response', responseBody)
-    return jsonResponse(responseBody)
+      message: 'Property data found from ATTOM. Verify before using in estimates or reports.',
+      provider: 'attom',
+      property,
+      raw: summarizeAttomPayload(attomResult.payload),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Property lookup failed.'
-    const responseBody = { status: 'error', error: message }
-    console.log('[property-lookup] response', responseBody)
-    return jsonResponse(responseBody, 500)
+    console.log('[property-lookup] request failed', { message })
+    return jsonResponse({ status: 'error', error: 'Property lookup failed.' }, 500)
   }
 })
 
+async function fetchAttomProperty(
+  address: string,
+  attomKey: string
+): Promise<
+  | { ok: true; payload: unknown }
+  | { ok: false; status: AttomLookupStatus; httpStatus: number; message: string }
+> {
+  const url = new URL(`${ATTOM_BASE_URL}${ATTOM_BASIC_PROFILE_PATH}`)
+  url.searchParams.set('address', address)
+
+  let response: Response
+
+  try {
+    response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        attomdataapikey: attomKey,
+      },
+    })
+  } catch {
+    return {
+      ok: false,
+      status: 'attom_request_failed',
+      httpStatus: 502,
+      message: 'ATTOM request failed before a response was received.',
+    }
+  }
+
+  if (!response.ok) {
+    return mapAttomError(response.status)
+  }
+
+  const payload = await response.json()
+  const summary = summarizeAttomPayload(payload)
+
+  if (summary.statusCode && String(summary.statusCode).startsWith('4')) {
+    return mapAttomError(Number(summary.statusCode))
+  }
+
+  return { ok: true, payload }
+}
+
+function mapAttomError(statusCode: number): {
+  ok: false
+  status: AttomLookupStatus
+  httpStatus: number
+  message: string
+} {
+  if (statusCode === 400) {
+    return {
+      ok: false,
+      status: 'attom_bad_request',
+      httpStatus: 400,
+      message: 'ATTOM rejected the address request.',
+    }
+  }
+
+  if (statusCode === 401) {
+    return {
+      ok: false,
+      status: 'attom_unauthorized',
+      httpStatus: 401,
+      message: 'ATTOM rejected the API key.',
+    }
+  }
+
+  if (statusCode === 403) {
+    return {
+      ok: false,
+      status: 'attom_forbidden',
+      httpStatus: 403,
+      message: 'ATTOM key is valid, but this endpoint is not allowed for the account.',
+    }
+  }
+
+  if (statusCode === 404) {
+    return {
+      ok: false,
+      status: 'attom_not_found',
+      httpStatus: 404,
+      message: 'ATTOM endpoint or property record was not found.',
+    }
+  }
+
+  return {
+    ok: false,
+    status: 'attom_request_failed',
+    httpStatus: 502,
+    message: `ATTOM request failed with status ${statusCode}.`,
+  }
+}
+
 function buildLookupAddress(body: PropertyLookupRequest): string {
   const street = (body.address || body.propertyAddress || body.address_line_1 || '').trim()
+
+  if (street.includes(',') || (!body.city && !body.state && !body.zip)) {
+    return street
+  }
+
   return [street, body.city, body.state, body.zip]
     .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join(', ')
 }
 
-function getProviderConfig(): { name: ProviderName; url: string; key: string } | null {
-  const requestedProvider = Deno.env.get('PROPERTY_DATA_PROVIDER')?.toLowerCase()
-  const sharedKey = Deno.env.get('PROPERTY_DATA_API_KEY')
-  const attomKey = Deno.env.get('ATTOM_API_KEY') || (requestedProvider !== 'estated' ? sharedKey : undefined)
-  const estatedKey = Deno.env.get('ESTATED_API_KEY') || (requestedProvider === 'estated' ? sharedKey : undefined)
-  const customUrl = Deno.env.get('PROPERTY_DATA_API_URL')
-  const customKey = sharedKey
-
-  if ((requestedProvider === 'attom' || (!requestedProvider && attomKey)) && attomKey) {
-    return {
-      name: 'attom',
-      url: Deno.env.get('ATTOM_API_URL') || ATTOM_DEFAULT_URL,
-      key: attomKey,
-    }
-  }
-
-  if ((requestedProvider === 'estated' || (!requestedProvider && estatedKey)) && estatedKey) {
-    return {
-      name: 'estated',
-      url: Deno.env.get('ESTATED_API_URL') || ESTATED_DEFAULT_URL,
-      key: estatedKey,
-    }
-  }
-
-  if (customUrl && customKey) {
-    return {
-      name: 'custom',
-      url: customUrl,
-      key: customKey,
-    }
-  }
-
-  return null
-}
-
-async function fetchPropertyFromProvider(
-  address: string,
-  provider: { name: ProviderName; url: string; key: string }
-): Promise<ProviderProperty> {
-  if (provider.name === 'attom') return fetchAttomProperty(address, provider.url, provider.key)
-  if (provider.name === 'estated') return fetchEstatedProperty(address, provider.url, provider.key)
-  return fetchCustomProperty(address, provider.url, provider.key)
-}
-
-async function fetchAttomProperty(address: string, providerUrl: string, providerKey: string): Promise<ProviderProperty> {
-  const url = new URL(providerUrl)
-  url.searchParams.set('address', address)
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      apikey: providerKey,
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`ATTOM property provider returned ${response.status}.`)
-  }
-
-  return normalizeAttomPayload(await response.json())
-}
-
-async function fetchEstatedProperty(address: string, providerUrl: string, providerKey: string): Promise<ProviderProperty> {
-  const url = new URL(providerUrl)
-  url.searchParams.set('token', providerKey)
-  url.searchParams.set('combined_address', address)
-
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Estated property provider returned ${response.status}.`)
-  }
-
-  return normalizeEstatedPayload(await response.json())
-}
-
-async function fetchCustomProperty(address: string, providerUrl: string, providerKey: string): Promise<ProviderProperty> {
-  const url = new URL(providerUrl)
-  url.searchParams.set('address', address)
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${providerKey}`,
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Property provider returned ${response.status}.`)
-  }
-
-  return normalizeGenericPayload(await response.json())
-}
-
-function normalizeAttomPayload(payload: unknown): ProviderProperty {
+function normalizeAttomPayload(payload: unknown): NormalizedProperty {
   const root = getRecord(payload)
-  const property = getFirstRecord(root?.property) || getFirstRecord(root?.data) || root
-  if (!property) return {}
+  const property = getFirstRecord(root?.property) || getFirstRecord(root?.data)
+
+  if (!property) {
+    return {
+      source: 'api',
+      confidence: 'low',
+    }
+  }
 
   const identifier = getRecord(property.identifier)
   const lot = getRecord(property.lot)
-  const area = getRecord(property.area)
   const address = getRecord(property.address)
   const summary = getRecord(property.summary)
   const building = getRecord(property.building)
   const size = getRecord(building?.size)
   const rooms = getRecord(building?.rooms)
+  const owner = getRecord(property.owner)
+  const owner1 = getRecord(owner?.owner1)
+
+  const beds = firstString(rooms?.beds, rooms?.bedrooms)
+  const baths = firstString(rooms?.bathsTotal, rooms?.bathstotal, rooms?.bathsFull, rooms?.bathrooms)
+  const parcelNumber = firstString(identifier?.apn, identifier?.attomId, identifier?.Id)
 
   return {
-    squareFeet:
-      getString(size?.livingSize) ||
-      getString(size?.grossSizeAdjusted) ||
-      getString(size?.bldgSize) ||
-      getString(size?.grossSize),
-    yearBuilt: getString(summary?.yearBuilt),
-    bedrooms: getString(rooms?.beds),
-    bathrooms:
-      getString(rooms?.bathsTotal) ||
-      getString(rooms?.bathstotal) ||
-      getString(rooms?.bathsFull) ||
-      getString(rooms?.bathrooms),
-    lotSize: getString(lot?.lotSize2) || formatAcres(lot?.lotSize1),
-    propertyType:
-      getString(summary?.propType) ||
-      getString(summary?.propertyType) ||
-      getString(summary?.propSubType) ||
-      getString(summary?.propClass),
-    jurisdiction: getString(area?.countrySecSubd) || getString(address?.locality),
-    zoning: getString(lot?.zoningType),
-    parcelNumber: getString(identifier?.apn) || getString(identifier?.attomId) || getString(identifier?.Id),
+    beds,
+    baths,
+    bedrooms: beds,
+    bathrooms: baths,
+    squareFeet: firstString(size?.livingSize, size?.grossSizeAdjusted, size?.bldgSize, size?.grossSize),
+    yearBuilt: firstString(summary?.yearBuilt, building?.yearBuilt),
+    propertyType: firstString(summary?.propType, summary?.propertyType, summary?.propSubType, summary?.propClass),
+    lotSize: firstString(lot?.lotSize2, lot?.lotsize2) || formatAcres(lot?.lotSize1 || lot?.lotsize1),
+    ownerName: firstString(owner1?.fullName, owner?.owner, owner?.mailingName, owner?.ownerName),
+    parcelNumber,
+    apn: firstString(identifier?.apn),
+    jurisdiction: firstString(address?.countrySecSubd, address?.locality),
+    zoning: firstString(lot?.zoningType, lot?.zoning),
+    source: 'api',
+    confidence: 'medium',
   }
 }
 
-function normalizeEstatedPayload(payload: unknown): ProviderProperty {
+function summarizeAttomPayload(payload: unknown): Record<string, unknown> {
   const root = getRecord(payload)
-  const data = getRecord(root?.data) || root
-  if (!data) return {}
-
-  const metadata = getRecord(data.metadata)
-  const parcel = getRecord(data.parcel)
-  const structure = getRecord(data.structure)
-  const address = getRecord(data.address)
+  const status = getRecord(root?.status)
+  const property = getFirstRecord(root?.property) || getFirstRecord(root?.data)
+  const identifier = getRecord(property?.identifier)
+  const address = getRecord(property?.address)
 
   return {
-    squareFeet:
-      getStringByPath(structure, 'total_area_sq_ft') ||
-      getStringByPath(structure, 'living_area_sq_ft') ||
-      getStringByPath(structure, 'building_area_sq_ft') ||
-      getStringByPath(structure, 'finished_area_sq_ft'),
-    yearBuilt: getStringByPath(structure, 'year_built'),
-    bedrooms: getStringByPath(structure, 'beds_count') || getStringByPath(structure, 'bedrooms_count'),
-    bathrooms:
-      getStringByPath(structure, 'baths') ||
-      getStringByPath(structure, 'baths_count') ||
-      getStringByPath(structure, 'bathrooms_count'),
-    lotSize: getStringByPath(parcel, 'area_sq_ft') || formatAcres(getStringByPath(parcel, 'area_acres')),
-    propertyType:
-      getStringByPath(parcel, 'standardized_land_use_type') ||
-      getStringByPath(parcel, 'land_use_type') ||
-      getStringByPath(parcel, 'property_type'),
-    jurisdiction: getStringByPath(address, 'county') || getStringByPath(address, 'city'),
-    zoning: getStringByPath(parcel, 'zoning'),
-    parcelNumber: getStringByPath(parcel, 'apn') || getStringByPath(parcel, 'apn_original') || getString(metadata?.attom_id),
+    statusCode: status?.code,
+    statusMessage: status?.msg || status?.message,
+    propertyCount: Array.isArray(root?.property) ? root.property.length : property ? 1 : 0,
+    attomId: identifier?.attomId,
+    apn: identifier?.apn,
+    matchedAddress: address?.oneLine,
   }
 }
 
-function normalizeGenericPayload(payload: unknown): ProviderProperty {
-  if (!payload || typeof payload !== 'object') return {}
-
-  const record = payload as Record<string, unknown>
-  const property = getRecord(record.property) || getRecord(record.data) || record
-
-  return {
-    squareFeet:
-      getString(property.squareFeet) ||
-      getString(property.livingArea) ||
-      getString(property.buildingArea) ||
-      getString(property.sqft),
-    yearBuilt: getString(property.yearBuilt),
-    bedrooms: getString(property.bedrooms) || getString(property.beds),
-    bathrooms: getString(property.bathrooms) || getString(property.baths),
-    lotSize: getString(property.lotSize) || getString(property.lotSqft),
-    propertyType: getString(property.propertyType) || getString(property.property_type) || getString(property.landUse),
-    jurisdiction: getString(property.jurisdiction) || getString(property.county) || getString(property.city),
-    zoning: getString(property.zoning) || getString(property.zone),
-    parcelNumber: getString(property.parcelNumber) || getString(property.parcel) || getString(property.apn),
-  }
-}
-
-function hasPropertyData(property: ProviderProperty): boolean {
+function hasPropertyData(property: NormalizedProperty): boolean {
   return Boolean(
-    property.squareFeet ||
+    property.beds ||
+      property.baths ||
+      property.squareFeet ||
       property.yearBuilt ||
-      property.bedrooms ||
-      property.bathrooms ||
-      property.lotSize ||
       property.propertyType ||
-      property.jurisdiction ||
-      property.zoning ||
-      property.parcelNumber
+      property.lotSize ||
+      property.ownerName ||
+      property.parcelNumber ||
+      property.apn
   )
 }
 
@@ -326,29 +304,24 @@ function getFirstRecord(value: unknown): Record<string, unknown> | null {
   return getRecord(value)
 }
 
-function getString(value: unknown): string | undefined {
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  if (typeof value === 'number' && Number.isFinite(value)) return value.toLocaleString()
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = getString(value)
+    if (text) return text
+  }
+
   return undefined
 }
 
-function getStringByPath(record: Record<string, unknown> | null, path: string): string | undefined {
-  if (!record) return undefined
-
-  const directValue = getString(record[path])
-  if (directValue) return directValue
-
-  const camelPath = path.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
-  return getString(record[camelPath])
+function getString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return undefined
 }
 
 function formatAcres(value: unknown): string | undefined {
   const text = getString(value)
   return text ? `${text} acres` : undefined
-}
-
-function toDisplayValue(value: unknown): string | undefined {
-  return getString(value)
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
