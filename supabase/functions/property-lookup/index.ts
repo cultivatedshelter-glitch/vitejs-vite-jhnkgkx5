@@ -130,17 +130,29 @@ async function fetchAttomProperty(
   | { ok: true; payload: unknown }
   | { ok: false; status: AttomLookupStatus; httpStatus: number; message: string }
 > {
-  const url = new URL(`${ATTOM_BASE_URL}${ATTOM_BASIC_PROFILE_PATH}`)
+  const endpointPath = ATTOM_BASIC_PROFILE_PATH
+  const url = new URL(`${ATTOM_BASE_URL}${endpointPath}`)
   url.searchParams.set('address', address)
 
   let response: Response
+  let responseText = ''
 
   try {
+    console.log('[property-lookup] ATTOM request', { endpointPath })
+
     response = await fetch(url, {
       headers: {
         Accept: 'application/json',
+        accept: 'application/json',
+        apikey: attomKey,
         attomdataapikey: attomKey,
       },
+    })
+
+    responseText = await response.text()
+    console.log('[property-lookup] ATTOM response', {
+      endpointPath,
+      responseStatus: response.status,
     })
   } catch {
     return {
@@ -152,13 +164,40 @@ async function fetchAttomProperty(
   }
 
   if (!response.ok) {
+    console.log('[property-lookup] ATTOM failure body', {
+      endpointPath,
+      responseStatus: response.status,
+      responseBodyPreview: responseText.slice(0, 500),
+    })
     return mapAttomError(response.status)
   }
 
-  const payload = await response.json()
+  let payload: unknown
+
+  try {
+    payload = responseText ? JSON.parse(responseText) : null
+  } catch {
+    console.log('[property-lookup] ATTOM JSON parse failure', {
+      endpointPath,
+      responseStatus: response.status,
+      responseBodyPreview: responseText.slice(0, 500),
+    })
+    return {
+      ok: false,
+      status: 'attom_request_failed',
+      httpStatus: 502,
+      message: 'ATTOM returned a non-JSON response.',
+    }
+  }
+
   const summary = summarizeAttomPayload(payload)
 
   if (summary.statusCode && String(summary.statusCode).startsWith('4')) {
+    console.log('[property-lookup] ATTOM status failure body', {
+      endpointPath,
+      responseStatus: response.status,
+      responseBodyPreview: responseText.slice(0, 500),
+    })
     return mapAttomError(Number(summary.statusCode))
   }
 
