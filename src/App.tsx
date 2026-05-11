@@ -189,6 +189,26 @@ type PricingMemoryEntry = {
   last_checked?: string | null
 }
 
+type MaterialEstimateDraftLine = {
+  materialName: string
+  category: string
+  requiredQuantity: number
+  requiredUnit: string
+  packageSize: number
+  packageUnit: string
+  packageCoverage: number
+  packageCoverageUnit: string
+  packagePrice: number
+  packagesNeeded: number
+  extendedTotal: number
+  sourceUrl: string
+  source: string
+  sourceStatus: 'pricing_memory' | 'needs_source_review'
+  confidence: string
+  reviewStatus: string
+  quantityReason: string
+}
+
 type LeadPropertyProfile = {
   beds?: string
   baths?: string
@@ -325,11 +345,24 @@ type EstimateItem = {
   lead_id: string
   created_at?: string
   item_name: string
+  category?: string | null
   source: string | null
   source_url: string | null
   quantity: number | null
   unit_price: number | null
   total_price: number | null
+  required_quantity?: number | null
+  required_unit?: string | null
+  package_size?: number | null
+  package_unit?: string | null
+  package_coverage?: number | null
+  package_coverage_unit?: string | null
+  packages_needed?: number | null
+  package_price?: number | null
+  extended_total?: number | null
+  quantity_reason?: string | null
+  source_status?: string | null
+  review_status?: string | null
   confidence: string | null
   human_approved: boolean | null
 }
@@ -552,6 +585,185 @@ function getConfidenceLabel(value: string | null | undefined, verified?: boolean
   return value || 'needs_review'
 }
 
+function ceilToPackage(requiredQuantity: number, packageCoverage: number) {
+  if (!packageCoverage || packageCoverage <= 0) return 0
+  return Math.ceil(requiredQuantity / packageCoverage)
+}
+
+function searchUrl(query: string) {
+  return `https://www.homedepot.com/s/${encodeURIComponent(query)}`
+}
+
+function inferDeckSquareFeet(request: WorkRequest) {
+  const text = [request.description, request.workType].join(' ')
+  const sqftMatch = text.match(/(\d{2,5})\s*(?:sq\.?\s*ft|sqft|square feet|sf)/i)
+  if (sqftMatch?.[1]) return Number(sqftMatch[1])
+  if (/deck/i.test(text)) return 400
+  return 0
+}
+
+function getPricingMemoryMatch(entries: PricingMemoryEntry[], name: string, zip: string) {
+  const normalized = normalizeMaterialName(name)
+  const zipPrefix = zip.slice(0, 3)
+
+  return entries
+    .filter((entry) => entry.human_verified && Number(entry.verified_price || entry.unit_cost || 0) > 0)
+    .map((entry) => {
+      const entryName = normalizeMaterialName([entry.item_name, entry.category].filter(Boolean).join(' '))
+      let score = 0
+      if (entryName === normalized) score += 6
+      if (entryName.includes(normalized) || normalized.includes(entryName)) score += 4
+      for (const word of normalized.split(' ')) {
+        if (word.length > 2 && entryName.includes(word)) score += 1
+      }
+      if (entry.zip && entry.zip === zip) score += 2
+      else if (entry.zip && zipPrefix && entry.zip.startsWith(zipPrefix)) score += 1
+
+      return { entry, score }
+    })
+    .filter((item) => item.score >= 4)
+    .sort((a, b) => b.score - a.score)[0]?.entry || null
+}
+
+function applyPricingMemory(
+  draft: Omit<MaterialEstimateDraftLine, 'packagesNeeded' | 'extendedTotal' | 'sourceStatus' | 'confidence' | 'reviewStatus'>,
+  entries: PricingMemoryEntry[],
+  zip: string
+): MaterialEstimateDraftLine {
+  const memory = getPricingMemoryMatch(entries, draft.materialName, zip)
+  const packagePrice = Number(memory?.verified_price || memory?.unit_cost || draft.packagePrice)
+  const packagesNeeded = ceilToPackage(draft.requiredQuantity, draft.packageCoverage)
+  const fromMemory = Boolean(memory)
+
+  return {
+    ...draft,
+    packagePrice,
+    packagesNeeded,
+    extendedTotal: packagesNeeded * packagePrice,
+    source: fromMemory ? 'pricing_memory' : draft.source,
+    sourceUrl: memory?.source || draft.sourceUrl,
+    sourceStatus: fromMemory ? 'pricing_memory' : 'needs_source_review',
+    confidence: fromMemory ? 'pricing_memory_verified' : 'needs_source_review',
+    reviewStatus: 'needs_review',
+  }
+}
+
+function buildDeckMaterialEstimateLines(
+  request: WorkRequest,
+  entries: PricingMemoryEntry[]
+): MaterialEstimateDraftLine[] {
+  const deckSqft = inferDeckSquareFeet(request) || 400
+  const framingWasteFactor = 1.1
+  const estimatedBoardCount = Math.ceil((deckSqft / 400) * 50 * framingWasteFactor)
+  const rimBlockingCount = Math.ceil((deckSqft / 400) * 14 * framingWasteFactor)
+  const pierBlockCount = Math.ceil(deckSqft / 25)
+  const hangerCount = Math.ceil(estimatedBoardCount * 1.6)
+  const gravelBags = Math.ceil(pierBlockCount * 0.5)
+
+  const baseLines: Array<Omit<MaterialEstimateDraftLine, 'packagesNeeded' | 'extendedTotal' | 'sourceStatus' | 'confidence' | 'reviewStatus'>> = [
+    {
+      materialName: '2x6 pressure-treated framing lumber',
+      category: 'Deck Framing',
+      requiredQuantity: estimatedBoardCount,
+      requiredUnit: 'boards',
+      packageSize: 1,
+      packageUnit: '2x6 board',
+      packageCoverage: 1,
+      packageCoverageUnit: 'board',
+      packagePrice: 11.98,
+      sourceUrl: searchUrl('2x6 pressure treated lumber 12 ft'),
+      source: 'fallback_product_search',
+      quantityReason: `Floating deck framing draft for ${deckSqft} sqft at roughly 16 in. OC plus 10% waste. Verify span, beam layout, board lengths, and local code.`,
+    },
+    {
+      materialName: '2x6 pressure-treated rim boards and blocking',
+      category: 'Deck Framing',
+      requiredQuantity: rimBlockingCount,
+      requiredUnit: 'boards',
+      packageSize: 1,
+      packageUnit: '2x6 board',
+      packageCoverage: 1,
+      packageCoverageUnit: 'board',
+      packagePrice: 11.98,
+      sourceUrl: searchUrl('2x6 pressure treated lumber 12 ft'),
+      source: 'fallback_product_search',
+      quantityReason: `Rim boards, blocking, and layout waste allowance scaled from a ${deckSqft} sqft floating deck. Human layout review required.`,
+    },
+    {
+      materialName: 'concrete deck pier blocks',
+      category: 'Deck Foundation',
+      requiredQuantity: pierBlockCount,
+      requiredUnit: 'blocks',
+      packageSize: 1,
+      packageUnit: 'pier block',
+      packageCoverage: 1,
+      packageCoverageUnit: 'block',
+      packagePrice: 10.98,
+      sourceUrl: searchUrl('concrete deck block pier block'),
+      source: 'fallback_product_search',
+      quantityReason: `Draft pier block count uses approximately one support point per 25 sqft for a floating deck. Verify load path, soil, and code.`,
+    },
+    {
+      materialName: 'joist hangers and galvanized framing hardware',
+      category: 'Deck Hardware',
+      requiredQuantity: hangerCount,
+      requiredUnit: 'pieces',
+      packageSize: 1,
+      packageUnit: 'hardware piece',
+      packageCoverage: 1,
+      packageCoverageUnit: 'piece',
+      packagePrice: 1.78,
+      sourceUrl: searchUrl('2x6 joist hanger galvanized'),
+      source: 'fallback_product_search',
+      quantityReason: `Hardware count approximates joist ends, rim connections, and blocking hardware. Final connector schedule needs human review.`,
+    },
+    {
+      materialName: 'exterior structural/deck screws',
+      category: 'Deck Fasteners',
+      requiredQuantity: deckSqft,
+      requiredUnit: 'sqft deck area',
+      packageSize: 1,
+      packageUnit: '10 lb box',
+      packageCoverage: 250,
+      packageCoverageUnit: 'sqft deck area',
+      packagePrice: 89,
+      sourceUrl: searchUrl('exterior deck screws 10 lb box'),
+      source: 'fallback_product_search',
+      quantityReason: `Fastener count uses deck area coverage per bulk screw box. Verify screw type, coating, and approved structural uses.`,
+    },
+    {
+      materialName: 'weed barrier landscape fabric roll',
+      category: 'Deck Ground Prep',
+      requiredQuantity: deckSqft,
+      requiredUnit: 'sqft',
+      packageSize: 1,
+      packageUnit: 'roll',
+      packageCoverage: 400,
+      packageCoverageUnit: 'sqft',
+      packagePrice: 25,
+      sourceUrl: searchUrl('weed barrier landscape fabric 400 sq ft roll'),
+      source: 'fallback_product_search',
+      quantityReason: `Weed barrier is package-priced by roll coverage: ${deckSqft} sqft required / 400 sqft per roll. This prevents the wrong 400 sqft x $25 calculation.`,
+    },
+    {
+      materialName: 'gravel/base material under pier blocks',
+      category: 'Deck Ground Prep',
+      requiredQuantity: gravelBags,
+      requiredUnit: '0.5 cu ft bags',
+      packageSize: 1,
+      packageUnit: 'bag',
+      packageCoverage: 1,
+      packageCoverageUnit: '0.5 cu ft bag',
+      packagePrice: 5.48,
+      sourceUrl: searchUrl('0.5 cu ft gravel bag paver base'),
+      source: 'fallback_product_search',
+      quantityReason: `Draft base allowance uses about 0.5 cu ft of compacted base per pier block. Verify excavation depth and drainage.`,
+    },
+  ]
+
+  return baseLines.map((line) => applyPricingMemory(line, entries, request.zip || ''))
+}
+
 function countItems(value: unknown[] | null | undefined) {
   return Array.isArray(value) ? value.length : 0
 }
@@ -770,6 +982,7 @@ export default function App() {
   const [researchingId, setResearchingId] = useState<string | null>(null)
   const [materialListLoadingId, setMaterialListLoadingId] = useState<string | null>(null)
   const [takeoffLoadingId, setTakeoffLoadingId] = useState<string | null>(null)
+  const [materialEstimateLoadingId, setMaterialEstimateLoadingId] = useState<string | null>(null)
   const [autoWorkflowLoadingId, setAutoWorkflowLoadingId] = useState<string | null>(null)
   const [sellerPrepLoadingId, setSellerPrepLoadingId] = useState<string | null>(null)
 const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
@@ -2348,6 +2561,87 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setTakeoffLoadingId(null)
     }
   }
+
+  async function buildMaterialEstimate(request: WorkRequest) {
+    const confirmStart = window.confirm(
+      'Build one material estimate draft: scope, quantity takeoff, product/package matching, package math, pricing, and review lines. AI drafts only; human approval is required before estimates, proposals, or material orders.'
+    )
+
+    if (!confirmStart) return
+
+    setMaterialEstimateLoadingId(request.id)
+
+    try {
+      await ensureLeadExists(request)
+
+      const { data: memoryRows, error: memoryError } = await supabase
+        .from('pricing_memory_entries')
+        .select('*')
+        .eq('human_verified', true)
+        .order('last_checked', { ascending: false })
+
+      if (memoryError) throw memoryError
+
+      const sourceText = [request.workType, request.description].join(' ').toLowerCase()
+      const draftLines = sourceText.includes('deck')
+        ? buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
+        : buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
+
+      const inserts = draftLines.map((line) => ({
+        lead_id: request.id,
+        item_name: line.materialName,
+        category: line.category,
+        source: line.source,
+        source_url: line.sourceUrl,
+        quantity: line.packagesNeeded,
+        unit_price: line.packagePrice,
+        total_price: line.extendedTotal,
+        required_quantity: line.requiredQuantity,
+        required_unit: line.requiredUnit,
+        package_size: line.packageSize,
+        package_unit: line.packageUnit,
+        package_coverage: line.packageCoverage,
+        package_coverage_unit: line.packageCoverageUnit,
+        packages_needed: line.packagesNeeded,
+        package_price: line.packagePrice,
+        extended_total: line.extendedTotal,
+        quantity_reason: line.quantityReason,
+        source_status: line.sourceStatus,
+        review_status: line.reviewStatus,
+        confidence: line.confidence,
+        human_approved: false,
+      }))
+
+      const { data, error } = await supabase
+        .from('estimate_items')
+        .insert(inserts)
+        .select()
+
+      if (error) {
+        if (String(error.message || '').includes('column')) {
+          throw new Error('Material package columns are missing. Run migration 202605110003_material_package_estimates.sql first.')
+        }
+        throw error
+      }
+
+      setActiveTab('estimates')
+      setSelectedEstimateRequest(request)
+      setEstimateItems((data || []) as EstimateItem[])
+      setEstimateResearchRows([])
+      setEstimateIntelligence(null)
+      await applyBestLaborRateForRequest(request, false)
+
+      alert(
+        `Material estimate built with ${draftLines.length} review lines. Package math was used for roll/box/bag pricing. Human review is required before use.`
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not build material estimate.')
+    } finally {
+      setMaterialEstimateLoadingId(null)
+    }
+  }
+
   async function autoProcessLead(request: WorkRequest) {
     const confirmStart = window.confirm(
       'This will auto-process the lead: AI intake review, quantity takeoff, material pricing, missing-info draft, and status update. It will NOT send emails, submit proposals, order materials, or approve estimates. Human review is still required.'
@@ -2624,11 +2918,24 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         .from('estimate_items')
         .update({
           item_name: item.item_name,
+          category: item.category || null,
           source: item.source,
           source_url: item.source_url,
           quantity,
           unit_price: unitPrice,
           total_price: totalPrice,
+          required_quantity: item.required_quantity ?? quantity,
+          required_unit: item.required_unit || null,
+          package_size: item.package_size ?? null,
+          package_unit: item.package_unit || null,
+          package_coverage: item.package_coverage ?? null,
+          package_coverage_unit: item.package_coverage_unit || null,
+          packages_needed: item.packages_needed ?? quantity,
+          package_price: item.package_price ?? unitPrice,
+          extended_total: item.extended_total ?? totalPrice,
+          quantity_reason: item.quantity_reason || null,
+          source_status: item.source_status || 'needs_source_review',
+          review_status: item.human_approved ? 'approved' : item.review_status || 'needs_review',
           confidence: item.confidence || 'human_reviewed',
           human_approved: item.human_approved || false,
         })
@@ -2685,7 +2992,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
   async function toggleEstimateItemApproved(item: EstimateItem) {
     const nextApproved = !item.human_approved
-    const updated = { ...item, human_approved: nextApproved, confidence: nextApproved ? 'human_approved' : item.confidence }
+    const updated = {
+      ...item,
+      human_approved: nextApproved,
+      review_status: nextApproved ? 'approved' : 'needs_review',
+      confidence: nextApproved ? 'human_approved' : item.confidence,
+    }
     updateLocalEstimateItem(item.id, updated)
     await saveEstimateItem(updated)
   }
@@ -2701,7 +3013,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       const updates = estimateItems.map((item) =>
         supabase
           .from('estimate_items')
-          .update({ human_approved: true, confidence: 'human_approved' })
+          .update({ human_approved: true, confidence: 'human_approved', review_status: 'approved' })
           .eq('id', item.id)
       )
 
@@ -2710,12 +3022,60 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       if (failed?.error) throw failed.error
 
       setEstimateItems((prev) =>
-        prev.map((item) => ({ ...item, human_approved: true, confidence: 'human_approved' }))
+        prev.map((item) => ({
+          ...item,
+          human_approved: true,
+          confidence: 'human_approved',
+          review_status: 'approved',
+        }))
       )
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not approve estimate items.')
     }
+  }
+
+  async function saveEstimateItemAsPricingMemory(item: EstimateItem) {
+    if (!item.human_approved) {
+      alert('Approve this material line before saving it as pricing memory.')
+      return
+    }
+
+    const verifiedPrice = Number(item.package_price || item.unit_price || 0)
+    if (verifiedPrice <= 0) {
+      alert('Add a package/unit price before saving this line as pricing memory.')
+      return
+    }
+
+    const { error } = await supabase.from('pricing_memory_entries').insert({
+      item_name: item.item_name,
+      category: item.category || 'Material',
+      trade: item.category || 'Material',
+      repair_type: selectedEstimateRequest?.workType || 'Material estimate',
+      description: item.quantity_reason || '',
+      city: selectedEstimateRequest?.city || '',
+      state: selectedEstimateRequest?.state || '',
+      zip: selectedEstimateRequest?.zip || '',
+      property_type: selectedEstimateRequest?.propertyFacts?.propertyType || '',
+      quantity: item.package_coverage || item.package_size || 1,
+      unit: item.package_coverage_unit || item.package_unit || 'package',
+      unit_cost: verifiedPrice,
+      verified_price: verifiedPrice,
+      total_cost: verifiedPrice,
+      source: item.source_url || item.source || 'estimate_item_human_approved',
+      confidence_level: 'high',
+      human_verified: true,
+      notes: `Saved from material estimate line ${item.id}. Package unit: ${item.package_unit || 'package'}; required unit: ${item.required_unit || 'not set'}.`,
+      last_checked: new Date().toISOString(),
+    })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    alert('Saved. Future material estimates will use this human-approved local price first.')
+    await loadPricingMemoryEntries()
   }
 
   function generateEstimatePdf() {
@@ -4662,48 +5022,16 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       type="button"
       style={{
         ...styles.wideButton,
-        background: '#ffffff',
-        color: '#0f542d',
+        background: '#0f542d',
+        color: '#ffffff',
         border: '1px solid #0f542d',
       }}
-      disabled={researchingId === request.id}
-      onClick={() => researchMaterials(request)}
+      disabled={materialEstimateLoadingId === request.id}
+      onClick={() => buildMaterialEstimate(request)}
     >
-      {researchingId === request.id
-        ? 'Researching Materials...'
-        : 'AI Research Materials'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#eef7ee',
-        color: '#0f542d',
-        border: '1px solid #bdd8bd',
-      }}
-      disabled={materialListLoadingId === request.id}
-      onClick={() => generateRoughMaterialList(request)}
-    >
-      {materialListLoadingId === request.id
-        ? 'Building Material List...'
-        : 'Generate Rough Material List'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#eef4fb',
-        color: '#173425',
-        border: '1px solid #bfd3e6',
-      }}
-      disabled={takeoffLoadingId === request.id}
-      onClick={() => generateAiTakeoff(request)}
-    >
-      {takeoffLoadingId === request.id
-        ? 'Building Takeoff...'
-        : 'AI Takeoff / Quantities'}
+      {materialEstimateLoadingId === request.id
+        ? 'Building Material Estimate...'
+        : 'Build Material Estimate'}
     </button>
 
     <button
@@ -5893,6 +6221,35 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       />
                     </div>
 
+                    {(item.required_quantity || item.package_coverage || item.packages_needed) && (
+                      <div style={styles.aiBox}>
+                        <strong>Package Math</strong>
+                        <div style={styles.grid3}>
+                          <p style={styles.small}>
+                            Required: {Number(item.required_quantity || item.quantity || 0).toLocaleString()}{' '}
+                            {item.required_unit || 'units'}
+                          </p>
+                          <p style={styles.small}>
+                            Package: {Number(item.package_coverage || item.package_size || 1).toLocaleString()}{' '}
+                            {item.package_coverage_unit || item.package_unit || 'per package'}
+                          </p>
+                          <p style={styles.small}>
+                            Packages: {Number(item.packages_needed || item.quantity || 0).toLocaleString()} ×{' '}
+                            {money(Number(item.package_price || item.unit_price || 0))}
+                          </p>
+                        </div>
+                        <p style={styles.small}>
+                          {item.quantity_reason || 'Quantity draft needs human review.'}
+                        </p>
+                        <p style={styles.small}>
+                          Source status: <strong>{item.source_status || 'needs_source_review'}</strong>
+                          {item.source_status === 'needs_source_review'
+                            ? ' • Product/search price is not verified. Do not approve automatically.'
+                            : ' • Human-approved pricing memory used.'}
+                        </p>
+                      </div>
+                    )}
+
                     <div style={styles.grid3}>
                       <input
                         style={styles.input}
@@ -5932,7 +6289,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                     <p style={styles.small}>
                       Confidence: {item.confidence || 'needs_review'} • Status:{' '}
-                      {item.human_approved ? 'Human approved' : 'Needs review'}
+                      {item.human_approved ? 'Human approved' : item.review_status || 'Needs review'}
                     </p>
 
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -5948,6 +6305,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         onClick={() => toggleEstimateItemApproved(item)}
                       >
                         {item.human_approved ? 'Unapprove' : 'Approve'}
+                      </button>
+                      <button
+                        style={styles.outlineButton}
+                        onClick={() => saveEstimateItemAsPricingMemory(item)}
+                        disabled={!item.human_approved}
+                      >
+                        Use this price next time
                       </button>
                       {item.source_url && (
                         <button
