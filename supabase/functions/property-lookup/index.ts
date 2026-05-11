@@ -5,6 +5,7 @@ type PropertyLookupRequest = {
   city?: string
   state?: string
   zip?: string
+  debug?: boolean
 }
 
 type AttomLookupStatus =
@@ -56,6 +57,15 @@ Deno.serve(async (request) => {
 
   try {
     const body = (await request.json()) as PropertyLookupRequest
+
+    if (body.debug === true) {
+      return jsonResponse({
+        hasAttomKey: Boolean(Deno.env.get('ATTOM_API_KEY')),
+        hasPropertyDataKey: Boolean(Deno.env.get('PROPERTY_DATA_API_KEY')),
+        hasPropertyDataUrl: Boolean(Deno.env.get('PROPERTY_DATA_API_URL')),
+      })
+    }
+
     const address = buildLookupAddress(body)
     console.log('[property-lookup] request received', { hasAddress: Boolean(address) })
 
