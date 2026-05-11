@@ -390,6 +390,21 @@ const INVOICE_BUCKET = 'invoices'
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || 'https://shelter-prep-agent-production.up.railway.app'
 const AGENT_API_KEY = import.meta.env.VITE_AGENT_API_KEY || ''
+const isAgentApiKeyConfigured = Boolean(AGENT_API_KEY && AGENT_API_KEY !== 'PASTE_YOUR_AGENT_API_KEY_HERE')
+
+console.info('[agent-env]', {
+  hasAgentApiUrl: Boolean(AGENT_API_URL),
+  hasAgentApiKey: isAgentApiKeyConfigured,
+})
+
+function createAgentHeaders(): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${AGENT_API_KEY}`,
+    'X-Agent-Api-Key': AGENT_API_KEY,
+    'x-agent-key': AGENT_API_KEY,
+  }
+}
 
 const WORK_TYPES = [
   'General Repair',
@@ -947,10 +962,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       const response = await fetch(`${AGENT_API_URL}/analyze-intake`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           text: intakeText,
           imageDataUrl,
@@ -1306,10 +1318,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     try {
       const response = await fetch(`${AGENT_API_URL}/send-message-email`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           messageLogId: log.id,
         }),
@@ -1726,10 +1735,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     try {
       const response = await fetch(`${AGENT_API_URL}/run-seller-prep-analysis`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           leadId: request.id,
           description: request.description,
@@ -2224,10 +2230,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       const response = await fetch(`${AGENT_API_URL}/research-materials`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           leadId: request.id,
           description: request.description,
@@ -2272,10 +2275,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       const response = await fetch(`${AGENT_API_URL}/generate-material-list`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           leadId: request.id,
           description: request.description,
@@ -2322,10 +2322,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       const response = await fetch(`${AGENT_API_URL}/generate-takeoff`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           leadId: request.id,
           description: request.description,
@@ -2370,10 +2367,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   
       const response = await fetch(`${AGENT_API_URL}/auto-process-lead`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-agent-key': AGENT_API_KEY,
-        },
+        headers: createAgentHeaders(),
         body: JSON.stringify({
           leadId: request.id,
           description: request.description,
