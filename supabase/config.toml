@@ -1,3 +1,5 @@
 [functions.property-lookup]
 verify_jwt = false
 
+[functions.estimate-extract]
+verify_jwt = false

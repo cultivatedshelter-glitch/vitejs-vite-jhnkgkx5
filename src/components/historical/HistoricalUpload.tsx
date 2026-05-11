@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import { supabase } from '../../supabase'
-import type { HistoricalProject, HistoricalProjectFile } from '../../types/historical'
+import { supabase, supabaseAnonKey, supabaseUrl } from '../../supabase'
+import type { EstimateMemory, HistoricalProject, HistoricalProjectFile } from '../../types/historical'
 
 const BUCKET = 'historical-project-files'
 
@@ -17,6 +17,16 @@ function parseMoney(value: string) {
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Not entered'
   return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+}
+
+function parseOptionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function prettyJson(value: unknown) {
+  return JSON.stringify(value || {}, null, 2)
 }
 
 function statusLabel(value: string | null | undefined) {
@@ -162,6 +172,12 @@ export default function HistoricalUpload() {
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<HistoricalProject[]>([])
   const [filesByProject, setFilesByProject] = useState<Record<string, HistoricalProjectFile[]>>({})
+  const [estimateMemoryByFileId, setEstimateMemoryByFileId] = useState<Record<string, EstimateMemory>>({})
+  const [extractionTextByFileId, setExtractionTextByFileId] = useState<Record<string, string>>({})
+  const [estimateJsonByFileId, setEstimateJsonByFileId] = useState<Record<string, string>>({})
+  const [extractingFileId, setExtractingFileId] = useState<string | null>(null)
+  const [savingEstimateId, setSavingEstimateId] = useState<string | null>(null)
+  const [approvingEstimateId, setApprovingEstimateId] = useState<string | null>(null)
   const [openProjectId, setOpenProjectId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
 
@@ -187,6 +203,7 @@ export default function HistoricalUpload() {
 
       const projectIds = (projectRows || []).map((project: HistoricalProject) => project.id)
       let groupedFiles: Record<string, HistoricalProjectFile[]> = {}
+      let fileIds: string[] = []
 
       if (projectIds.length > 0) {
         const { data: fileRows, error: fileError } = await supabase
@@ -197,6 +214,7 @@ export default function HistoricalUpload() {
 
         if (fileError) throw fileError
 
+        fileIds = (fileRows || []).map((fileItem: HistoricalProjectFile) => fileItem.id)
         groupedFiles = (fileRows || []).reduce(
           (acc: Record<string, HistoricalProjectFile[]>, item: HistoricalProjectFile) => {
             acc[item.project_id] = [...(acc[item.project_id] || []), item]
@@ -206,8 +224,49 @@ export default function HistoricalUpload() {
         )
       }
 
+      let memoryByFile: Record<string, EstimateMemory> = {}
+      let jsonByFile: Record<string, string> = {}
+
+      if (fileIds.length > 0) {
+        const { data: memoryRows, error: memoryError } = await supabase
+          .from('estimate_memory')
+          .select('*')
+          .in('source_file_id', fileIds)
+          .order('created_at', { ascending: false })
+
+        if (memoryError && memoryError.code !== '42P01') throw memoryError
+
+        memoryByFile = (memoryRows || []).reduce(
+          (acc: Record<string, EstimateMemory>, item: EstimateMemory) => {
+            if (item.source_file_id && !acc[item.source_file_id]) {
+              acc[item.source_file_id] = item
+              jsonByFile[item.source_file_id] = prettyJson({
+                projectType: item.project_type,
+                squareFeet: item.square_feet,
+                city: item.city,
+                state: item.state,
+                zip: item.zip,
+                projectClass: item.project_class,
+                laborCost: item.labor_cost,
+                materialCost: item.material_cost,
+                demoCost: item.demo_cost,
+                totalCost: item.total_cost,
+                normalizedScope: item.normalized_scope,
+                exclusions: item.exclusions,
+                riskFactors: item.risk_factors,
+                confidenceScore: item.confidence_score,
+              })
+            }
+            return acc
+          },
+          {}
+        )
+      }
+
       setProjects((projectRows || []) as HistoricalProject[])
       setFilesByProject(groupedFiles)
+      setEstimateMemoryByFileId(memoryByFile)
+      setEstimateJsonByFileId((prev) => ({ ...jsonByFile, ...prev }))
     } catch (error: any) {
       console.error(error)
       setMessage(error?.message || 'Could not load historical projects. Apply the migration first.')
@@ -320,6 +379,222 @@ export default function HistoricalUpload() {
     } catch (error) {
       console.error(error)
       alert('Could not open file. Check Supabase storage bucket and policies.')
+    }
+  }
+
+  function findProject(projectId: string) {
+    return projects.find((project) => project.id === projectId)
+  }
+
+  async function extractEstimateData(item: HistoricalProjectFile) {
+    const project = findProject(item.project_id)
+    const extractedText = extractionTextByFileId[item.id]?.trim() || ''
+
+    setMessage('')
+    setExtractingFileId(item.id)
+
+    try {
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase env vars are missing. Estimate extraction needs Supabase Functions.')
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/estimate-extract`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          apikey: supabaseAnonKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          extractedText,
+          fileRecord: item,
+          project,
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(result?.error || result?.message || 'Estimate extraction failed.')
+      }
+
+      const estimate = result.estimate || {}
+      const { data: run, error: runError } = await supabase
+        .from('estimate_extraction_runs')
+        .insert({
+          source_project_id: item.project_id,
+          source_file_id: item.id,
+          source_storage_bucket: item.storage_bucket || BUCKET,
+          source_storage_path: item.storage_path,
+          status: result.status || 'needs_review',
+          input_mode: extractedText ? 'manual_text' : 'file_record',
+          extracted_text: extractedText || null,
+          normalized_json: estimate,
+          confidence_score: parseOptionalNumber(estimate.confidenceScore),
+          completed_at: result.status === 'needs_review' ? new Date().toISOString() : null,
+        })
+        .select()
+        .single()
+
+      if (runError) throw runError
+
+      const memoryPayload = {
+        source_project_id: item.project_id,
+        source_file_id: item.id,
+        extraction_run_id: run.id,
+        source_storage_bucket: item.storage_bucket || BUCKET,
+        source_file_path: item.storage_path,
+        source_file_url: null,
+        extracted_text: extractedText || null,
+        normalized_scope: estimate.normalizedScope || {},
+        exclusions: estimate.exclusions || [],
+        risk_factors: estimate.riskFactors || [],
+        project_type: estimate.projectType || project?.project_type || null,
+        square_feet: parseOptionalNumber(estimate.squareFeet),
+        city: estimate.city || project?.city || null,
+        state: estimate.state || project?.state || 'OR',
+        zip: estimate.zip || project?.zip || null,
+        project_class: estimate.projectClass || project?.property_type || null,
+        labor_cost: parseOptionalNumber(estimate.laborCost),
+        material_cost: parseOptionalNumber(estimate.materialCost),
+        demo_cost: parseOptionalNumber(estimate.demoCost),
+        total_cost: parseOptionalNumber(estimate.totalCost),
+        confidence_score: parseOptionalNumber(estimate.confidenceScore),
+        review_status: 'needs_review',
+        notes:
+          result.status === 'needs_manual_text_review'
+            ? 'Manual text review needed before normalized estimate memory can be trusted.'
+            : 'AI-normalized estimate object. Human approval required.',
+      }
+
+      const existing = estimateMemoryByFileId[item.id]
+      const query = existing
+        ? supabase.from('estimate_memory').update(memoryPayload).eq('id', existing.id).select().single()
+        : supabase.from('estimate_memory').insert(memoryPayload).select().single()
+
+      const { data: memory, error: memoryError } = await query
+      if (memoryError) throw memoryError
+
+      setEstimateMemoryByFileId((prev) => ({ ...prev, [item.id]: memory as EstimateMemory }))
+      setEstimateJsonByFileId((prev) => ({ ...prev, [item.id]: prettyJson(estimate) }))
+      setMessage(
+        result.status === 'needs_manual_text_review'
+          ? 'Original file is saved. Paste proposal text to create the normalized estimate object.'
+          : 'Estimate data extracted. Review and approve before it becomes pricing memory.'
+      )
+      await loadHistoricalProjects()
+    } catch (error: any) {
+      console.error(error)
+      setMessage(error?.message || 'Could not extract estimate data.')
+    } finally {
+      setExtractingFileId(null)
+    }
+  }
+
+  async function saveEstimateJson(item: HistoricalProjectFile) {
+    const memory = estimateMemoryByFileId[item.id]
+    if (!memory) return
+
+    setMessage('')
+    setSavingEstimateId(memory.id)
+
+    try {
+      const parsed = JSON.parse(estimateJsonByFileId[item.id] || '{}')
+      const { data, error } = await supabase
+        .from('estimate_memory')
+        .update({
+          project_type: parsed.projectType || null,
+          square_feet: parseOptionalNumber(parsed.squareFeet),
+          city: parsed.city || null,
+          state: parsed.state || 'OR',
+          zip: parsed.zip || null,
+          project_class: parsed.projectClass || null,
+          labor_cost: parseOptionalNumber(parsed.laborCost),
+          material_cost: parseOptionalNumber(parsed.materialCost),
+          demo_cost: parseOptionalNumber(parsed.demoCost),
+          total_cost: parseOptionalNumber(parsed.totalCost),
+          normalized_scope: parsed.normalizedScope || {},
+          exclusions: parsed.exclusions || [],
+          risk_factors: parsed.riskFactors || [],
+          confidence_score: parseOptionalNumber(parsed.confidenceScore),
+          review_status: 'needs_review',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', memory.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setEstimateMemoryByFileId((prev) => ({ ...prev, [item.id]: data as EstimateMemory }))
+      setMessage('Normalized estimate saved. It still needs human approval.')
+    } catch (error: any) {
+      console.error(error)
+      setMessage(error?.message || 'Could not save estimate JSON. Check that the JSON is valid.')
+    } finally {
+      setSavingEstimateId(null)
+    }
+  }
+
+  async function approveEstimateMemory(item: HistoricalProjectFile) {
+    const memory = estimateMemoryByFileId[item.id]
+    if (!memory) return
+
+    if (!window.confirm('Approve this normalized estimate into pricing memory? Human approval is final for this draft.')) {
+      return
+    }
+
+    setMessage('')
+    setApprovingEstimateId(memory.id)
+
+    try {
+      const { data: updated, error: updateError } = await supabase
+        .from('estimate_memory')
+        .update({
+          review_status: 'approved',
+          approved_at: new Date().toISOString(),
+          approved_by: 'Shelter Prep admin',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', memory.id)
+        .select()
+        .single()
+
+      if (updateError) throw updateError
+
+      const scope = memory.normalized_scope || {}
+      const summary = typeof scope.summary === 'string' ? scope.summary : ''
+      const { error: pricingError } = await supabase.from('pricing_memory_entries').insert({
+        source_project_id: memory.source_project_id,
+        trade: memory.project_type,
+        repair_type: memory.project_type,
+        item_name: memory.project_type || 'Historical estimate',
+        description: summary || 'Approved historical estimate memory.',
+        city: memory.city,
+        state: memory.state,
+        zip: memory.zip,
+        property_type: memory.project_class,
+        labor_cost: memory.labor_cost,
+        material_cost: memory.material_cost,
+        total_cost: memory.total_cost,
+        verified_price: memory.total_cost,
+        source: 'estimate_memory',
+        confidence_level:
+          (memory.confidence_score || 0) >= 0.75 ? 'high' : (memory.confidence_score || 0) >= 0.45 ? 'medium' : 'low',
+        human_verified: true,
+        notes: `Approved from estimate_memory ${memory.id}. Original file remains available at ${memory.source_file_path}.`,
+        last_checked: new Date().toISOString(),
+      })
+
+      if (pricingError) throw pricingError
+
+      setEstimateMemoryByFileId((prev) => ({ ...prev, [item.id]: updated as EstimateMemory }))
+      setMessage('Approved. The original file remains available and the normalized estimate now feeds pricing memory.')
+    } catch (error: any) {
+      console.error(error)
+      setMessage(error?.message || 'Could not approve estimate into pricing memory.')
+    } finally {
+      setApprovingEstimateId(null)
     }
   }
 
@@ -482,35 +757,101 @@ export default function HistoricalUpload() {
                 {project.notes && <p style={styles.small}>Notes: {project.notes}</p>}
 
                 {(filesByProject[project.id] || []).map((item) => (
-                  <div key={item.id} style={styles.fileRow}>
+                  <div key={item.id} style={styles.fileRow} onClick={(event) => event.stopPropagation()}>
                     <div style={styles.buttonRow}>
                       <div style={{ flex: 1 }}>
                         <strong>{item.file_name}</strong>
                         <p style={styles.small}>
-                          {item.file_type} • Extraction: {item.extraction_status || 'not_started'} • Needs human review
+                          {item.file_type} • Extraction: {item.extraction_status || 'not_started'} • Original file preserved
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        style={styles.outlineButton}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openHistoricalFile(item)
-                        }}
-                      >
+                      <button type="button" style={styles.outlineButton} onClick={() => openHistoricalFile(item)}>
                         Open File
                       </button>
-                      <button
-                        type="button"
-                        style={styles.outlineButton}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openHistoricalFile(item, true)
-                        }}
-                      >
+                      <button type="button" style={styles.outlineButton} onClick={() => openHistoricalFile(item, true)}>
                         Download
                       </button>
                     </div>
+
+                    <div style={styles.noticeBox}>
+                      <strong>Dual output</strong>
+                      <p style={styles.small}>
+                        Keep the original file for human review, then create a structured estimate object for pricing memory.
+                      </p>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 92, background: 'white' }}
+                        placeholder="Phase 1: paste extracted proposal/invoice text here. If blank, Shelter Prep marks this file needs_manual_text_review."
+                        value={extractionTextByFileId[item.id] || ''}
+                        onChange={(event) =>
+                          setExtractionTextByFileId((prev) => ({ ...prev, [item.id]: event.target.value }))
+                        }
+                      />
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.primaryButton}
+                          disabled={extractingFileId === item.id}
+                          onClick={() => extractEstimateData(item)}
+                        >
+                          {extractingFileId === item.id ? 'Extracting...' : 'Extract Estimate Data'}
+                        </button>
+                        {estimateMemoryByFileId[item.id] && (
+                          <span
+                            style={
+                              estimateMemoryByFileId[item.id].review_status === 'approved'
+                                ? styles.verifiedPill
+                                : styles.statusPill
+                            }
+                          >
+                            {estimateMemoryByFileId[item.id].review_status === 'approved'
+                              ? 'Approved'
+                              : estimateMemoryByFileId[item.id].review_status === 'rejected'
+                                ? 'Rejected'
+                                : 'Needs Review'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {estimateMemoryByFileId[item.id] && (
+                      <div style={styles.fileRow}>
+                        <div style={styles.grid3}>
+                          <p style={styles.small}>Labor: {money(estimateMemoryByFileId[item.id].labor_cost)}</p>
+                          <p style={styles.small}>Materials: {money(estimateMemoryByFileId[item.id].material_cost)}</p>
+                          <p style={styles.small}>Total: {money(estimateMemoryByFileId[item.id].total_cost)}</p>
+                        </div>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 260, fontFamily: 'monospace', fontSize: 13 }}
+                          value={estimateJsonByFileId[item.id] || ''}
+                          onChange={(event) =>
+                            setEstimateJsonByFileId((prev) => ({ ...prev, [item.id]: event.target.value }))
+                          }
+                        />
+                        <div style={styles.buttonRow}>
+                          <button
+                            type="button"
+                            style={styles.outlineButton}
+                            disabled={savingEstimateId === estimateMemoryByFileId[item.id].id}
+                            onClick={() => saveEstimateJson(item)}
+                          >
+                            {savingEstimateId === estimateMemoryByFileId[item.id].id ? 'Saving...' : 'Save JSON Edits'}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.primaryButton}
+                            disabled={
+                              approvingEstimateId === estimateMemoryByFileId[item.id].id ||
+                              estimateMemoryByFileId[item.id].review_status === 'approved'
+                            }
+                            onClick={() => approveEstimateMemory(item)}
+                          >
+                            {approvingEstimateId === estimateMemoryByFileId[item.id].id
+                              ? 'Approving...'
+                              : 'Approve into Pricing Memory'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </>
