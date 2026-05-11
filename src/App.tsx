@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { isSupabaseConfigured, supabase } from './supabase'
+import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from './supabase'
 import Gallery from './components/Gallery'
 import HistoricalUpload from './components/historical/HistoricalUpload'
 import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts, type PropertyLookupStatus } from './propertyLookup'
@@ -1041,8 +1041,6 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (!lead.id || !lead.propertyAddress.trim()) return
     if (!force && (propertyProfilesByLeadId[lead.id] || propertyProfileLoadingByLeadId[lead.id])) return
 
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
     const functionUrl = `${supabaseUrl}/functions/v1/property-lookup`
     const requestBody = {
       address: lead.propertyAddress,
@@ -1067,6 +1065,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       console.info('[lead property-lookup] calling function', { leadId: lead.id, url: functionUrl })
       console.info('[lead property-lookup] request body', requestBody)
+      console.info('[lead property-lookup] env', {
+        hasSupabaseUrl: Boolean(supabaseUrl),
+        hasSupabaseAnonKey: Boolean(supabaseAnonKey),
+      })
 
       const response = await fetch(functionUrl, {
         method: 'POST',
@@ -3823,7 +3825,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       {!isSupabaseConfigured && (
         <div style={styles.previewBanner}>
           <strong>Admin warning:</strong> Supabase env vars are missing. Add{' '}
-          <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong>.
+          <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> or{' '}
+          <strong>VITE_SUPABASE_PUBLISHABLE_KEY</strong>.
           Preview/manual entry still works, but saving, uploads, dashboards, and signed file links need Supabase.
         </div>
       )}
@@ -4157,8 +4160,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                 {!isSupabaseConfigured && (
                   <p style={styles.small}>
-                    Add <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> in StackBlitz
-                    secrets to enable saved app data.
+                    Add <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> or{' '}
+                    <strong>VITE_SUPABASE_PUBLISHABLE_KEY</strong> in StackBlitz secrets to enable saved app data.
                   </p>
                 )}
 

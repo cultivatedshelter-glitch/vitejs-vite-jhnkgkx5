@@ -1,3 +1,5 @@
+import { supabaseAnonKey, supabaseUrl } from './supabase'
+
 export type PropertyFacts = {
   squareFeet: string
   yearBuilt: string
@@ -53,11 +55,14 @@ export async function lookupPropertyFacts(address: string): Promise<PropertyFact
   }
 
   const payload = { address: cleanAddress }
-  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/property-lookup`
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+  const functionUrl = `${supabaseUrl}/functions/v1/property-lookup`
   console.info('[property-lookup] request payload', payload)
+  console.info('[property-lookup] env', {
+    hasSupabaseUrl: Boolean(supabaseUrl),
+    hasSupabaseAnonKey: Boolean(supabaseAnonKey),
+  })
 
-  if (!functionUrl.startsWith('http') || !anonKey) {
+  if (!functionUrl.startsWith('http') || !supabaseAnonKey) {
     return fallbackPropertyFacts(
       'function unavailable',
       'Property lookup is not connected to Supabase in this deployment. Use county/ORMAP links or enter facts manually.',
@@ -69,8 +74,8 @@ export async function lookupPropertyFacts(address: string): Promise<PropertyFact
     const response = await fetch(functionUrl, {
       method: 'POST',
       headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
