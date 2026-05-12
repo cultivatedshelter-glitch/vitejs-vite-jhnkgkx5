@@ -260,6 +260,93 @@ function normalizeLaborText(value = '') {
     .trim()
 }
 
+function normalizeScopeText(value = '') {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getRequestPropertyId(request: WorkRequest | null | undefined) {
+  return request?.id || ''
+}
+
+function getDefaultRepairItemId(request: WorkRequest | null | undefined, itemName = '') {
+  if (!request) return ''
+  const seed = normalizeScopeText(itemName || request.workType || request.description || 'repair')
+    .replace(/\s+/g, '-')
+    .slice(0, 60)
+  return `${request.id}:${seed || 'repair-item'}`
+}
+
+function getCurrentScopeReason(request: WorkRequest | null | undefined) {
+  if (!request) return 'current estimate scope'
+  return [request.workType, request.description].filter(Boolean).join(' — ') || 'current estimate scope'
+}
+
+function getEstimateInclusionReason(item: EstimateItem) {
+  return (
+    item.relevance_reason ||
+    item.quantity_reason ||
+    (item.scope_source ? item.scope_source.replace(/_/g, ' ') : '') ||
+    (item.repair_item_id ? `repair item ${item.repair_item_id}` : '') ||
+    'current job scope'
+  )
+}
+
+function isEstimateItemRejected(item: EstimateItem) {
+  return item.review_status === 'rejected'
+}
+
+function isHumanScopedMaterial(item: EstimateItem) {
+  const confidence = String(item.confidence || '')
+  return confidence.includes('human') || Boolean(item.human_approved)
+}
+
+function estimateItemMatchesCurrentScope(item: EstimateItem, request: WorkRequest | null) {
+  if (!request) return true
+  if (isEstimateItemRejected(item)) return false
+
+  const propertyId = getRequestPropertyId(request)
+  const matchesCurrentJob =
+    item.lead_id === request.id ||
+    item.request_id === request.id ||
+    item.job_id === request.id ||
+    item.property_id === propertyId ||
+    (!item.request_id && !item.job_id && !item.property_id)
+
+  if (!matchesCurrentJob) return false
+
+  if (isHumanScopedMaterial(item)) return true
+
+  const scopeText = normalizeScopeText([request.workType, request.description].join(' '))
+  const itemText = normalizeScopeText(
+    [
+      item.item_name,
+      item.category,
+      item.quantity_reason,
+      item.scope_source,
+      item.relevance_reason,
+    ].join(' ')
+  )
+
+  if (!scopeText || !itemText) return Boolean(item.repair_item_id || item.quantity_reason)
+
+  const scopeWords = scopeText.split(' ').filter((word) => word.length > 3)
+  const hasScopeMatch = scopeWords.some((word) => itemText.includes(word))
+  const hasScopeLink = Boolean(item.repair_item_id || item.scope_source || item.relevance_reason || item.quantity_reason)
+  const confidence = String(item.confidence || '')
+  const hasReviewableConfidence =
+    confidence.includes('verified') ||
+    confidence.includes('review') ||
+    confidence.includes('source') ||
+    confidence.includes('draft') ||
+    confidence.includes('memory')
+
+  return hasScopeLink && hasScopeMatch && hasReviewableConfidence
+}
+
 function getLaborKeywordMatches(request: WorkRequest) {
   const text = normalizeLaborText(
     [request.workType, request.description, request.timeline, request.urgency].join(' ')
@@ -344,12 +431,17 @@ type EstimateItem = {
   research_id?: string | null
   lead_id: string
   created_at?: string
+  property_id?: string | null
+  job_id?: string | null
+  request_id?: string | null
+  repair_item_id?: string | null
   item_name: string
   category?: string | null
   source: string | null
   source_url: string | null
   quantity: number | null
   unit_price: number | null
+  original_unit_price?: number | null
   total_price: number | null
   required_quantity?: number | null
   required_unit?: string | null
@@ -361,10 +453,55 @@ type EstimateItem = {
   package_price?: number | null
   extended_total?: number | null
   quantity_reason?: string | null
+  scope_source?: string | null
+  relevance_reason?: string | null
   source_status?: string | null
   review_status?: string | null
+  rejection_reason?: string | null
+  admin_notes?: string | null
   confidence: string | null
   human_approved: boolean | null
+}
+
+type MaterialReviewAction =
+  | 'approved'
+  | 'rejected'
+  | 'edited'
+  | 'added'
+  | 'saved_for_next_time'
+
+type ManualMaterialDraft = {
+  itemName: string
+  vendor: string
+  quantity: string
+  unitCost: string
+  totalCost: string
+  sourceUrl: string
+  notes: string
+  reviewStatus: 'approved' | 'needs_review'
+  repairItemId: string
+}
+
+const MATERIAL_REJECTION_REASONS = [
+  'Wrong job',
+  'Wrong material',
+  'Duplicate',
+  'Bad source',
+  'Not needed for scope',
+  'Price too high',
+  'Other',
+]
+
+const EMPTY_MANUAL_MATERIAL_DRAFT: ManualMaterialDraft = {
+  itemName: '',
+  vendor: '',
+  quantity: '1',
+  unitCost: '',
+  totalCost: '',
+  sourceUrl: '',
+  notes: '',
+  reviewStatus: 'needs_review',
+  repairItemId: '',
 }
 
 type EstimateResearchRow = {
@@ -774,7 +911,8 @@ function calculateEstimateTotals(
   markupPercent: string,
   contingencyPercent: string
 ) {
-  const materialSubtotal = items.reduce(
+  const activeItems = items.filter((item) => !isEstimateItemRejected(item))
+  const materialSubtotal = activeItems.reduce(
     (sum, item) => sum + Number(item.total_price || 0),
     0
   )
@@ -797,7 +935,7 @@ function calculateEstimateTotals(
     standardTotal,
     lowTotal: standardTotal * 0.9,
     premiumTotal: standardTotal * 1.15,
-    approvedCount: items.filter((item) => item.human_approved).length,
+    approvedCount: activeItems.filter((item) => item.human_approved).length,
   }
 }
 
@@ -1058,6 +1196,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [estimateContingencyPercent, setEstimateContingencyPercent] = useState('10')
   const [estimateNotes, setEstimateNotes] = useState('Draft estimate. Final price requires human review and site verification.')
   const [estimateIntelligence, setEstimateIntelligence] = useState<EstimateIntelligenceResult | null>(null)
+  const [showRejectedEstimateItems, setShowRejectedEstimateItems] = useState(false)
+  const [showManualMaterialForm, setShowManualMaterialForm] = useState(false)
+  const [manualMaterialDraft, setManualMaterialDraft] = useState<ManualMaterialDraft>(EMPTY_MANUAL_MATERIAL_DRAFT)
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -2598,11 +2739,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       if (memoryError) throw memoryError
 
       const sourceText = [request.workType, request.description].join(' ').toLowerCase()
-      const draftLines = sourceText.includes('deck')
-        ? buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
-        : buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
+      if (!sourceText.includes('deck')) {
+        alert('No current-scope material package template matched this job yet. Add materials manually or use AI Research Materials for this request.')
+        return
+      }
+
+      const draftLines = buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
 
       const inserts = draftLines.map((line) => ({
+        property_id: getRequestPropertyId(request),
+        job_id: request.id,
+        request_id: request.id,
+        repair_item_id: getDefaultRepairItemId(request, line.materialName),
         lead_id: request.id,
         item_name: line.materialName,
         category: line.category,
@@ -2610,6 +2758,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         source_url: line.sourceUrl,
         quantity: line.packagesNeeded,
         unit_price: line.packagePrice,
+        original_unit_price: line.packagePrice,
         total_price: line.extendedTotal,
         required_quantity: line.requiredQuantity,
         required_unit: line.requiredUnit,
@@ -2621,6 +2770,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         package_price: line.packagePrice,
         extended_total: line.extendedTotal,
         quantity_reason: line.quantityReason,
+        scope_source: 'current_request_scope',
+        relevance_reason: `${request.workType || 'Deck'} scope: ${line.category}`,
         source_status: line.sourceStatus,
         review_status: line.reviewStatus,
         confidence: line.confidence,
@@ -2881,13 +3032,22 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       await ensureLeadExists(request)
 
       const inserts = result.draftItems.map((item) => ({
+        property_id: getRequestPropertyId(request),
+        job_id: request.id,
+        request_id: request.id,
+        repair_item_id: getDefaultRepairItemId(request, item.itemName),
         lead_id: request.id,
         item_name: `${item.itemName} (${item.unit})`,
         source: item.source,
         source_url: null,
         quantity: item.quantity,
         unit_price: item.unitPrice,
+        original_unit_price: item.unitPrice,
         total_price: item.quantity * item.unitPrice,
+        scope_source: 'estimate_intelligence_current_scope',
+        relevance_reason: `${request.workType || 'Current'} scope: ${item.itemName}`,
+        source_status: item.source === 'fallback_product_search' ? 'needs_source_review' : 'current_scope',
+        review_status: 'needs_review',
         confidence: item.confidence,
         human_approved: false,
       }))
@@ -2921,7 +3081,72 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     )
   }
 
-  async function saveEstimateItem(item: EstimateItem) {
+  function updateManualMaterialDraft(changes: Partial<ManualMaterialDraft>) {
+    setManualMaterialDraft((prev) => {
+      const next = { ...prev, ...changes }
+      const quantity = Number(next.quantity || 0)
+      const unitCost = Number(next.unitCost || 0)
+
+      if (
+        (changes.quantity !== undefined || changes.unitCost !== undefined) &&
+        quantity > 0 &&
+        unitCost >= 0
+      ) {
+        next.totalCost = String(Math.round(quantity * unitCost * 100) / 100)
+      }
+
+      return next
+    })
+  }
+
+  async function recordMaterialReviewLearning(
+    item: EstimateItem,
+    action: MaterialReviewAction,
+    overrides: Partial<EstimateItem> = {}
+  ) {
+    const request = selectedEstimateRequest
+    const reviewedItem = { ...item, ...overrides }
+    const originalUnitPrice = Number(reviewedItem.original_unit_price ?? item.original_unit_price ?? item.unit_price ?? 0)
+    const reviewedUnitPrice = Number(reviewedItem.unit_price || 0)
+    const quantity = Number(reviewedItem.quantity || 0)
+    const finalTotal = Number(reviewedItem.total_price || quantity * reviewedUnitPrice || 0)
+    const now = new Date().toISOString()
+
+    const memoryRecord = {
+      property_id: reviewedItem.property_id || getRequestPropertyId(request),
+      job_id: reviewedItem.job_id || request?.id || reviewedItem.lead_id,
+      request_id: reviewedItem.request_id || request?.id || reviewedItem.lead_id,
+      repair_item_id: reviewedItem.repair_item_id || getDefaultRepairItemId(request, reviewedItem.item_name),
+      work_type: request?.workType || reviewedItem.category || 'Material estimate',
+      repair_description: getCurrentScopeReason(request),
+      material_name: reviewedItem.item_name,
+      vendor_source: reviewedItem.source || '',
+      source_url: reviewedItem.source_url || '',
+      original_unit_price: originalUnitPrice,
+      reviewed_unit_price: reviewedUnitPrice,
+      quantity,
+      final_total: finalTotal,
+      admin_action: action,
+      rejection_reason: reviewedItem.rejection_reason || null,
+      admin_notes: reviewedItem.admin_notes || null,
+      confidence_before: item.confidence || 'needs_review',
+      confidence_after: reviewedItem.confidence || (action === 'rejected' ? 'human_rejected' : 'human_reviewed'),
+      created_at: now,
+      reviewed_at: now,
+    }
+
+    try {
+      const { error } = await supabase.from('material_review_memory').insert(memoryRecord)
+      if (error) throw error
+    } catch (error) {
+      console.warn('Material review memory table unavailable; storing local learning record.', error)
+      const storageKey = 'shelter-prep-material-review-memory-v1'
+      const existing = JSON.parse(window.localStorage.getItem(storageKey) || '[]')
+      window.localStorage.setItem(storageKey, JSON.stringify([memoryRecord, ...existing].slice(0, 200)))
+    }
+  }
+
+  async function saveEstimateItem(item: EstimateItem, action: MaterialReviewAction = 'edited', logLearning = true) {
     setEstimateSavingId(item.id)
 
     const quantity = Number(item.quantity || 0)
@@ -2932,12 +3157,17 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       const { data, error } = await supabase
         .from('estimate_items')
         .update({
+          property_id: item.property_id || getRequestPropertyId(selectedEstimateRequest),
+          job_id: item.job_id || selectedEstimateRequest?.id || item.lead_id,
+          request_id: item.request_id || selectedEstimateRequest?.id || item.lead_id,
+          repair_item_id: item.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, item.item_name),
           item_name: item.item_name,
           category: item.category || null,
           source: item.source,
           source_url: item.source_url,
           quantity,
           unit_price: unitPrice,
+          original_unit_price: item.original_unit_price ?? unitPrice,
           total_price: totalPrice,
           required_quantity: item.required_quantity ?? quantity,
           required_unit: item.required_unit || null,
@@ -2949,10 +3179,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           package_price: item.package_price ?? unitPrice,
           extended_total: item.extended_total ?? totalPrice,
           quantity_reason: item.quantity_reason || null,
+          scope_source: item.scope_source || 'current_request_scope',
+          relevance_reason: item.relevance_reason || getEstimateInclusionReason(item),
           source_status: item.source_status || 'needs_source_review',
-          review_status: item.human_approved ? 'approved' : item.review_status || 'needs_review',
+          review_status: item.review_status === 'rejected' ? 'rejected' : item.human_approved ? 'approved' : item.review_status || 'needs_review',
+          rejection_reason: item.rejection_reason || null,
+          admin_notes: item.admin_notes || null,
           confidence: item.confidence || 'human_reviewed',
-          human_approved: item.human_approved || false,
+          human_approved: item.review_status === 'rejected' ? false : item.human_approved || false,
         })
         .eq('id', item.id)
         .select()
@@ -2963,6 +3197,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateItems((prev) =>
         prev.map((existing) => (existing.id === item.id ? (data as EstimateItem) : existing))
       )
+      if (logLearning) {
+        await recordMaterialReviewLearning(data as EstimateItem, action, {
+          total_price: totalPrice,
+          unit_price: unitPrice,
+        })
+      }
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not save estimate item.')
@@ -2977,31 +3217,67 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return
     }
 
+    if (!manualMaterialDraft.itemName.trim()) {
+      alert('Add a material name first.')
+      return
+    }
+
     try {
       await ensureLeadExists(selectedEstimateRequest)
+
+      const quantity = Number(manualMaterialDraft.quantity || 0)
+      const unitPrice = Number(manualMaterialDraft.unitCost || 0)
+      const totalPrice = Number(manualMaterialDraft.totalCost || quantity * unitPrice || 0)
+      const repairItemId =
+        manualMaterialDraft.repairItemId.trim() ||
+        getDefaultRepairItemId(selectedEstimateRequest, manualMaterialDraft.itemName)
 
       const { data, error } = await supabase
         .from('estimate_items')
         .insert({
+          property_id: getRequestPropertyId(selectedEstimateRequest),
+          job_id: selectedEstimateRequest.id,
+          request_id: selectedEstimateRequest.id,
+          repair_item_id: repairItemId,
           lead_id: selectedEstimateRequest.id,
-          item_name: 'New estimate item',
-          source: 'Human Review',
-          source_url: null,
-          quantity: 1,
-          unit_price: 0,
-          total_price: 0,
+          item_name: manualMaterialDraft.itemName.trim(),
+          source: manualMaterialDraft.vendor.trim() || 'Human Review',
+          source_url: manualMaterialDraft.sourceUrl.trim() || null,
+          quantity,
+          unit_price: unitPrice,
+          original_unit_price: unitPrice,
+          total_price: totalPrice,
+          required_quantity: quantity,
+          required_unit: 'units',
+          packages_needed: quantity,
+          package_price: unitPrice,
+          extended_total: totalPrice,
+          quantity_reason: manualMaterialDraft.notes.trim() || 'Human-added material for current job scope.',
+          scope_source: 'human_added_current_scope',
+          relevance_reason: `${selectedEstimateRequest.workType || 'Current'} scope: human-added material`,
+          source_status: manualMaterialDraft.reviewStatus === 'approved' ? 'human_added' : 'needs_source_review',
+          review_status: manualMaterialDraft.reviewStatus,
           confidence: 'human_added',
-          human_approved: false,
+          human_approved: manualMaterialDraft.reviewStatus === 'approved',
+          admin_notes: manualMaterialDraft.notes.trim() || null,
         })
         .select()
         .single()
 
       if (error) throw error
 
-      setEstimateItems((prev) => [...prev, data as EstimateItem])
+      const addedItem = data as EstimateItem
+      setEstimateItems((prev) => [...prev, addedItem])
+      setManualMaterialDraft(EMPTY_MANUAL_MATERIAL_DRAFT)
+      setShowManualMaterialForm(false)
+      await recordMaterialReviewLearning(addedItem, 'added')
     } catch (error: any) {
       console.error(error)
-      alert(error?.message || 'Could not add manual estimate item.')
+      if (String(error?.message || '').includes('column')) {
+        alert('Material review columns are missing. Run migration 202605120002_material_review_learning.sql first.')
+      } else {
+        alert(error?.message || 'Could not add manual estimate item.')
+      }
     }
   }
 
@@ -3011,10 +3287,32 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       ...item,
       human_approved: nextApproved,
       review_status: nextApproved ? 'approved' : 'needs_review',
+      rejection_reason: nextApproved ? null : item.rejection_reason,
       confidence: nextApproved ? 'human_approved' : item.confidence,
     }
     updateLocalEstimateItem(item.id, updated)
-    await saveEstimateItem(updated)
+    await saveEstimateItem(updated, nextApproved ? 'approved' : 'edited', false)
+    if (nextApproved) await recordMaterialReviewLearning(updated, 'approved')
+  }
+
+  async function rejectEstimateItem(item: EstimateItem) {
+    const reason = item.rejection_reason || 'Wrong material'
+    if (!MATERIAL_REJECTION_REASONS.includes(reason)) {
+      alert('Choose a rejection reason first.')
+      return
+    }
+
+    const updated: EstimateItem = {
+      ...item,
+      human_approved: false,
+      review_status: 'rejected',
+      rejection_reason: reason,
+      confidence: 'human_rejected',
+    }
+
+    updateLocalEstimateItem(item.id, updated)
+    await saveEstimateItem(updated, 'rejected', false)
+    await recordMaterialReviewLearning(updated, 'rejected')
   }
 
   async function approveAllEstimateItems() {
@@ -3025,10 +3323,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (!confirmApprove) return
 
     try {
-      const updates = estimateItems.map((item) =>
+      const approvableItems = currentScopeEstimateItems.filter((item) => !isEstimateItemRejected(item))
+      const updates = approvableItems.map((item) =>
         supabase
           .from('estimate_items')
-          .update({ human_approved: true, confidence: 'human_approved', review_status: 'approved' })
+          .update({ human_approved: true, confidence: 'human_approved', review_status: 'approved', rejection_reason: null })
           .eq('id', item.id)
       )
 
@@ -3039,10 +3338,23 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateItems((prev) =>
         prev.map((item) => ({
           ...item,
-          human_approved: true,
-          confidence: 'human_approved',
-          review_status: 'approved',
+          ...(approvableItems.some((approved) => approved.id === item.id)
+            ? {
+                human_approved: true,
+                confidence: 'human_approved',
+                review_status: 'approved',
+                rejection_reason: null,
+              }
+            : {}),
         }))
+      )
+      await Promise.all(
+        approvableItems.map((item) =>
+          recordMaterialReviewLearning(
+            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'approved' },
+            'approved'
+          )
+        )
       )
     } catch (error: any) {
       console.error(error)
@@ -3051,6 +3363,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function saveEstimateItemAsPricingMemory(item: EstimateItem) {
+    if (isEstimateItemRejected(item)) {
+      alert('Rejected materials cannot be saved as approved pricing memory.')
+      return
+    }
+
     if (!item.human_approved) {
       alert('Approve this material line before saving it as pricing memory.')
       return
@@ -3067,7 +3384,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       category: item.category || 'Material',
       trade: item.category || 'Material',
       repair_type: selectedEstimateRequest?.workType || 'Material estimate',
-      description: item.quantity_reason || '',
+      description: item.relevance_reason || item.quantity_reason || getCurrentScopeReason(selectedEstimateRequest),
       city: selectedEstimateRequest?.city || '',
       state: selectedEstimateRequest?.state || '',
       zip: selectedEstimateRequest?.zip || '',
@@ -3080,7 +3397,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       source: item.source_url || item.source || 'estimate_item_human_approved',
       confidence_level: 'high',
       human_verified: true,
-      notes: `Saved from material estimate line ${item.id}. Package unit: ${item.package_unit || 'package'}; required unit: ${item.required_unit || 'not set'}.`,
+      notes: `Price support only. Saved from material estimate line ${item.id}. Package unit: ${item.package_unit || 'package'}; required unit: ${item.required_unit || 'not set'}.`,
       last_checked: new Date().toISOString(),
     })
 
@@ -3090,6 +3407,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
 
     alert('Saved. Future material estimates will use this human-approved local price first.')
+    await recordMaterialReviewLearning(item, 'saved_for_next_time', {
+      confidence: 'saved_for_next_time',
+    })
     await loadPricingMemoryEntries()
   }
 
@@ -3100,7 +3420,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
 
     const totals = calculateEstimateTotals(
-      estimateItems,
+      currentScopeEstimateItems,
       estimateLaborCost,
       estimateMarkupPercent,
       estimateContingencyPercent
@@ -3112,9 +3432,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const laborMinimum = Number(estimateMinimumCharge || 0)
     const laborTrip = Number(estimateTripCharge || 0)
     const laborDisposal = Number(estimateDisposalFee || 0)
-    const allApproved = estimateItems.length > 0 && totals.approvedCount === estimateItems.length
+    const allApproved = currentScopeEstimateItems.length > 0 && totals.approvedCount === currentScopeEstimateItems.length
 
-    const rows = estimateItems
+    const rows = currentScopeEstimateItems
       .map(
         (item) => `
           <tr>
@@ -3215,13 +3535,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
 
     const totals = calculateEstimateTotals(
-      estimateItems,
+      currentScopeEstimateItems,
       estimateLaborCost,
       estimateMarkupPercent,
       estimateContingencyPercent
     )
     const amountDue = totals.standardTotal
-    const allApproved = estimateItems.length === 0 || totals.approvedCount === estimateItems.length
+    const allApproved = currentScopeEstimateItems.length === 0 || totals.approvedCount === currentScopeEstimateItems.length
 
     if (amountDue <= 0) {
       alert('Add estimate items or labor before generating an invoice.')
@@ -3971,8 +4291,35 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     'pending_approval',
   ]
 
+  const currentScopeEstimateItems = useMemo(
+    () =>
+      estimateItems.filter((item) =>
+        estimateItemMatchesCurrentScope(item, selectedEstimateRequest)
+      ),
+    [estimateItems, selectedEstimateRequest]
+  )
+
+  const visibleEstimateItems = useMemo(
+    () =>
+      showRejectedEstimateItems
+        ? estimateItems.filter((item) => {
+            if (!selectedEstimateRequest) return true
+            const propertyId = getRequestPropertyId(selectedEstimateRequest)
+            return (
+              item.lead_id === selectedEstimateRequest.id ||
+              item.request_id === selectedEstimateRequest.id ||
+              item.job_id === selectedEstimateRequest.id ||
+              item.property_id === propertyId
+            )
+          })
+        : currentScopeEstimateItems,
+    [currentScopeEstimateItems, estimateItems, selectedEstimateRequest, showRejectedEstimateItems]
+  )
+
+  const rejectedEstimateCount = estimateItems.filter(isEstimateItemRejected).length
+
   const estimateTotals = calculateEstimateTotals(
-    estimateItems,
+    currentScopeEstimateItems,
     estimateLaborCost,
     estimateMarkupPercent,
     estimateContingencyPercent
@@ -3996,7 +4343,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const estimatePremiumTotal = estimateTotals.premiumTotal
   const approvedEstimateCount = estimateTotals.approvedCount
   const allEstimateItemsApproved =
-    estimateItems.length > 0 && approvedEstimateCount === estimateItems.length
+    currentScopeEstimateItems.length > 0 && approvedEstimateCount === currentScopeEstimateItems.length
   const propertyResearchPack = useMemo(
     () => buildPropertyResearchPack(propertyAddress, city, stateValue || 'OR', zip),
     [propertyAddress, city, stateValue, zip]
@@ -5996,8 +6343,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   </p>
                   <p>{selectedEstimateRequest.description}</p>
                   <div style={styles.noticeBox}>
-                    Estimate status: {approvedEstimateCount}/{estimateItems.length} line items
+                    Estimate status: {approvedEstimateCount}/{currentScopeEstimateItems.length} current-scope line items
                     approved. {allEstimateItemsApproved ? 'Ready for draft PDF.' : 'Still needs human review.'}
+                    {rejectedEstimateCount > 0 ? ` ${rejectedEstimateCount} rejected item(s) hidden by default.` : ''}
                   </div>
                 </div>
 
@@ -6190,9 +6538,21 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 </div>
 
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-                  <button style={styles.primaryButton} onClick={addManualEstimateItem}>
-                    Add Manual Line Item
+                  <button
+                    type="button"
+                    style={styles.primaryButton}
+                    onClick={() => setShowManualMaterialForm((current) => !current)}
+                  >
+                    + Add Material
                   </button>
+                  <label style={{ ...styles.outlineButton, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={showRejectedEstimateItems}
+                      onChange={(event) => setShowRejectedEstimateItems(event.target.checked)}
+                    />
+                    Show rejected items
+                  </label>
                   <button
                     style={styles.primaryButton}
                     onClick={() => selectedEstimateRequest && buildLocalEstimateIntelligence(selectedEstimateRequest)}
@@ -6217,16 +6577,116 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   </button>
                 </div>
 
-                {estimateItems.length === 0 && (
-                  <div style={styles.empty}>
-                    No estimate items yet. Run AI Research Materials from the Dashboard, or add a
-                    manual line item.
+                {showManualMaterialForm && (
+                  <div style={styles.requestCard}>
+                    <div style={styles.badgeRow}>
+                      <span style={styles.badge}>Human-added material</span>
+                      <span style={styles.badgeMuted}>Current job only</span>
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <input
+                        style={styles.input}
+                        placeholder="Material name"
+                        value={manualMaterialDraft.itemName}
+                        onChange={(e) => updateManualMaterialDraft({ itemName: e.target.value })}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Vendor/source"
+                        value={manualMaterialDraft.vendor}
+                        onChange={(e) => updateManualMaterialDraft({ vendor: e.target.value })}
+                      />
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                      <input
+                        style={styles.input}
+                        type="number"
+                        placeholder="Quantity"
+                        value={manualMaterialDraft.quantity}
+                        onChange={(e) => updateManualMaterialDraft({ quantity: e.target.value })}
+                      />
+                      <input
+                        style={styles.input}
+                        type="number"
+                        placeholder="Unit cost"
+                        value={manualMaterialDraft.unitCost}
+                        onChange={(e) => updateManualMaterialDraft({ unitCost: e.target.value })}
+                      />
+                      <input
+                        style={styles.input}
+                        type="number"
+                        placeholder="Total cost"
+                        value={manualMaterialDraft.totalCost}
+                        onChange={(e) => updateManualMaterialDraft({ totalCost: e.target.value })}
+                      />
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <input
+                        style={styles.input}
+                        placeholder="Source URL"
+                        value={manualMaterialDraft.sourceUrl}
+                        onChange={(e) => updateManualMaterialDraft({ sourceUrl: e.target.value })}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Repair item / scope link"
+                        value={manualMaterialDraft.repairItemId}
+                        onChange={(e) => updateManualMaterialDraft({ repairItemId: e.target.value })}
+                      />
+                    </div>
+                    <select
+                      style={styles.input}
+                      value={manualMaterialDraft.reviewStatus}
+                      onChange={(e) =>
+                        updateManualMaterialDraft({ reviewStatus: e.target.value as ManualMaterialDraft['reviewStatus'] })
+                      }
+                    >
+                      <option value="needs_review">needs_review</option>
+                      <option value="approved">approved</option>
+                    </select>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 90 }}
+                      placeholder="Notes"
+                      value={manualMaterialDraft.notes}
+                      onChange={(e) => updateManualMaterialDraft({ notes: e.target.value })}
+                    />
+                    <div style={styles.buttonRow}>
+                      <button type="button" style={styles.primaryButton} onClick={addManualEstimateItem}>
+                        Save Material
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        onClick={() => {
+                          setManualMaterialDraft(EMPTY_MANUAL_MATERIAL_DRAFT)
+                          setShowManualMaterialForm(false)
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {estimateItems.map((item) => (
-                  <div key={item.id} style={styles.requestCard}>
-                    <div style={styles.grid2}>
+                {visibleEstimateItems.length === 0 && (
+                  <div style={styles.empty}>
+                    No current-scope material items are visible. Add a material, run current-scope research, or show rejected items.
+                  </div>
+                )}
+
+                {visibleEstimateItems.map((item) => (
+                  <div key={item.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
+                    <div style={styles.badgeRow}>
+                      <span style={isEstimateItemRejected(item) ? styles.badgeDanger : styles.badge}>
+                        {isEstimateItemRejected(item) ? 'Rejected' : item.confidence === 'human_added' ? 'Human-added material' : item.source_status === 'needs_source_review' ? 'Needs source review' : 'Included because...'}
+                      </span>
+                      {item.human_approved && <span style={styles.badge}>Learned from approval</span>}
+                      {isEstimateItemRejected(item) && <span style={styles.badgeMuted}>Learned from rejection</span>}
+                      {item.source_status === 'pricing_memory' && <span style={styles.badgeMuted}>Price support only</span>}
+                    </div>
+                    <p style={styles.small}>Included because: {getEstimateInclusionReason(item)}</p>
+
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
                       <input
                         style={styles.input}
                         value={item.item_name || ''}
@@ -6273,7 +6733,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       </div>
                     )}
 
-                    <div style={styles.grid3}>
+                    <div style={isCompact ? styles.mobileStack : styles.grid3}>
                       <input
                         style={styles.input}
                         type="number"
@@ -6310,6 +6770,28 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       }
                     />
 
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <select
+                        style={styles.input}
+                        value={item.rejection_reason || ''}
+                        disabled={item.human_approved}
+                        onChange={(e) => updateLocalEstimateItem(item.id, { rejection_reason: e.target.value })}
+                      >
+                        <option value="">Rejection reason</option>
+                        {MATERIAL_REJECTION_REASONS.map((reason) => (
+                          <option key={reason} value={reason}>
+                            {reason}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        style={styles.input}
+                        placeholder="Admin notes"
+                        value={item.admin_notes || ''}
+                        onChange={(e) => updateLocalEstimateItem(item.id, { admin_notes: e.target.value })}
+                      />
+                    </div>
+
                     <p style={styles.small}>
                       Confidence: {item.confidence || 'needs_review'} • Status:{' '}
                       {item.human_approved ? 'Human approved' : item.review_status || 'Needs review'}
@@ -6326,13 +6808,21 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         style={styles.outlineButton}
                         onClick={() => toggleEstimateItemApproved(item)}
+                        disabled={isEstimateItemRejected(item)}
                       >
                         {item.human_approved ? 'Unapprove' : 'Approve'}
                       </button>
                       <button
                         style={styles.outlineButton}
+                        onClick={() => rejectEstimateItem(item)}
+                        disabled={item.human_approved || estimateSavingId === item.id}
+                      >
+                        Reject / Remove
+                      </button>
+                      <button
+                        style={styles.outlineButton}
                         onClick={() => saveEstimateItemAsPricingMemory(item)}
-                        disabled={!item.human_approved}
+                        disabled={!item.human_approved || isEstimateItemRejected(item)}
                       >
                         Use this price next time
                       </button>
