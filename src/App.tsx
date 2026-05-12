@@ -941,6 +941,9 @@ export default function App() {
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isCompact, setIsCompact] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia('(max-width: 760px)').matches
+  )
 
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [archivedRequests, setArchivedRequests] = useState<WorkRequest[]>([])
@@ -1058,6 +1061,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   useEffect(() => {
     loadRequestsFromSupabase()
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const query = window.matchMedia('(max-width: 760px)')
+    const updateCompactMode = () => setIsCompact(query.matches)
+
+    updateCompactMode()
+    query.addEventListener('change', updateCompactMode)
+
+    return () => query.removeEventListener('change', updateCompactMode)
   }, [])
 
   // Requests are now loaded from Supabase so phone + desktop stay in sync.
@@ -1240,7 +1255,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     setPropertyLookupLoading(true)
 
     try {
-      const facts = await lookupPropertyFacts(propertyAddress)
+      const facts = await lookupPropertyFacts(propertyAddress, city, stateValue, zip)
       const lookupStatus = facts.lookupStatus || (facts.source === 'api' ? 'data_found' : 'error')
       setPropertyFacts(facts)
       setPropertyType(facts.propertyType || propertyType)
@@ -1268,12 +1283,12 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     const functionUrl = `${supabaseUrl}/functions/v1/property-lookup`
     const requestBody = {
-      address: lead.propertyAddress,
-      propertyAddress: lead.propertyAddress,
       address_line_1: lead.propertyAddress,
       city: lead.city,
       state: lead.state,
       zip: lead.zip,
+      address1: lead.propertyAddress,
+      address2: [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '),
     }
 
     setPropertyProfileLoadingByLeadId((prev) => ({ ...prev, [lead.id]: true }))
@@ -3988,25 +4003,25 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   )
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div style={isCompact ? { ...styles.page, ...styles.mobilePage } : styles.page}>
+      <header style={isCompact ? { ...styles.header, ...styles.mobileHeader } : styles.header}>
         <div>
-          <div style={styles.brand}>SHELTER PREP</div>
-          <div style={styles.subBrand}>HOME SERVICES</div>
+          <div style={isCompact ? { ...styles.brand, ...styles.mobileBrand } : styles.brand}>SHELTER PREP</div>
+          <div style={isCompact ? { ...styles.subBrand, ...styles.mobileSubBrand } : styles.subBrand}>HOME SERVICES</div>
         </div>
 
-        <nav style={styles.nav}>
+        <nav style={isCompact ? { ...styles.nav, ...styles.mobileNav } : styles.nav}>
           <button
-            style={activeTab === 'new' ? styles.navActive : styles.navButton}
+            style={activeTab === 'new' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
             onClick={() => setActiveTab('new')}
           >
             New Request
           </button>
 
           <div style={{ position: 'relative' }}>
-  <button
-    type="button"
-    style={styles.navButton}
+	  <button
+	    type="button"
+	    style={{ ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
     onClick={() => setShowMoreMenu((current) => !current)}
   >
     More ▾
@@ -4057,6 +4072,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             color: '#123225',
             fontWeight: 800,
             cursor: 'pointer',
+            minHeight: 48,
           }}
           onClick={() => {
             setActiveTab(item.tab as Tab)
@@ -4073,15 +4089,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
           {isAdmin && (
             <>
-              <button
-                style={activeTab === 'intake' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'intake' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('intake')}
               >
                 AI Intake
               </button>
 
-              <button
-                style={activeTab === 'messages' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'messages' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('messages')}
               >
                 Messages
@@ -4091,64 +4107,64 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
           {isAdmin && (
             <>
-              <button
-                style={activeTab === 'dashboard' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'dashboard' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('dashboard')}
               >
                 Dashboard
               </button>
 
-              <button
-                style={activeTab === 'archived' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'archived' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('archived')}
               >
                 Archived Leads
               </button>
 
-              <button
-                style={activeTab === 'invoices' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'invoices' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('invoices')}
               >
                 Invoices
               </button>
 
-              <button
-                style={activeTab === 'history' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'history' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('history')}
               >
                 Historical Upload
               </button>
 
-              <button
-                style={activeTab === 'sellerPrep' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'sellerPrep' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('sellerPrep')}
               >
                 Seller Prep
               </button>
 
-              <button
-                style={activeTab === 'pricingMemory' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'pricingMemory' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('pricingMemory')}
               >
                 Pricing Memory
               </button>
 
-              <button
-                style={activeTab === 'materials' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'materials' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('materials')}
               >
                 Material Costs
               </button>
 
-              <button
-                style={activeTab === 'labor' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'labor' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('labor')}
               >
                 Labor Rates
               </button>
 
-              <button
-                style={activeTab === 'estimates' ? styles.navActive : styles.navButton}
+	              <button
+	                style={activeTab === 'estimates' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
                 onClick={() => requireAdmin('estimates')}
               >
                 AI Estimator
@@ -4157,7 +4173,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           )}
         </nav>
 
-        <div style={styles.headerActions}>
+        <div style={isCompact ? { ...styles.headerActions, ...styles.mobileHeaderActions } : styles.headerActions}>
           {isAdmin && (
             <button style={styles.outlineButton} onClick={exportCsv}>
               Export CSV
@@ -4185,7 +4201,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         </div>
       )}
 
-      <main style={styles.main}>
+      <main style={isCompact ? { ...styles.main, ...styles.mobileMain } : styles.main}>
         {activeTab === 'new' && (
           <div style={styles.twoColumn}>
             <section style={styles.card}>
@@ -4798,10 +4814,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
         {isAdmin && activeTab === 'dashboard' && (
           <>
-            <section style={styles.card}>
+            <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
               <h2>Admin Dashboard</h2>
 
-              <div style={styles.grid2}>
+              <div style={isCompact ? styles.mobileStack : styles.grid2}>
                 <input
                   style={styles.input}
                   placeholder="Search requests"
@@ -4824,18 +4840,25 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </div>
             </section>
 
-            <section style={styles.kanban}>
+            <section style={isCompact ? { ...styles.kanban, ...styles.mobileKanban } : styles.kanban}>
+              {filteredRequests.length === 0 && (
+                <div style={styles.empty}>No requests match this search.</div>
+              )}
+
               {columns.map((status) => {
                 const items = filteredRequests.filter((request) => request.status === status)
+
+                if (items.length === 0) return null
 
                 return (
                   <div
                     key={status}
-                    style={{
-                      ...styles.column,
-                      background: STATUS_META[status].cardBg,
-                      border: `1px solid ${STATUS_META[status].border}`,
-                    }}
+	                    style={{
+	                      ...styles.column,
+                        ...(isCompact ? styles.mobileColumn : {}),
+	                      background: STATUS_META[status].cardBg,
+	                      border: `1px solid ${STATUS_META[status].border}`,
+	                    }}
                   >
                     <h3>
                       {STATUS_META[status].label} ({items.length})
@@ -4849,8 +4872,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       const profileError = propertyProfileErrorsByLeadId[request.id]
 
                       return (
-                      <div key={request.id} style={styles.requestCard}>
-                        <strong>{request.propertyAddress}</strong>
+	                      <div key={request.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
+	                        <strong style={isCompact ? styles.mobileRequestTitle : undefined}>{request.propertyAddress}</strong>
                         <p style={styles.small}>
                           {request.city}, {request.state} {request.zip}
                         </p>
@@ -4860,9 +4883,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         <p>{request.description}</p>
 
                         {request.propertyFacts && (
-                          <div style={styles.propertyProfileCard}>
-                            <strong>Verified Property Profile</strong>
-                            <div style={styles.compactFactGrid}>
+	                          <div style={isCompact ? { ...styles.propertyProfileCard, ...styles.mobilePropertyProfileCard } : styles.propertyProfileCard}>
+	                            <strong>Verified Property Profile</strong>
+	                            <div style={isCompact ? { ...styles.compactFactGrid, ...styles.mobileCompactFactGrid } : styles.compactFactGrid}>
                               <span>Beds: {profile?.beds || request.propertyFacts.bedrooms || 'TBD'}</span>
                               <span>Baths: {profile?.baths || request.propertyFacts.bathrooms || 'TBD'}</span>
                               <span>Sq ft: {profile?.sqft || request.propertyFacts.squareFeet || 'TBD'}</span>
@@ -4878,9 +4901,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                               <p style={styles.small}>Notes: {request.propertyFacts.verificationNotes}</p>
                             )}
                             <div style={styles.buttonRow}>
-                              <button
-                                type="button"
-                                style={styles.linkButton}
+	                              <button
+	                                type="button"
+	                                style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                                 disabled={profileLoading}
                                 onClick={() => refreshLeadPropertyProfile(request, true)}
                               >
@@ -4892,10 +4915,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                                 request.state,
                                 request.zip
                               ).links.slice(0, 3).map((link) => (
-                                <button
-                                  key={`${request.id}-${link.label}`}
-                                  type="button"
-                                  style={styles.linkButton}
+	                                <button
+	                                  key={`${request.id}-${link.label}`}
+	                                  type="button"
+	                                  style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                                   onClick={() => window.open(link.url, '_blank', 'noopener,noreferrer')}
                                 >
                                   {link.label}
@@ -4907,18 +4930,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                         {request.photos.length > 0 && <strong>Photos</strong>}
                         {request.photos.map((file) => (
-                          <div key={file.id || file.path || file.name} style={styles.fileActionRow}>
+	                          <div key={file.id || file.path || file.name} style={isCompact ? { ...styles.fileActionRow, ...styles.mobileFileActionRow } : styles.fileActionRow}>
                             <span style={styles.fileName}>{file.name}</span>
                             <button
                               type="button"
-                              style={styles.linkButton}
+	                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                               onClick={() => openRequestFile(file)}
                             >
                               View Photo
                             </button>
                             <button
                               type="button"
-                              style={styles.linkButton}
+	                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                               onClick={() => openRequestFile(file, true)}
                             >
                               Download
@@ -4928,18 +4951,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                         {request.documents.length > 0 && <strong>Documents</strong>}
                         {request.documents.map((file) => (
-                          <div key={file.id || file.path || file.name} style={styles.fileActionRow}>
+	                          <div key={file.id || file.path || file.name} style={isCompact ? { ...styles.fileActionRow, ...styles.mobileFileActionRow } : styles.fileActionRow}>
                             <span style={styles.fileName}>{file.name}</span>
                             <button
                               type="button"
-                              style={styles.linkButton}
+	                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                               onClick={() => openRequestFile(file)}
                             >
                               Open File
                             </button>
                             <button
                               type="button"
-                              style={styles.linkButton}
+	                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
                               onClick={() => openRequestFile(file, true)}
                             >
                               Download
@@ -6710,6 +6733,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 12,
     margin: '12px 0',
   },
+  mobilePropertyProfileCard: {
+    borderRadius: 20,
+    padding: 14,
+    background: '#fbfdf9',
+  },
   compactFactGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
@@ -6717,6 +6745,11 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 10,
     fontSize: 13,
     color: '#36463b',
+  },
+  mobileCompactFactGrid: {
+    gridTemplateColumns: '1fr',
+    gap: 7,
+    fontSize: 15,
   },
   intelligencePanel: {
     border: '1px solid #9fc6a7',
@@ -6738,9 +6771,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   page: {
     minHeight: '100vh',
-    background: '#f4f1ec',
+    background: '#f6f4ef',
     color: '#173425',
-    fontFamily: 'Inter, Arial, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Inter", "SF Pro Display", "Segoe UI", Arial, sans-serif',
+    WebkitTextSizeAdjust: '100%' as any,
+  },
+  mobilePage: {
+    background: '#f7f5f0',
+    paddingBottom: 'calc(env(safe-area-inset-bottom) + 18px)',
   },
   header: {
     display: 'grid',
@@ -6749,11 +6787,27 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '28px 42px 18px',
   },
+  mobileHeader: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: 12,
+    padding: '18px 16px 10px',
+    position: 'sticky',
+    top: 0,
+    zIndex: 20,
+    background: 'rgba(247,245,240,0.96)',
+    backdropFilter: 'blur(18px)',
+    borderBottom: '1px solid rgba(15,84,45,0.08)',
+  },
   brand: {
     fontSize: 30,
     letterSpacing: 3,
     fontWeight: 900,
     color: '#0f542d',
+  },
+  mobileBrand: {
+    fontSize: 22,
+    letterSpacing: 1.5,
   },
   subBrand: {
     marginTop: 8,
@@ -6762,11 +6816,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     color: '#0f542d',
   },
+  mobileSubBrand: {
+    marginTop: 4,
+    fontSize: 10,
+    letterSpacing: 3,
+  },
   nav: {
     display: 'flex',
     justifyContent: 'center',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  mobileNav: {
+    justifyContent: 'flex-start',
+    flexWrap: 'nowrap',
+    overflowX: 'auto',
+    WebkitOverflowScrolling: 'touch' as any,
+    paddingBottom: 4,
+    marginLeft: -2,
+    marginRight: -2,
   },
   navButton: {
     border: 'none',
@@ -6776,6 +6844,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     cursor: 'pointer',
     color: '#173425',
+    minHeight: 44,
   },
   navActive: {
     border: '1px solid #0f542d',
@@ -6785,6 +6854,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 900,
     cursor: 'pointer',
     color: '#0f542d',
+    minHeight: 44,
+  },
+  mobileNavPill: {
+    flex: '0 0 auto',
+    padding: '11px 15px',
+    minHeight: 48,
+    whiteSpace: 'nowrap',
   },
   headerActions: {
     display: 'flex',
@@ -6792,8 +6868,14 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10,
     flexWrap: 'wrap',
   },
+  mobileHeaderActions: {
+    justifyContent: 'stretch',
+  },
   main: {
     padding: '12px 42px 60px',
+  },
+  mobileMain: {
+    padding: '12px 14px calc(env(safe-area-inset-bottom) + 28px)',
   },
   previewBanner: {
     margin: '0 42px 18px',
@@ -6816,6 +6898,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 24,
     boxShadow: '0 10px 28px rgba(15,84,45,0.06)',
     marginBottom: 18,
+  },
+  mobileCard: {
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 14,
+    boxShadow: '0 10px 30px rgba(15,84,45,0.08)',
   },
   sideCard: {
     background: '#eef3ea',
@@ -6871,12 +6959,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
   input: {
     width: '100%',
+    minHeight: 52,
     padding: '14px 16px',
-    borderRadius: 12,
+    borderRadius: 16,
     border: '1px solid #d7dfd3',
     marginBottom: 12,
     boxSizing: 'border-box',
-    fontSize: 15,
+    fontSize: 16,
+    color: '#173425',
+    background: '#ffffff',
   },
   grid2: {
     display: 'grid',
@@ -6893,6 +6984,11 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))',
     gap: 10,
     marginBottom: 12,
+  },
+  mobileStack: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: 12,
   },
   propertyInfoPanel: {
     border: '1px solid #d7dfd3',
@@ -6927,27 +7023,30 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f542d',
     color: 'white',
     padding: '13px 18px',
-    borderRadius: 12,
+    borderRadius: 16,
     cursor: 'pointer',
     fontWeight: 900,
+    minHeight: 48,
   },
   outlineButton: {
     border: '1px solid #d7dfd3',
     background: 'white',
     color: '#173425',
     padding: '13px 18px',
-    borderRadius: 12,
+    borderRadius: 16,
     cursor: 'pointer',
     fontWeight: 900,
+    minHeight: 48,
   },
   secondaryButton: {
     border: '1px solid #d7dfd3',
     background: '#f8faf7',
     color: '#173425',
     padding: '10px 14px',
-    borderRadius: 12,
+    borderRadius: 16,
     cursor: 'pointer',
     fontWeight: 800,
+    minHeight: 48,
   },
   wideButton: {
     width: '100%',
@@ -6955,10 +7054,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f542d',
     color: 'white',
     padding: '13px 18px',
-    borderRadius: 12,
+    borderRadius: 16,
     cursor: 'pointer',
     fontWeight: 900,
     marginTop: 10,
+    minHeight: 50,
   },
   success: {
     background: '#e7f3e5',
@@ -6970,13 +7070,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   kanban: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))',
-    gap: 16,
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 18,
+  },
+  mobileKanban: {
+    gap: 14,
   },
   column: {
     borderRadius: 20,
-    padding: 16,
-    minHeight: 220,
+    padding: 18,
+    minHeight: 0,
+  },
+  mobileColumn: {
+    borderRadius: 24,
+    padding: 12,
   },
   empty: {
     background: 'rgba(255,255,255,0.8)',
@@ -6987,9 +7094,24 @@ const styles: Record<string, React.CSSProperties> = {
   requestCard: {
     background: 'white',
     border: '1px solid #d7dfd3',
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 14,
+    maxWidth: 920,
+  },
+  mobileRequestCard: {
+    borderRadius: 24,
+    padding: 18,
+    maxWidth: 'none',
     marginBottom: 12,
+    boxShadow: '0 8px 22px rgba(15,84,45,0.07)',
+  },
+  mobileRequestTitle: {
+    display: 'block',
+    fontSize: 20,
+    lineHeight: 1.2,
+    marginBottom: 6,
+    letterSpacing: 0,
   },
   fileGrid: {
     display: 'grid',
@@ -7003,18 +7125,24 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 14,
   },
   fileActionRow: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto auto',
     alignItems: 'center',
     gap: 12,
-    flexWrap: 'wrap',
-    padding: '6px 0',
+    padding: '10px 0',
+    borderBottom: '1px solid #edf1ea',
+  },
+  mobileFileActionRow: {
+    gridTemplateColumns: '1fr',
+    gap: 8,
+    padding: '12px 0',
   },
   fileName: {
     color: '#173425',
     fontSize: 14,
     fontWeight: 800,
-    minWidth: 180,
     overflowWrap: 'anywhere',
+    minWidth: 0,
   },
   linkButton: {
     display: 'block',
@@ -7025,6 +7153,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     cursor: 'pointer',
     textDecoration: 'underline',
+  },
+  mobileLinkButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    padding: '10px 12px',
+    borderRadius: 14,
+    background: '#eef6ec',
+    textDecoration: 'none',
   },
   noticeBox: {
     background: '#fff8e8',

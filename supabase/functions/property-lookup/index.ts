@@ -2,6 +2,8 @@ type PropertyLookupRequest = {
   address?: string
   propertyAddress?: string
   address_line_1?: string
+  address1?: string
+  address2?: string
   city?: string
   state?: string
   zip?: string
@@ -66,11 +68,19 @@ Deno.serve(async (request) => {
       })
     }
 
-    const address = buildLookupAddress(body)
-    console.log('[property-lookup] request received', { hasAddress: Boolean(address) })
+    const address = normalizeLookupAddress(body)
+    console.log('[property-lookup] request received', {
+      hasAddress1: Boolean(address.address1),
+      hasAddress2: Boolean(address.address2),
+      missingFields: address.missingFields,
+    })
 
-    if (!address) {
-      return jsonResponse({ status: 'attom_bad_request', error: 'Address is required.' }, 400)
+    if (address.missingFields.length > 0) {
+      return jsonResponse({
+        status: 'attom_bad_request',
+        error: `Missing address fields: ${address.missingFields.join(', ')}.`,
+        message: `Missing address fields: ${address.missingFields.join(', ')}.`,
+      }, 400)
     }
 
     const attomKey = Deno.env.get('ATTOM_API_KEY') || Deno.env.get('PROPERTY_DATA_API_KEY')
@@ -123,8 +133,15 @@ Deno.serve(async (request) => {
   }
 })
 
+type NormalizedLookupAddress = {
+  address1: string
+  address2: string
+  displayAddress: string
+  missingFields: string[]
+}
+
 async function fetchAttomProperty(
-  address: string,
+  address: NormalizedLookupAddress,
   attomKey: string
 ): Promise<
   | { ok: true; payload: unknown }
@@ -132,13 +149,14 @@ async function fetchAttomProperty(
 > {
   const endpointPath = ATTOM_BASIC_PROFILE_PATH
   const url = new URL(`${ATTOM_BASE_URL}${endpointPath}`)
-  url.searchParams.set('address', address)
+  url.searchParams.set('address1', address.address1)
+  url.searchParams.set('address2', address.address2)
 
   let response: Response
   let responseText = ''
 
   try {
-    console.log('[property-lookup] ATTOM request', { endpointPath })
+    console.log('[property-lookup] ATTOM request', { endpointPath, address1: address.address1, address2: address.address2 })
 
     response = await fetch(url, {
       headers: {
@@ -254,17 +272,26 @@ function mapAttomError(statusCode: number): {
   }
 }
 
-function buildLookupAddress(body: PropertyLookupRequest): string {
-  const street = (body.address || body.propertyAddress || body.address_line_1 || '').trim()
+function normalizeLookupAddress(body: PropertyLookupRequest): NormalizedLookupAddress {
+  const rawStreet = (body.address_line_1 || body.address1 || body.propertyAddress || body.address || '').trim()
+  const street = rawStreet.split(',')[0]?.trim().replace(/\s+/g, ' ') || ''
+  const city = (body.city || '').trim().replace(/\s+/g, ' ')
+  const state = (body.state || '').trim().toUpperCase()
+  const zip = (body.zip || '').trim().match(/\d{5}(?:-\d{4})?/)?.[0] || (body.zip || '').trim()
+  const address2 = (body.address2 || [city, [state, zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')).trim()
+  const missingFields = [
+    !street ? 'street address' : '',
+    !city ? 'city' : '',
+    !state ? 'state' : '',
+    !zip ? 'zip' : '',
+  ].filter(Boolean)
 
-  if (street.includes(',') || (!body.city && !body.state && !body.zip)) {
-    return street
+  return {
+    address1: street,
+    address2,
+    displayAddress: [street, address2].filter(Boolean).join(', '),
+    missingFields,
   }
-
-  return [street, body.city, body.state, body.zip]
-    .map((part) => String(part || '').trim())
-    .filter(Boolean)
-    .join(', ')
 }
 
 function normalizeAttomPayload(payload: unknown): NormalizedProperty {

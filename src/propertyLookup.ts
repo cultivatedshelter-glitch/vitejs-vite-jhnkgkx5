@@ -34,6 +34,24 @@ type PropertyLookupResponse = {
   message?: string
 }
 
+function normalizeAddressParts(address: string, city = '', state = '', zip = '') {
+  const addressLine1 = address.trim().replace(/\s+/g, ' ')
+  const cleanCity = city.trim().replace(/\s+/g, ' ')
+  const cleanState = state.trim().toUpperCase()
+  const cleanZip = zip.trim().match(/\d{5}(?:-\d{4})?/)?.[0] || zip.trim()
+  const address2 = [cleanCity, [cleanState, cleanZip].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+
+  return {
+    address: [addressLine1, address2].filter(Boolean).join(', '),
+    address_line_1: addressLine1,
+    city: cleanCity,
+    state: cleanState,
+    zip: cleanZip,
+    address1: addressLine1,
+    address2,
+  }
+}
+
 export function emptyPropertyFacts(): PropertyFacts {
   return {
     squareFeet: '',
@@ -47,14 +65,14 @@ export function emptyPropertyFacts(): PropertyFacts {
   }
 }
 
-export async function lookupPropertyFacts(address: string): Promise<PropertyFacts> {
+export async function lookupPropertyFacts(address: string, city = '', state = '', zip = ''): Promise<PropertyFacts> {
   const cleanAddress = address.trim()
 
   if (!cleanAddress) {
     throw new Error('Enter a property address before pulling property info.')
   }
 
-  const payload = { address: cleanAddress }
+  const payload = normalizeAddressParts(cleanAddress, city, state, zip)
   const functionUrl = `${supabaseUrl}/functions/v1/property-lookup`
   console.info('[property-lookup] request payload', payload)
   console.info('[property-lookup] env', {
