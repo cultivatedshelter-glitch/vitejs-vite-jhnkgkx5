@@ -503,6 +503,42 @@ type JobExecutionStepLearningRecord = {
 
 type JobExecutionStepAction = 'edited' | 'approved' | 'rejected' | 'added' | 'reordered'
 
+type JobPacketMetadata = {
+  id: string
+  lead_id: string
+  property_address: string
+  file_name: string
+  generated_at: string
+  generated_by: string
+  packet_status: string
+  approved_labor_hours: number
+  estimate_total: number
+  review_status: string
+}
+
+type AiResearchDraftStatus = 'ai_draft' | 'needs_review' | 'approved' | 'rejected'
+
+type AiResearchDraft = {
+  id: string
+  created_at?: string | null
+  lead_id: string
+  property_id: string
+  job_request_id: string
+  repair_item_id: string
+  research_topic: string
+  source_name: string
+  source_url: string
+  item_material_name: string
+  observed_price: number | null
+  availability_note: string
+  confidence: string
+  screenshot_file_reference: string
+  ai_notes: string
+  human_review_status: AiResearchDraftStatus
+  admin_notes: string
+  reviewed_at: string | null
+}
+
 type MaterialReviewAction =
   | 'approved'
   | 'rejected'
@@ -545,12 +581,19 @@ const EMPTY_MANUAL_MATERIAL_DRAFT: ManualMaterialDraft = {
 }
 
 const JOB_STEP_STATUSES: JobExecutionStepStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
+const AI_RESEARCH_DRAFT_STATUSES: AiResearchDraftStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
 
 const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
 const JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-learning-v1'
+const JOB_PACKET_METADATA_LOCAL_STORAGE_KEY = 'shelter-prep-job-packets-v1'
+const AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY = 'shelter-prep-ai-research-drafts-v1'
 
 function getJobScopeStorageKey(requestId: string) {
   return `${JOB_SCOPE_LOCAL_STORAGE_KEY}:${requestId}`
+}
+
+function getAiResearchDraftStorageKey(requestId: string) {
+  return `${AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY}:${requestId}`
 }
 
 function sortJobExecutionSteps(steps: JobExecutionStep[]) {
@@ -837,6 +880,20 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '-')
 }
 
+function slugForFileName(value: string) {
+  return safeFileName(
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'property'
+  )
+}
+
+function todayFileStamp() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 function storagePathFromPublicUrl(fileUrl = '', bucket = REQUEST_FILES_BUCKET) {
   const marker = `/storage/v1/object/public/${bucket}/`
   const index = fileUrl.indexOf(marker)
@@ -904,6 +961,119 @@ async function attachFilesToRequests(items: WorkRequest[]) {
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Not set'
   return `$${Number(value).toFixed(2)}`
+}
+
+function pdfSafeText(value: unknown) {
+  return String(value ?? '')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function escapePdfText(value: unknown) {
+  return pdfSafeText(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+}
+
+function wrapPdfLine(value: unknown, maxLength = 88) {
+  const words = pdfSafeText(value).split(' ').filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word
+    if (candidate.length > maxLength && current) {
+      lines.push(current)
+      current = word
+    } else {
+      current = candidate
+    }
+  }
+
+  if (current) lines.push(current)
+  return lines.length ? lines : ['']
+}
+
+function buildSimplePdfBlob(title: string, sections: Array<{ heading: string; lines: string[] }>) {
+  const pageLines: string[][] = []
+  let currentPage: string[] = []
+  const maxLinesPerPage = 48
+
+  const pushLine = (line: string) => {
+    if (currentPage.length >= maxLinesPerPage) {
+      pageLines.push(currentPage)
+      currentPage = []
+    }
+    currentPage.push(line)
+  }
+
+  pushLine(title)
+  pushLine('')
+
+  sections.forEach((section) => {
+    pushLine(section.heading.toUpperCase())
+    section.lines.forEach((line) => {
+      wrapPdfLine(line).forEach(pushLine)
+    })
+    pushLine('')
+  })
+
+  if (currentPage.length) pageLines.push(currentPage)
+
+  const objects: string[] = []
+  objects.push('<< /Type /Catalog /Pages 2 0 R >>')
+  objects.push(`<< /Type /Pages /Kids [${pageLines.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageLines.length} >>`)
+
+  pageLines.forEach((lines, index) => {
+    const pageObjectNumber = 3 + index * 2
+    const contentObjectNumber = pageObjectNumber + 1
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> /F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> >> >> /Contents ${contentObjectNumber} 0 R >>`
+    )
+
+    const content = [
+      'BT',
+      '50 742 Td',
+      '/F2 15 Tf',
+      `(${escapePdfText(lines[0] || title)}) Tj`,
+      '0 -22 Td',
+      '/F1 10 Tf',
+      '14 TL',
+      ...lines.slice(1).map((line) => `(${escapePdfText(line)}) Tj T*`),
+      'ET',
+    ].join('\n')
+
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)
+  })
+
+  let pdf = '%PDF-1.4\n'
+  const offsets: number[] = [0]
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length)
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+  })
+  const xrefOffset = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n`
+  pdf += '0000000000 65535 f \n'
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+  })
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
+
+  return new Blob([pdf], { type: 'application/pdf' })
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function propertyLookupStatusLabel(status: PropertyLookupStatus) {
@@ -1431,6 +1601,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [jobExecutionSteps, setJobExecutionSteps] = useState<JobExecutionStep[]>([])
   const [jobStepSavingId, setJobStepSavingId] = useState<string | null>(null)
   const [jobScopeMessage, setJobScopeMessage] = useState('AI-generated job steps are drafts until a human approves them.')
+  const [aiResearchDrafts, setAiResearchDrafts] = useState<AiResearchDraft[]>([])
+  const [aiResearchSavingId, setAiResearchSavingId] = useState<string | null>(null)
+  const [aiResearchMessage, setAiResearchMessage] = useState('AI Research Draft — Human Review Required')
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -2264,6 +2437,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         setEstimateResearchRows([])
         setEstimateIntelligence(null)
         setJobExecutionSteps([])
+        setAiResearchDrafts([])
       }
     } catch (error: any) {
       console.error(error)
@@ -3445,6 +3619,449 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     await Promise.all(renumbered.map((step) => saveJobExecutionStep(step, 'reordered', false)))
   }
 
+  function loadLocalAiResearchDrafts(request: WorkRequest) {
+    try {
+      return JSON.parse(
+        window.localStorage.getItem(getAiResearchDraftStorageKey(request.id)) || '[]'
+      ) as AiResearchDraft[]
+    } catch {
+      return []
+    }
+  }
+
+  function saveLocalAiResearchDrafts(request: WorkRequest, drafts: AiResearchDraft[]) {
+    window.localStorage.setItem(getAiResearchDraftStorageKey(request.id), JSON.stringify(drafts))
+  }
+
+  async function loadAiResearchDrafts(request: WorkRequest) {
+    try {
+      const { data, error } = await supabase
+        .from('ai_research_drafts')
+        .select('*')
+        .eq('job_request_id', request.id)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      const rows = (data || []) as AiResearchDraft[]
+      setAiResearchDrafts(rows)
+      setAiResearchMessage(
+        rows.length
+          ? 'AI Research Draft — Human Review Required. Approved research can support estimate assumptions.'
+          : 'AI Research Draft — Human Review Required. Add material, supplier, code, or safety research as draft evidence.'
+      )
+      return
+    } catch (error) {
+      console.warn('AI research drafts table unavailable; using local storage.', error)
+    }
+
+    const localRows = loadLocalAiResearchDrafts(request)
+    setAiResearchDrafts(localRows)
+    setAiResearchMessage(
+      localRows.length
+        ? 'Loaded local AI research drafts. Add the ai_research_drafts table when ready to sync across devices.'
+        : 'AI Research Draft — Human Review Required. Draft pricing does not affect totals until approved and attached.'
+    )
+  }
+
+  function updateLocalAiResearchDraft(id: string, changes: Partial<AiResearchDraft>) {
+    setAiResearchDrafts((prev) => {
+      const next = prev.map((draft) => (draft.id === id ? { ...draft, ...changes } : draft))
+      if (selectedEstimateRequest) saveLocalAiResearchDrafts(selectedEstimateRequest, next)
+      return next
+    })
+  }
+
+  function addAiResearchDraft() {
+    if (!selectedEstimateRequest) {
+      alert('Open a request in the estimate review first.')
+      return
+    }
+
+    const draft: AiResearchDraft = {
+      id: makeId(),
+      created_at: new Date().toISOString(),
+      lead_id: selectedEstimateRequest.id,
+      property_id: getRequestPropertyId(selectedEstimateRequest),
+      job_request_id: selectedEstimateRequest.id,
+      repair_item_id: getDefaultRepairItemId(selectedEstimateRequest, selectedEstimateRequest.workType),
+      research_topic: 'Material price / supplier reference',
+      source_name: '',
+      source_url: '',
+      item_material_name: '',
+      observed_price: null,
+      availability_note: '',
+      confidence: 'ai_draft',
+      screenshot_file_reference: '',
+      ai_notes: '',
+      human_review_status: 'ai_draft',
+      admin_notes: '',
+      reviewed_at: null,
+    }
+
+    const next = [draft, ...aiResearchDrafts]
+    setAiResearchDrafts(next)
+    saveLocalAiResearchDrafts(selectedEstimateRequest, next)
+    setAiResearchMessage('New AI research draft added. It will not affect estimate totals until approved and attached.')
+    void saveAiResearchDraft(draft, false)
+  }
+
+  async function saveAiResearchDraft(draft: AiResearchDraft, showMessage = true) {
+    if (!selectedEstimateRequest) return
+
+    const normalized: AiResearchDraft = {
+      ...draft,
+      lead_id: draft.lead_id || selectedEstimateRequest.id,
+      property_id: draft.property_id || getRequestPropertyId(selectedEstimateRequest),
+      job_request_id: draft.job_request_id || selectedEstimateRequest.id,
+      repair_item_id: draft.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, draft.item_material_name || draft.research_topic),
+      observed_price: draft.observed_price === null ? null : Number(draft.observed_price || 0),
+      reviewed_at:
+        draft.human_review_status === 'approved' || draft.human_review_status === 'rejected'
+          ? draft.reviewed_at || new Date().toISOString()
+          : draft.reviewed_at,
+    }
+
+    setAiResearchSavingId(draft.id)
+
+    try {
+      const { data, error } = await supabase
+        .from('ai_research_drafts')
+        .upsert(normalized)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const saved = data as AiResearchDraft
+      const next = aiResearchDrafts.map((item) => (item.id === saved.id ? saved : item))
+      setAiResearchDrafts(next)
+      saveLocalAiResearchDrafts(selectedEstimateRequest, next)
+      if (showMessage) setAiResearchMessage('AI research draft saved. Human approval is still required before use.')
+    } catch (error) {
+      console.warn('AI research draft saved locally only.', error)
+      const next = aiResearchDrafts.map((item) => (item.id === normalized.id ? normalized : item))
+      setAiResearchDrafts(next)
+      saveLocalAiResearchDrafts(selectedEstimateRequest, next)
+      if (showMessage) setAiResearchMessage('AI research draft saved locally. Add the ai_research_drafts table when ready to sync.')
+    } finally {
+      setAiResearchSavingId(null)
+    }
+  }
+
+  async function setAiResearchDraftStatus(draft: AiResearchDraft, status: AiResearchDraftStatus) {
+    if (status === 'rejected' && !draft.admin_notes.trim()) {
+      alert('Add admin notes before rejecting this research draft.')
+      return
+    }
+
+    const updated: AiResearchDraft = {
+      ...draft,
+      human_review_status: status,
+      confidence: status === 'approved' ? 'human_approved' : status === 'rejected' ? 'human_rejected' : draft.confidence,
+      reviewed_at: status === 'approved' || status === 'rejected' ? new Date().toISOString() : draft.reviewed_at,
+    }
+
+    updateLocalAiResearchDraft(draft.id, updated)
+    await saveAiResearchDraft(updated)
+  }
+
+  async function attachApprovedResearchToEstimate(draft: AiResearchDraft) {
+    if (!selectedEstimateRequest) return
+
+    if (draft.human_review_status !== 'approved') {
+      alert('Approve this research draft before attaching its price to the estimate.')
+      return
+    }
+
+    const price = Number(draft.observed_price || 0)
+    if (price <= 0) {
+      alert('Add an observed price before attaching this research to an estimate item.')
+      return
+    }
+
+    const itemName = draft.item_material_name.trim() || draft.research_topic.trim()
+    if (!itemName) {
+      alert('Add an item/material name first.')
+      return
+    }
+
+    try {
+      await ensureLeadExists(selectedEstimateRequest)
+
+      const insert = {
+        property_id: getRequestPropertyId(selectedEstimateRequest),
+        job_id: selectedEstimateRequest.id,
+        request_id: selectedEstimateRequest.id,
+        repair_item_id: draft.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, itemName),
+        lead_id: selectedEstimateRequest.id,
+        item_name: itemName,
+        category: draft.research_topic || 'AI research approved material',
+        source: draft.source_name || 'AI Research Draft',
+        source_url: draft.source_url || null,
+        quantity: 1,
+        unit_price: price,
+        original_unit_price: price,
+        total_price: price,
+        required_quantity: 1,
+        required_unit: 'item',
+        package_size: 1,
+        package_unit: 'item',
+        packages_needed: 1,
+        package_price: price,
+        extended_total: price,
+        quantity_reason: draft.ai_notes || draft.availability_note || 'Approved AI research draft attached as estimate assumption.',
+        scope_source: 'approved_ai_research_draft',
+        relevance_reason: `Approved research for ${selectedEstimateRequest.workType || 'current job'}: ${draft.research_topic}`,
+        source_status: 'approved_research',
+        review_status: 'needs_review',
+        confidence: 'approved_research_needs_estimate_review',
+        human_approved: false,
+        admin_notes: draft.admin_notes || null,
+      }
+
+      const { data, error } = await supabase.from('estimate_items').insert(insert).select().single()
+      if (error) throw error
+
+      setEstimateItems((prev) => [...prev, data as EstimateItem])
+      setAiResearchMessage('Approved research attached as a new estimate item. Review and approve the estimate line before proposal use.')
+    } catch (error) {
+      console.warn('Approved research attached locally only.', error)
+      const localItem: EstimateItem = {
+        id: makeId(),
+        lead_id: selectedEstimateRequest.id,
+        property_id: getRequestPropertyId(selectedEstimateRequest),
+        job_id: selectedEstimateRequest.id,
+        request_id: selectedEstimateRequest.id,
+        repair_item_id: draft.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, itemName),
+        item_name: itemName,
+        category: draft.research_topic || 'AI research approved material',
+        source: draft.source_name || 'AI Research Draft',
+        source_url: draft.source_url || null,
+        quantity: 1,
+        unit_price: price,
+        original_unit_price: price,
+        total_price: price,
+        required_quantity: 1,
+        required_unit: 'item',
+        package_size: 1,
+        package_unit: 'item',
+        packages_needed: 1,
+        package_price: price,
+        extended_total: price,
+        quantity_reason: draft.ai_notes || draft.availability_note || 'Approved AI research draft attached as estimate assumption.',
+        scope_source: 'approved_ai_research_draft',
+        relevance_reason: `Approved research for ${selectedEstimateRequest.workType || 'current job'}: ${draft.research_topic}`,
+        source_status: 'approved_research',
+        review_status: 'needs_review',
+        confidence: 'approved_research_needs_estimate_review',
+        human_approved: false,
+        admin_notes: draft.admin_notes || null,
+      }
+      setEstimateItems((prev) => [...prev, localItem])
+      setAiResearchMessage('Approved research attached locally as an estimate item. Save the line item after database tables are ready.')
+    }
+  }
+
+  function saveLocalJobPacketMetadata(metadata: JobPacketMetadata) {
+    try {
+      const existing = JSON.parse(window.localStorage.getItem(JOB_PACKET_METADATA_LOCAL_STORAGE_KEY) || '[]')
+      window.localStorage.setItem(
+        JOB_PACKET_METADATA_LOCAL_STORAGE_KEY,
+        JSON.stringify([metadata, ...existing].slice(0, 200))
+      )
+    } catch {
+      window.localStorage.setItem(JOB_PACKET_METADATA_LOCAL_STORAGE_KEY, JSON.stringify([metadata]))
+    }
+  }
+
+  async function saveJobPacketMetadata(metadata: JobPacketMetadata) {
+    saveLocalJobPacketMetadata(metadata)
+
+    try {
+      const { error } = await supabase.from('job_packets').insert({
+        lead_id: metadata.lead_id,
+        property_id: metadata.lead_id,
+        job_request_id: metadata.lead_id,
+        property_address: metadata.property_address,
+        file_name: metadata.file_name,
+        generated_at: metadata.generated_at,
+        generated_by: metadata.generated_by,
+        packet_status: metadata.packet_status,
+        approved_labor_hours: metadata.approved_labor_hours,
+        estimate_total: metadata.estimate_total,
+        review_status: metadata.review_status,
+        metadata,
+      })
+      if (error) throw error
+    } catch (error) {
+      console.warn('Job packet metadata saved locally only.', error)
+    }
+  }
+
+  async function getJobPacketRows(request: WorkRequest) {
+    const isCurrentRequest = selectedEstimateRequest?.id === request.id
+    let packetEstimateItems = isCurrentRequest ? currentScopeEstimateItems : [] as EstimateItem[]
+    let packetJobSteps = isCurrentRequest ? currentJobScopeSteps : [] as JobExecutionStep[]
+    let packetResearchDrafts = isCurrentRequest ? aiResearchDrafts : [] as AiResearchDraft[]
+
+    if (!isCurrentRequest) {
+      try {
+        const { data } = await supabase.from('estimate_items').select('*').eq('lead_id', request.id).order('created_at', { ascending: true })
+        packetEstimateItems = ((data || []) as EstimateItem[]).filter((item) => estimateItemMatchesCurrentScope(item, request))
+      } catch (error) {
+        console.warn('Could not load estimate items for packet.', error)
+      }
+
+      try {
+        const { data } = await supabase.from('job_execution_steps').select('*').eq('job_request_id', request.id).order('step_number', { ascending: true })
+        packetJobSteps = sortJobExecutionSteps((data || []) as JobExecutionStep[])
+      } catch (error) {
+        console.warn('Could not load job steps for packet; using local fallback.', error)
+        packetJobSteps = sortJobExecutionSteps(loadLocalJobScopeSteps(request))
+      }
+
+      try {
+        const { data } = await supabase.from('ai_research_drafts').select('*').eq('job_request_id', request.id).order('created_at', { ascending: false })
+        packetResearchDrafts = (data || []) as AiResearchDraft[]
+      } catch (error) {
+        console.warn('Could not load AI research drafts for packet; using local fallback.', error)
+        packetResearchDrafts = loadLocalAiResearchDrafts(request)
+      }
+    }
+
+    return { packetEstimateItems, packetJobSteps, packetResearchDrafts }
+  }
+
+  async function exportJobPacket(request: WorkRequest) {
+    const { packetEstimateItems, packetJobSteps, packetResearchDrafts } = await getJobPacketRows(request)
+    const packetApprovedSteps = packetJobSteps.filter((step) => step.status === 'approved')
+    const packetActiveSteps = packetJobSteps.filter((step) => step.status !== 'rejected')
+    const approvedLaborLow = packetApprovedSteps.reduce((sum, step) => sum + Number(step.estimated_hours_low || 0), 0)
+    const approvedLaborHigh = packetApprovedSteps.reduce((sum, step) => sum + Number(step.estimated_hours_high || 0), 0)
+    const materialSubtotal = packetEstimateItems
+      .filter((item) => !isEstimateItemRejected(item))
+      .reduce((sum, item) => sum + Number(item.total_price || 0), 0)
+    const totals = calculateEstimateTotals(
+      packetEstimateItems,
+      selectedEstimateRequest?.id === request.id ? estimateLaborCost : '0',
+      estimateMarkupPercent,
+      estimateContingencyPercent
+    )
+    const generatedAt = new Date().toISOString()
+    const fileName = `shelter-prep-${slugForFileName(request.propertyAddress)}-${todayFileStamp()}.pdf`
+    const humanReviewStatus =
+      packetEstimateItems.every((item) => item.human_approved || isEstimateItemRejected(item)) &&
+      packetActiveSteps.every((step) => step.status === 'approved')
+        ? 'human_reviewed'
+        : 'needs_review'
+
+    const fileLines = [...request.photos, ...request.documents].map((file) =>
+      `${file.type}: ${file.name}${file.url ? ` (${file.url})` : ''}`
+    )
+
+    const sections = [
+      {
+        heading: 'Property Information',
+        lines: [
+          `Address: ${request.propertyAddress}, ${request.city}, ${request.state} ${request.zip}`,
+          `Work type: ${request.workType}`,
+          `Urgency: ${request.urgency}`,
+          `Occupancy: ${request.occupancy}`,
+          `Timeline: ${request.timeline || 'Not provided'}`,
+          `Property type: ${request.propertyFacts?.propertyType || 'Not verified'}`,
+          `Generated: ${new Date(generatedAt).toLocaleString()}`,
+        ],
+      },
+      {
+        heading: 'Requester / Client Details',
+        lines: [
+          `Name: ${request.requesterName}`,
+          `Email: ${request.email}`,
+          `Phone: ${request.phone || 'Not provided'}`,
+        ],
+      },
+      {
+        heading: 'Work Request Description',
+        lines: [request.description || 'No description provided.'],
+      },
+      {
+        heading: 'Uploaded Files / Photo References',
+        lines: fileLines.length ? fileLines : ['No uploaded files or photo references found.'],
+      },
+      {
+        heading: 'Repair / Estimate Items',
+        lines: packetEstimateItems.length
+          ? packetEstimateItems.map((item) =>
+              `${item.human_approved ? 'Approved' : isEstimateItemRejected(item) ? 'Rejected' : 'Needs review'} - ${item.item_name}: qty ${Number(item.quantity || 0)} at ${money(Number(item.unit_price || 0))}, total ${money(Number(item.total_price || 0))}. Notes: ${item.admin_notes || item.quantity_reason || 'None'}`
+            )
+          : ['No repair or estimate line items found.'],
+      },
+      {
+        heading: 'Job Execution Scope Steps',
+        lines: packetJobSteps.length
+          ? packetJobSteps.flatMap((step) => [
+              `Step ${step.step_number}: ${step.title} (${step.status})`,
+              `Labor scope: ${step.labor_scope}`,
+              `Trade: ${step.trade}; Hours: ${step.estimated_hours_low}-${step.estimated_hours_high}`,
+              `Materials/tools: ${step.materials_tools || 'Not listed'}`,
+              `Equipment: ${step.equipment || 'Not listed'}`,
+              `Safety: ${step.safety_notes || 'None listed'}`,
+              `Access: ${step.access_notes || 'None listed'}`,
+              `Cleanup/disposal: ${step.cleanup_notes || 'None listed'}; Disposal needed: ${step.disposal_needed ? 'yes' : 'no'}`,
+              `Admin notes: ${step.admin_notes || 'None'}`,
+            ])
+          : ['No job execution scope steps found.'],
+      },
+      {
+        heading: 'AI Research Drafts',
+        lines: packetResearchDrafts.length
+          ? packetResearchDrafts.map((draft) =>
+              `${draft.human_review_status} - ${draft.research_topic}: ${draft.item_material_name || 'item not named'} at ${money(draft.observed_price)} from ${draft.source_name || 'source not listed'} ${draft.source_url || ''}. Notes: ${draft.ai_notes || draft.admin_notes || 'None'}`
+            )
+          : ['No AI research drafts found.'],
+      },
+      {
+        heading: 'Estimate Summary',
+        lines: [
+          `Materials subtotal: ${money(materialSubtotal)}`,
+          `Approved labor hours: ${approvedLaborLow.toFixed(1)}-${approvedLaborHigh.toFixed(1)}`,
+          `Labor total: ${money(totals.labor)}`,
+          `Markup: ${totals.markup}% = ${money(totals.markupDollars)}`,
+          `Contingency: ${totals.contingency}% = ${money(totals.contingencyDollars)}`,
+          `Standard estimate: ${money(totals.standardTotal)}`,
+          `Suggested range: ${money(totals.lowTotal)} - ${money(totals.premiumTotal)}`,
+        ],
+      },
+      {
+        heading: 'Human Review Status / Admin Notes',
+        lines: [
+          `Packet review status: ${humanReviewStatus}`,
+          `Estimate notes: ${selectedEstimateRequest?.id === request.id ? estimateNotes : 'Open Estimate Review for current notes.'}`,
+          'AI drafts are not final approval, client communication, purchase authorization, or proposal delivery.',
+        ],
+      },
+    ]
+
+    const blob = buildSimplePdfBlob('Shelter Prep Job Packet', sections)
+    downloadBlob(blob, fileName)
+
+    await saveJobPacketMetadata({
+      id: makeId(),
+      lead_id: request.id,
+      property_address: request.propertyAddress,
+      file_name: fileName,
+      generated_at: generatedAt,
+      generated_by: 'admin',
+      packet_status: 'generated',
+      approved_labor_hours: approvedLaborHigh,
+      estimate_total: totals.standardTotal,
+      review_status: humanReviewStatus,
+    })
+
+    alert(`Job packet exported: ${fileName}`)
+  }
+
   async function openEstimateReview(request: WorkRequest) {
     setActiveTab('estimates')
     setSelectedEstimateRequest(request)
@@ -3474,6 +4091,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateIntelligence(null)
       await applyBestLaborRateForRequest(request, false)
       await loadJobExecutionScope(request)
+      await loadAiResearchDrafts(request)
 
       if (!items || items.length === 0) {
         alert('No estimate items found yet. Click AI Research Materials on this request first, or add manual line items in the estimator.')
@@ -5980,6 +6598,19 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       type="button"
       style={{
         ...styles.wideButton,
+        background: '#ffffff',
+        color: '#0f542d',
+        border: '1px solid #0f542d',
+      }}
+      onClick={() => exportJobPacket(request)}
+    >
+      Export Job Packet
+    </button>
+
+    <button
+      type="button"
+      style={{
+        ...styles.wideButton,
         background: '#173425',
         color: '#ffffff',
         border: '1px solid #173425',
@@ -7175,6 +7806,176 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 </div>
 
                 <div style={styles.aiBox}>
+                  <div style={styles.buttonRow}>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ marginTop: 0 }}>AI Research Draft</h3>
+                      <p style={styles.small}>
+                        AI Research Draft — Human Review Required. Draft research cannot approve pricing, send proposals, buy materials, or email clients.
+                      </p>
+                    </div>
+                    <button type="button" style={styles.primaryButton} onClick={addAiResearchDraft}>
+                      + Add Research Draft
+                    </button>
+                  </div>
+
+                  <div style={styles.noticeBox}>
+                    {aiResearchMessage} Approved research can be attached to estimate assumptions; rejected research does not affect totals.
+                  </div>
+
+                  {aiResearchDrafts.length === 0 && (
+                    <div style={styles.empty}>
+                      No AI research drafts yet. Add material prices, supplier links, product notes, code/safety references, or assumptions for review.
+                    </div>
+                  )}
+
+                  {aiResearchDrafts.map((draft) => (
+                    <div
+                      key={draft.id}
+                      style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}
+                    >
+                      <div style={styles.badgeRow}>
+                        <span style={draft.human_review_status === 'rejected' ? styles.badgeDanger : styles.badge}>
+                          {draft.human_review_status.replace(/_/g, ' ')}
+                        </span>
+                        <span style={styles.badgeMuted}>{draft.confidence || 'needs_review'}</span>
+                        {draft.reviewed_at && <span style={styles.badgeMuted}>Reviewed {new Date(draft.reviewed_at).toLocaleDateString()}</span>}
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <input
+                          style={styles.input}
+                          value={draft.research_topic}
+                          placeholder="Research topic"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { research_topic: event.target.value })}
+                        />
+                        <input
+                          style={styles.input}
+                          value={draft.item_material_name}
+                          placeholder="Item / material name"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { item_material_name: event.target.value })}
+                        />
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                        <input
+                          style={styles.input}
+                          value={draft.source_name}
+                          placeholder="Source name"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { source_name: event.target.value })}
+                        />
+                        <input
+                          style={styles.input}
+                          value={draft.source_url}
+                          placeholder="Source URL"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { source_url: event.target.value })}
+                        />
+                        <input
+                          style={styles.input}
+                          type="number"
+                          value={draft.observed_price ?? ''}
+                          placeholder="Observed price"
+                          onChange={(event) =>
+                            updateLocalAiResearchDraft(draft.id, {
+                              observed_price: event.target.value === '' ? null : Number(event.target.value),
+                            })
+                          }
+                        />
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <input
+                          style={styles.input}
+                          value={draft.availability_note}
+                          placeholder="Availability note"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { availability_note: event.target.value })}
+                        />
+                        <input
+                          style={styles.input}
+                          value={draft.screenshot_file_reference}
+                          placeholder="Screenshot / file reference"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { screenshot_file_reference: event.target.value })}
+                        />
+                      </div>
+
+                      <textarea
+                        style={{ ...styles.input, minHeight: 86 }}
+                        value={draft.ai_notes}
+                        placeholder="AI notes, assumptions, code/safety notes, supplier notes"
+                        onChange={(event) => updateLocalAiResearchDraft(draft.id, { ai_notes: event.target.value })}
+                      />
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <select
+                          style={styles.input}
+                          value={draft.human_review_status}
+                          onChange={(event) =>
+                            updateLocalAiResearchDraft(draft.id, {
+                              human_review_status: event.target.value as AiResearchDraftStatus,
+                            })
+                          }
+                        >
+                          {AI_RESEARCH_DRAFT_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          style={styles.input}
+                          value={draft.admin_notes}
+                          placeholder="Admin notes / rejection reason"
+                          onChange={(event) => updateLocalAiResearchDraft(draft.id, { admin_notes: event.target.value })}
+                        />
+                      </div>
+
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.primaryButton}
+                          disabled={aiResearchSavingId === draft.id}
+                          onClick={() => saveAiResearchDraft(draft)}
+                        >
+                          {aiResearchSavingId === draft.id ? 'Saving...' : 'Save Research'}
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={aiResearchSavingId === draft.id || draft.human_review_status === 'approved'}
+                          onClick={() => setAiResearchDraftStatus(draft, 'approved')}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={aiResearchSavingId === draft.id || draft.human_review_status === 'rejected'}
+                          onClick={() => setAiResearchDraftStatus(draft, 'rejected')}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={draft.human_review_status !== 'approved'}
+                          onClick={() => attachApprovedResearchToEstimate(draft)}
+                        >
+                          Attach Price to Estimate
+                        </button>
+                        {draft.source_url && (
+                          <button
+                            type="button"
+                            style={styles.linkButton}
+                            onClick={() => window.open(draft.source_url, '_blank')}
+                          >
+                            Open Source
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={styles.aiBox}>
                   <strong>Labor Rate Auto-Fill</strong>
                   <p style={styles.small}>{estimateLaborMessage}</p>
 
@@ -7323,6 +8124,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   </button>
                   <button style={styles.primaryButton} onClick={generateEstimatePdf}>
                     Generate Draft PDF
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.primaryButton}
+                    onClick={() => selectedEstimateRequest && exportJobPacket(selectedEstimateRequest)}
+                  >
+                    Export Job Packet
                   </button>
                   <button style={styles.outlineButton} onClick={generateInvoicePdf}>
                     Generate Draft Invoice
