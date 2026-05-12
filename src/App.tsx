@@ -463,6 +463,46 @@ type EstimateItem = {
   human_approved: boolean | null
 }
 
+type JobExecutionStepStatus = 'ai_draft' | 'needs_review' | 'approved' | 'rejected'
+
+type JobExecutionStep = {
+  id: string
+  created_at?: string | null
+  property_id: string
+  job_request_id: string
+  repair_item_id: string
+  step_number: number
+  title: string
+  labor_scope: string
+  trade: string
+  estimated_hours_low: number
+  estimated_hours_high: number
+  materials_tools: string
+  equipment: string
+  safety_notes: string
+  access_notes: string
+  cleanup_notes: string
+  disposal_needed: boolean
+  confidence: string
+  status: JobExecutionStepStatus
+  admin_notes: string
+}
+
+type JobExecutionStepLearningRecord = {
+  work_type: string
+  repair_description_context: string
+  step_title: string
+  labor_scope: string
+  approved_hours: number | null
+  rejected_reason: string | null
+  admin_notes: string | null
+  confidence_before: string
+  confidence_after: string
+  reviewed_at: string
+}
+
+type JobExecutionStepAction = 'edited' | 'approved' | 'rejected' | 'added' | 'reordered'
+
 type MaterialReviewAction =
   | 'approved'
   | 'rejected'
@@ -502,6 +542,195 @@ const EMPTY_MANUAL_MATERIAL_DRAFT: ManualMaterialDraft = {
   notes: '',
   reviewStatus: 'needs_review',
   repairItemId: '',
+}
+
+const JOB_STEP_STATUSES: JobExecutionStepStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
+
+const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
+const JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-learning-v1'
+
+function getJobScopeStorageKey(requestId: string) {
+  return `${JOB_SCOPE_LOCAL_STORAGE_KEY}:${requestId}`
+}
+
+function sortJobExecutionSteps(steps: JobExecutionStep[]) {
+  return [...steps].sort((a, b) => a.step_number - b.step_number)
+}
+
+function normalizeJobScopeTokenText(value = '') {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function jobScopeMemoryMatchesCurrentRequest(memory: JobExecutionStepLearningRecord, request: WorkRequest) {
+  const requestText = normalizeJobScopeTokenText([request.workType, request.description].join(' '))
+  const memoryText = normalizeJobScopeTokenText(
+    [memory.work_type, memory.repair_description_context, memory.step_title, memory.labor_scope].join(' ')
+  )
+  const requestTokens = requestText.split(' ').filter((word) => word.length > 4)
+  if (!requestTokens.length || !memoryText) return false
+
+  const matchedTokens = requestTokens.filter((word) => memoryText.includes(word))
+  return matchedTokens.length >= Math.min(2, requestTokens.length)
+}
+
+function buildJobExecutionSteps(request: WorkRequest, learnedRecords: JobExecutionStepLearningRecord[] = []) {
+  const propertyId = getRequestPropertyId(request)
+  const repairItemId = getDefaultRepairItemId(request, request.workType || request.description)
+  const text = normalizeJobScopeTokenText([request.workType, request.description].join(' '))
+  const now = new Date().toISOString()
+
+  const baseSteps: Array<Omit<JobExecutionStep, 'id' | 'property_id' | 'job_request_id' | 'repair_item_id' | 'created_at'>> = [
+    {
+      step_number: 1,
+      title: 'Protect work area',
+      labor_scope: 'Mask floors, counters, and adjacent finishes; set dust control before work begins.',
+      trade: 'Prep / general labor',
+      estimated_hours_low: 0.5,
+      estimated_hours_high: 1,
+      materials_tools: 'Plastic, tape, drop cloths, painter paper',
+      equipment: 'Shop vacuum, step ladder',
+      safety_notes: 'Keep walk paths clear and tape down trip edges.',
+      access_notes: 'Confirm occupied areas, pets, keys, and work hours before setup.',
+      cleanup_notes: 'Remove temporary protection after dusty work is complete.',
+      disposal_needed: false,
+      confidence: 'ai_draft_scope_template',
+      status: 'ai_draft',
+      admin_notes: '',
+    },
+  ]
+
+  if (text.includes('cabinet') || text.includes('demo') || text.includes('remove')) {
+    baseSteps.push({
+      step_number: baseSteps.length + 1,
+      title: text.includes('cabinet') ? 'Remove upper cabinets' : 'Remove existing material',
+      labor_scope: 'Detach existing items, remove fasteners, lower safely, and limit wall or finish damage where possible.',
+      trade: 'Carpenter / demo',
+      estimated_hours_low: 2,
+      estimated_hours_high: 4,
+      materials_tools: 'Drill, pry bar, utility knife, fastener bits, disposal bags',
+      equipment: 'Helper, ladder, hand truck as needed',
+      safety_notes: 'Verify electrical, plumbing, hidden fasteners, and load before removal.',
+      access_notes: 'Confirm parking/load-out path and whether items are saved or discarded.',
+      cleanup_notes: 'Stage debris away from active work and sweep loose fasteners.',
+      disposal_needed: true,
+      confidence: 'ai_draft_scope_template',
+      status: 'ai_draft',
+      admin_notes: '',
+    })
+  }
+
+  if (text.includes('drywall') || text.includes('patch') || text.includes('cabinet') || text.includes('wall')) {
+    baseSteps.push({
+      step_number: baseSteps.length + 1,
+      title: 'Wall patch and prep',
+      labor_scope: 'Patch fastener holes, repair drywall damage, tape as needed, sand smooth, and prep for finish.',
+      trade: 'Drywall / painter',
+      estimated_hours_low: 2,
+      estimated_hours_high: 5,
+      materials_tools: 'Joint compound, tape, sanding block, primer-ready patch material',
+      equipment: 'Sanding pole, shop vacuum',
+      safety_notes: 'Use dust control and eye protection while sanding.',
+      access_notes: 'Allow return access if compound requires dry time between coats.',
+      cleanup_notes: 'Vacuum sanding dust and wipe adjacent surfaces.',
+      disposal_needed: false,
+      confidence: 'ai_draft_scope_template',
+      status: 'ai_draft',
+      admin_notes: '',
+    })
+  }
+
+  if (text.includes('paint') || text.includes('patch') || text.includes('wall') || text.includes('cabinet')) {
+    baseSteps.push({
+      step_number: baseSteps.length + 1,
+      title: 'Prime and paint affected wall area',
+      labor_scope: 'Spot prime patched areas, paint to blend, or repaint full wall when touch-up will not look clean.',
+      trade: 'Painter',
+      estimated_hours_low: 2,
+      estimated_hours_high: 4,
+      materials_tools: 'Primer, paint, rollers, brushes, tray liners',
+      equipment: 'Drop cloths, ladder',
+      safety_notes: 'Ventilate work area and follow product dry-time guidance.',
+      access_notes: 'Confirm paint color, sheen, and whether owner has attic/garage stock paint.',
+      cleanup_notes: 'Clean tools and remove paint waste from finished surfaces.',
+      disposal_needed: false,
+      confidence: 'ai_draft_scope_template',
+      status: 'ai_draft',
+      admin_notes: '',
+    })
+  }
+
+  if (!baseSteps.some((step) => step.title !== 'Protect work area')) {
+    baseSteps.push({
+      step_number: 2,
+      title: 'Complete repair work',
+      labor_scope: 'Perform the requested repair using current job notes, photos, and site conditions; adjust sequence after field verification.',
+      trade: request.workType || 'General repair',
+      estimated_hours_low: 2,
+      estimated_hours_high: 6,
+      materials_tools: 'Trade-specific hand tools and approved materials',
+      equipment: 'Ladder, power tools, or specialty equipment as conditions require',
+      safety_notes: 'Verify utilities, structural risks, moisture, and occupied-area hazards before work.',
+      access_notes: 'Confirm access window and any homeowner/agent coordination needs.',
+      cleanup_notes: 'Keep work area broom clean between visits.',
+      disposal_needed: false,
+      confidence: 'ai_draft_general_scope',
+      status: 'ai_draft',
+      admin_notes: '',
+    })
+  }
+
+  const matchingLearning = learnedRecords
+    .filter((record) => jobScopeMemoryMatchesCurrentRequest(record, request))
+    .slice(0, 2)
+    .map((record) => ({
+      step_number: 0,
+      title: record.step_title,
+      labor_scope: record.labor_scope,
+      trade: request.workType || 'General repair',
+      estimated_hours_low: Math.max(0, Number(record.approved_hours || 0) * 0.8),
+      estimated_hours_high: Number(record.approved_hours || 0) || 1,
+      materials_tools: 'Use learned scope as a review prompt; verify current materials before approval.',
+      equipment: 'Verify against current site conditions.',
+      safety_notes: 'Apply only if current scope matches the learned repair context.',
+      access_notes: 'Confirm current job access before relying on memory.',
+      cleanup_notes: 'Match cleanup to current scope.',
+      disposal_needed: false,
+      confidence: 'learned_scope_match_needs_review',
+      status: 'ai_draft' as JobExecutionStepStatus,
+      admin_notes: `Learned from prior review on ${new Date(record.reviewed_at).toLocaleDateString()}.`,
+    }))
+
+  const cleanupStep: Omit<JobExecutionStep, 'id' | 'property_id' | 'job_request_id' | 'repair_item_id' | 'created_at'> = {
+    step_number: baseSteps.length + matchingLearning.length + 1,
+    title: 'Clean up and disposal',
+    labor_scope: 'Remove debris, vacuum dust, wipe affected surfaces, and haul away removed materials if required.',
+    trade: 'General labor',
+    estimated_hours_low: 1,
+    estimated_hours_high: 2,
+    materials_tools: 'Vacuum, trash bags, cleaning wipes, disposal containers',
+    equipment: 'Hand truck or truck access if hauling is included',
+    safety_notes: 'Bag sharp debris and keep dust contained during load-out.',
+    access_notes: 'Confirm disposal path, parking, and dump/haul-away responsibility.',
+    cleanup_notes: 'Leave work area clean enough for owner/client walkthrough.',
+    disposal_needed: true,
+    confidence: 'ai_draft_scope_template',
+    status: 'ai_draft',
+    admin_notes: '',
+  }
+
+  return [...baseSteps, ...matchingLearning, cleanupStep].map((step, index) => ({
+    ...step,
+    id: makeId(),
+    created_at: now,
+    property_id: propertyId,
+    job_request_id: request.id,
+    repair_item_id: repairItemId,
+    step_number: index + 1,
+  }))
 }
 
 type EstimateResearchRow = {
@@ -1199,6 +1428,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [showRejectedEstimateItems, setShowRejectedEstimateItems] = useState(false)
   const [showManualMaterialForm, setShowManualMaterialForm] = useState(false)
   const [manualMaterialDraft, setManualMaterialDraft] = useState<ManualMaterialDraft>(EMPTY_MANUAL_MATERIAL_DRAFT)
+  const [jobExecutionSteps, setJobExecutionSteps] = useState<JobExecutionStep[]>([])
+  const [jobStepSavingId, setJobStepSavingId] = useState<string | null>(null)
+  const [jobScopeMessage, setJobScopeMessage] = useState('AI-generated job steps are drafts until a human approves them.')
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -2031,6 +2263,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         setEstimateItems([])
         setEstimateResearchRows([])
         setEstimateIntelligence(null)
+        setJobExecutionSteps([])
       }
     } catch (error: any) {
       console.error(error)
@@ -2934,6 +3167,284 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
+  function loadLocalJobScopeLearning() {
+    try {
+      return JSON.parse(
+        window.localStorage.getItem(JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY) || '[]'
+      ) as JobExecutionStepLearningRecord[]
+    } catch {
+      return []
+    }
+  }
+
+  function loadLocalJobScopeSteps(request: WorkRequest) {
+    try {
+      return JSON.parse(
+        window.localStorage.getItem(getJobScopeStorageKey(request.id)) || '[]'
+      ) as JobExecutionStep[]
+    } catch {
+      return []
+    }
+  }
+
+  function saveLocalJobScopeSteps(request: WorkRequest, steps: JobExecutionStep[]) {
+    window.localStorage.setItem(
+      getJobScopeStorageKey(request.id),
+      JSON.stringify(sortJobExecutionSteps(steps))
+    )
+  }
+
+  function refreshJobScopeLaborTotals(steps: JobExecutionStep[]) {
+    const approvedSteps = steps.filter((step) => step.status === 'approved')
+    const activeSteps = steps.filter((step) => step.status !== 'rejected')
+    const sourceSteps = approvedSteps.length ? approvedSteps : activeSteps
+    const highHours = sourceSteps.reduce((sum, step) => sum + Number(step.estimated_hours_high || 0), 0)
+
+    if (approvedSteps.length > 0 && highHours > 0) {
+      setEstimateLaborUnits(String(Math.round(highHours * 100) / 100))
+      setJobScopeMessage(
+        `Approved job scope is feeding ${Math.round(highHours * 100) / 100} labor hours into the estimate summary.`
+      )
+    }
+  }
+
+  async function loadJobExecutionScope(request: WorkRequest, createDraftIfMissing = true) {
+    const learnedRecords = loadLocalJobScopeLearning().filter((record) =>
+      jobScopeMemoryMatchesCurrentRequest(record, request)
+    )
+
+    try {
+      const { data, error } = await supabase
+        .from('job_execution_steps')
+        .select('*')
+        .eq('job_request_id', request.id)
+        .order('step_number', { ascending: true })
+
+      if (error) throw error
+
+      const rows = sortJobExecutionSteps((data || []) as JobExecutionStep[])
+      if (rows.length) {
+        setJobExecutionSteps(rows)
+        setJobScopeMessage('Loaded saved job execution scope. Human approval is still required for draft steps.')
+        refreshJobScopeLaborTotals(rows)
+        return
+      }
+    } catch (error) {
+      console.warn('Job execution scope table unavailable; using local scope storage.', error)
+    }
+
+    const localRows = sortJobExecutionSteps(loadLocalJobScopeSteps(request))
+    if (localRows.length) {
+      setJobExecutionSteps(localRows)
+      setJobScopeMessage('Loaded locally saved job execution scope. Add the database table when ready to sync across devices.')
+      refreshJobScopeLaborTotals(localRows)
+      return
+    }
+
+    if (!createDraftIfMissing) {
+      setJobExecutionSteps([])
+      return
+    }
+
+    const draftSteps = buildJobExecutionSteps(request, learnedRecords)
+    setJobExecutionSteps(draftSteps)
+    saveLocalJobScopeSteps(request, draftSteps)
+    setJobScopeMessage('AI-generated draft steps created locally. Review, edit, and approve before final estimate/proposal.')
+    refreshJobScopeLaborTotals(draftSteps)
+  }
+
+  async function generateJobExecutionScope(request: WorkRequest) {
+    const draftSteps = buildJobExecutionSteps(request, loadLocalJobScopeLearning())
+    setJobExecutionSteps(draftSteps)
+    saveLocalJobScopeSteps(request, draftSteps)
+    setJobScopeMessage('New AI-generated job execution draft created. Human approval required before final use.')
+
+    try {
+      await ensureLeadExists(request)
+      const { error } = await supabase.from('job_execution_steps').insert(draftSteps)
+      if (error) throw error
+    } catch (error) {
+      console.warn('Job execution scope was saved locally only.', error)
+    }
+  }
+
+  function updateLocalJobExecutionStep(id: string, changes: Partial<JobExecutionStep>) {
+    setJobExecutionSteps((prev) => {
+      const next = sortJobExecutionSteps(
+        prev.map((step) => (step.id === id ? { ...step, ...changes } : step))
+      )
+      if (selectedEstimateRequest) saveLocalJobScopeSteps(selectedEstimateRequest, next)
+      refreshJobScopeLaborTotals(next)
+      return next
+    })
+  }
+
+  function addManualJobExecutionStep() {
+    if (!selectedEstimateRequest) {
+      alert('Open a request in the estimate review first.')
+      return
+    }
+
+    const nextStep: JobExecutionStep = {
+      id: makeId(),
+      created_at: new Date().toISOString(),
+      property_id: getRequestPropertyId(selectedEstimateRequest),
+      job_request_id: selectedEstimateRequest.id,
+      repair_item_id: getDefaultRepairItemId(selectedEstimateRequest, selectedEstimateRequest.workType),
+      step_number: jobExecutionSteps.length + 1,
+      title: 'Manual scope step',
+      labor_scope: 'Describe the labor needed for this step.',
+      trade: selectedEstimateRequest.workType || 'General labor',
+      estimated_hours_low: 1,
+      estimated_hours_high: 2,
+      materials_tools: '',
+      equipment: '',
+      safety_notes: '',
+      access_notes: '',
+      cleanup_notes: '',
+      disposal_needed: false,
+      confidence: 'human_added',
+      status: 'needs_review',
+      admin_notes: '',
+    }
+
+    const nextSteps = sortJobExecutionSteps([...jobExecutionSteps, nextStep])
+    setJobExecutionSteps(nextSteps)
+    saveLocalJobScopeSteps(selectedEstimateRequest, nextSteps)
+    setJobScopeMessage('Manual job step added. Edit it, then approve when ready.')
+    void saveJobExecutionStep(nextStep, 'added', false)
+  }
+
+  async function recordJobStepLearning(
+    step: JobExecutionStep,
+    action: JobExecutionStepAction,
+    confidenceBefore = step.confidence
+  ) {
+    const request = selectedEstimateRequest
+    const record: JobExecutionStepLearningRecord = {
+      work_type: request?.workType || step.trade || 'General repair',
+      repair_description_context: getCurrentScopeReason(request),
+      step_title: step.title,
+      labor_scope: step.labor_scope,
+      approved_hours: action === 'rejected' ? null : Number(step.estimated_hours_high || 0),
+      rejected_reason: action === 'rejected' ? step.admin_notes || 'Rejected by admin' : null,
+      admin_notes: step.admin_notes || null,
+      confidence_before: confidenceBefore || 'ai_draft',
+      confidence_after: step.confidence || (action === 'rejected' ? 'human_rejected' : 'human_reviewed'),
+      reviewed_at: new Date().toISOString(),
+    }
+
+    try {
+      const { error } = await supabase.from('job_execution_step_learning').insert(record)
+      if (error) throw error
+    } catch (error) {
+      console.warn('Job step learning table unavailable; storing local learning record.', error)
+      const existing = loadLocalJobScopeLearning()
+      window.localStorage.setItem(
+        JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY,
+        JSON.stringify([record, ...existing].slice(0, 200))
+      )
+    }
+  }
+
+  async function saveJobExecutionStep(
+    step: JobExecutionStep,
+    action: JobExecutionStepAction = 'edited',
+    logLearning = true
+  ) {
+    if (!selectedEstimateRequest) return
+
+    setJobStepSavingId(step.id)
+    const confidenceBefore = step.confidence
+    const normalized: JobExecutionStep = {
+      ...step,
+      property_id: step.property_id || getRequestPropertyId(selectedEstimateRequest),
+      job_request_id: step.job_request_id || selectedEstimateRequest.id,
+      repair_item_id: step.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, step.title),
+      estimated_hours_low: Number(step.estimated_hours_low || 0),
+      estimated_hours_high: Number(step.estimated_hours_high || 0),
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('job_execution_steps')
+        .upsert(normalized)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const savedStep = data as JobExecutionStep
+      const nextSteps = sortJobExecutionSteps(
+        jobExecutionSteps.map((existing) => (existing.id === savedStep.id ? savedStep : existing))
+      )
+      setJobExecutionSteps(nextSteps)
+      saveLocalJobScopeSteps(selectedEstimateRequest, nextSteps)
+      refreshJobScopeLaborTotals(nextSteps)
+
+      if (logLearning) await recordJobStepLearning(savedStep, action, confidenceBefore)
+      setJobScopeMessage('Job step saved. Approved steps count toward the labor scope total.')
+    } catch (error) {
+      console.warn('Job step saved locally only.', error)
+      const nextSteps = sortJobExecutionSteps(
+        jobExecutionSteps.map((existing) => (existing.id === normalized.id ? normalized : existing))
+      )
+      setJobExecutionSteps(nextSteps)
+      saveLocalJobScopeSteps(selectedEstimateRequest, nextSteps)
+      refreshJobScopeLaborTotals(nextSteps)
+      if (logLearning) await recordJobStepLearning(normalized, action, confidenceBefore)
+      setJobScopeMessage('Job step saved locally. Add the job_execution_steps table when ready to sync across devices.')
+    } finally {
+      setJobStepSavingId(null)
+    }
+  }
+
+  async function approveJobExecutionStep(step: JobExecutionStep) {
+    const updated: JobExecutionStep = {
+      ...step,
+      status: 'approved',
+      confidence: 'human_approved',
+    }
+    updateLocalJobExecutionStep(step.id, updated)
+    await saveJobExecutionStep(updated, 'approved')
+  }
+
+  async function rejectJobExecutionStep(step: JobExecutionStep) {
+    if (!step.admin_notes.trim()) {
+      alert('Add an admin note or rejection reason before rejecting this step.')
+      return
+    }
+
+    const updated: JobExecutionStep = {
+      ...step,
+      status: 'rejected',
+      confidence: 'human_rejected',
+    }
+    updateLocalJobExecutionStep(step.id, updated)
+    await saveJobExecutionStep(updated, 'rejected')
+  }
+
+  async function moveJobExecutionStep(id: string, direction: -1 | 1) {
+    if (!selectedEstimateRequest) return
+    const sorted = sortJobExecutionSteps(jobExecutionSteps)
+    const index = sorted.findIndex((step) => step.id === id)
+    const nextIndex = index + direction
+    if (index < 0 || nextIndex < 0 || nextIndex >= sorted.length) return
+
+    const next = [...sorted]
+    const [moved] = next.splice(index, 1)
+    if (!moved) return
+    next.splice(nextIndex, 0, moved)
+    const renumbered = next.map((step, stepIndex) => ({ ...step, step_number: stepIndex + 1 }))
+
+    setJobExecutionSteps(renumbered)
+    saveLocalJobScopeSteps(selectedEstimateRequest, renumbered)
+    refreshJobScopeLaborTotals(renumbered)
+    setJobScopeMessage('Step order updated. Save any edited steps when ready.')
+
+    await Promise.all(renumbered.map((step) => saveJobExecutionStep(step, 'reordered', false)))
+  }
+
   async function openEstimateReview(request: WorkRequest) {
     setActiveTab('estimates')
     setSelectedEstimateRequest(request)
@@ -2962,6 +3473,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateResearchRows((researchRows || []) as EstimateResearchRow[])
       setEstimateIntelligence(null)
       await applyBestLaborRateForRequest(request, false)
+      await loadJobExecutionScope(request)
 
       if (!items || items.length === 0) {
         alert('No estimate items found yet. Click AI Research Materials on this request first, or add manual line items in the estimator.')
@@ -2997,6 +3509,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     })
 
     setEstimateIntelligence(result)
+    await loadJobExecutionScope(request)
     setEstimateLaborUnits(String(result.laborHours))
     setEstimateLaborCost(String(result.laborSubtotal))
     setEstimateMinimumCharge('0')
@@ -4317,6 +4830,38 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   )
 
   const rejectedEstimateCount = estimateItems.filter(isEstimateItemRejected).length
+
+  const currentJobScopeSteps = useMemo(
+    () =>
+      sortJobExecutionSteps(
+        jobExecutionSteps.filter((step) =>
+          selectedEstimateRequest ? step.job_request_id === selectedEstimateRequest.id : true
+        )
+      ),
+    [jobExecutionSteps, selectedEstimateRequest]
+  )
+
+  const activeJobScopeSteps = currentJobScopeSteps.filter((step) => step.status !== 'rejected')
+  const approvedJobScopeSteps = currentJobScopeSteps.filter((step) => step.status === 'approved')
+  const jobScopeApprovedLowHours = approvedJobScopeSteps.reduce(
+    (sum, step) => sum + Number(step.estimated_hours_low || 0),
+    0
+  )
+  const jobScopeApprovedHighHours = approvedJobScopeSteps.reduce(
+    (sum, step) => sum + Number(step.estimated_hours_high || 0),
+    0
+  )
+  const jobScopeCurrentLowHours = activeJobScopeSteps.reduce(
+    (sum, step) => sum + Number(step.estimated_hours_low || 0),
+    0
+  )
+  const jobScopeCurrentHighHours = activeJobScopeSteps.reduce(
+    (sum, step) => sum + Number(step.estimated_hours_high || 0),
+    0
+  )
+  const jobScopeLaborHoursLabel = approvedJobScopeSteps.length
+    ? `${jobScopeApprovedLowHours.toFixed(1)}-${jobScopeApprovedHighHours.toFixed(1)} approved hrs`
+    : `${jobScopeCurrentLowHours.toFixed(1)}-${jobScopeCurrentHighHours.toFixed(1)} current draft hrs`
 
   const estimateTotals = calculateEstimateTotals(
     currentScopeEstimateItems,
@@ -6422,6 +6967,214 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 )}
 
                 <div style={styles.aiBox}>
+                  <div style={styles.buttonRow}>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ marginTop: 0 }}>Job Execution Scope</h3>
+                      <p style={styles.small}>
+                        AI-generated scope steps are drafts. Approve steps before they count as final proposal labor.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => selectedEstimateRequest && generateJobExecutionScope(selectedEstimateRequest)}
+                    >
+                      Generate Scope Steps
+                    </button>
+                    <button type="button" style={styles.primaryButton} onClick={addManualJobExecutionStep}>
+                      + Add Manual Step
+                    </button>
+                  </div>
+
+                  <div style={styles.noticeBox}>
+                    {jobScopeMessage} Total labor scope: {jobScopeLaborHoursLabel}. Rejected steps do not count.
+                  </div>
+
+                  {currentJobScopeSteps.length === 0 && (
+                    <div style={styles.empty}>
+                      No job execution steps yet. Generate scope steps or add a manual step.
+                    </div>
+                  )}
+
+                  {currentJobScopeSteps.map((step, index) => (
+                    <div
+                      key={step.id}
+                      style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}
+                    >
+                      <div style={styles.badgeRow}>
+                        <span style={step.status === 'rejected' ? styles.badgeDanger : styles.badge}>
+                          Step {step.step_number}: {step.status.replace(/_/g, ' ')}
+                        </span>
+                        <span style={styles.badgeMuted}>{step.confidence || 'needs_review'}</span>
+                        {step.disposal_needed && <span style={styles.badgeMuted}>Disposal needed</span>}
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <input
+                          style={styles.input}
+                          value={step.title}
+                          placeholder="Step title"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { title: event.target.value })}
+                        />
+                        <input
+                          style={styles.input}
+                          value={step.trade}
+                          placeholder="Trade / skill"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { trade: event.target.value })}
+                        />
+                      </div>
+
+                      <textarea
+                        style={{ ...styles.input, minHeight: 86 }}
+                        value={step.labor_scope}
+                        placeholder="Labor scope"
+                        onChange={(event) => updateLocalJobExecutionStep(step.id, { labor_scope: event.target.value })}
+                      />
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                        <input
+                          style={styles.input}
+                          type="number"
+                          step="0.25"
+                          value={Number(step.estimated_hours_low || 0)}
+                          placeholder="Low hours"
+                          onChange={(event) =>
+                            updateLocalJobExecutionStep(step.id, {
+                              estimated_hours_low: Number(event.target.value),
+                            })
+                          }
+                        />
+                        <input
+                          style={styles.input}
+                          type="number"
+                          step="0.25"
+                          value={Number(step.estimated_hours_high || 0)}
+                          placeholder="High hours"
+                          onChange={(event) =>
+                            updateLocalJobExecutionStep(step.id, {
+                              estimated_hours_high: Number(event.target.value),
+                            })
+                          }
+                        />
+                        <select
+                          style={styles.input}
+                          value={step.status}
+                          onChange={(event) =>
+                            updateLocalJobExecutionStep(step.id, {
+                              status: event.target.value as JobExecutionStepStatus,
+                            })
+                          }
+                        >
+                          {JOB_STEP_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 76 }}
+                          value={step.materials_tools}
+                          placeholder="Materials / tools"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { materials_tools: event.target.value })}
+                        />
+                        <textarea
+                          style={{ ...styles.input, minHeight: 76 }}
+                          value={step.equipment}
+                          placeholder="Equipment"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { equipment: event.target.value })}
+                        />
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 76 }}
+                          value={step.safety_notes}
+                          placeholder="Safety notes"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { safety_notes: event.target.value })}
+                        />
+                        <textarea
+                          style={{ ...styles.input, minHeight: 76 }}
+                          value={step.access_notes}
+                          placeholder="Access notes"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { access_notes: event.target.value })}
+                        />
+                        <textarea
+                          style={{ ...styles.input, minHeight: 76 }}
+                          value={step.cleanup_notes}
+                          placeholder="Cleanup / disposal notes"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { cleanup_notes: event.target.value })}
+                        />
+                      </div>
+
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <label style={{ ...styles.outlineButton, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="checkbox"
+                            checked={step.disposal_needed}
+                            onChange={(event) =>
+                              updateLocalJobExecutionStep(step.id, { disposal_needed: event.target.checked })
+                            }
+                          />
+                          Disposal needed
+                        </label>
+                        <input
+                          style={styles.input}
+                          value={step.admin_notes}
+                          placeholder="Admin notes / rejection reason"
+                          onChange={(event) => updateLocalJobExecutionStep(step.id, { admin_notes: event.target.value })}
+                        />
+                      </div>
+
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.primaryButton}
+                          disabled={jobStepSavingId === step.id}
+                          onClick={() => saveJobExecutionStep(step)}
+                        >
+                          {jobStepSavingId === step.id ? 'Saving...' : 'Save Step'}
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={jobStepSavingId === step.id || step.status === 'approved'}
+                          onClick={() => approveJobExecutionStep(step)}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={jobStepSavingId === step.id || step.status === 'rejected'}
+                          onClick={() => rejectJobExecutionStep(step)}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={index === 0}
+                          onClick={() => moveJobExecutionStep(step.id, -1)}
+                        >
+                          Move Up
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={index === currentJobScopeSteps.length - 1}
+                          onClick={() => moveJobExecutionStep(step.id, 1)}
+                        >
+                          Move Down
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={styles.aiBox}>
                   <strong>Labor Rate Auto-Fill</strong>
                   <p style={styles.small}>{estimateLaborMessage}</p>
 
@@ -6516,6 +7269,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   <strong>Estimate Summary</strong>
                   <p>Materials: {money(estimateMaterialSubtotal)}</p>
                   <p>Labor: {money(estimateLaborNumber)}</p>
+                  <p style={styles.small}>
+                    Job execution labor scope: {jobScopeLaborHoursLabel}
+                    {approvedJobScopeSteps.length > 0
+                      ? ' (approved high hours feed the labor units above)'
+                      : ' (draft only until approved)'}
+                  </p>
                   {appliedLaborRate && (
                     <p style={styles.small}>
                       Labor base: {money(estimateLaborBaseNumber)} • Minimum:{' '}
@@ -7653,6 +8412,49 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 14,
     background: '#eef6ec',
     textDecoration: 'none',
+  },
+  badgeRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: 30,
+    borderRadius: 999,
+    background: '#e7f3e5',
+    color: '#0f542d',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: 'capitalize',
+  },
+  badgeMuted: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: 30,
+    borderRadius: 999,
+    background: '#f4f1ec',
+    color: '#5f6f63',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 800,
+    textTransform: 'capitalize',
+  },
+  badgeDanger: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: 30,
+    borderRadius: 999,
+    background: '#fde8df',
+    color: '#8a2f12',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: 'capitalize',
   },
   noticeBox: {
     background: '#fff8e8',
