@@ -1970,6 +1970,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [messageLoading, setMessageLoading] = useState(false)
   const [messageSavingId, setMessageSavingId] = useState<string | null>(null)
   const [messageFilter, setMessageFilter] = useState<'all' | 'draft' | 'sent' | 'approved'>('all')
+  const [reviewingMessageId, setReviewingMessageId] = useState<string | null>(null)
 
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [invoiceVendor, setInvoiceVendor] = useState('')
@@ -2356,6 +2357,38 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const request = requests.find((item) => item.id === leadId)
     if (!request) return leadId
     return request.propertyAddress || request.description.slice(0, 60) || leadId
+  }
+
+  function getLinkedRequest(leadId?: string | null) {
+    return leadId ? requests.find((item) => item.id === leadId) || null : null
+  }
+
+  function titleizeMessageType(value?: string | null) {
+    const normalized = (value || '').replace(/_/g, ' ').trim()
+    if (!normalized) return 'Message Draft'
+    return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase())
+  }
+
+  function getMessagePurpose(log: MessageLog) {
+    if (log.message_type === 'missing_info_request') return 'Missing Info Request'
+    if (log.message_type === 'estimate_review_request') return 'Estimate Review Request'
+    if (log.message_type === 'contractor_walkthrough_request') return 'Contractor Walkthrough Request'
+    if (log.message_type === 'seller_summary_draft') return 'Seller Summary Draft'
+    return titleizeMessageType(log.message_type)
+  }
+
+  function getMessageWorkflowState(log: MessageLog, request: WorkRequest | null) {
+    if (log.status === 'sent') return 'Sent'
+    if (log.message_type === 'missing_info_request' || request?.status === 'needs_info') return 'Needs Info'
+    if (log.message_type === 'seller_summary_draft') return 'Seller Summary'
+    if (log.message_type === 'contractor_walkthrough_request') return 'Contractor Review'
+    return 'Estimate Draft'
+  }
+
+  function getMessagePreview(message: string) {
+    const compact = message.replace(/\s+/g, ' ').trim()
+    if (compact.length <= 180) return compact
+    return `${compact.slice(0, 177)}...`
   }
 
   async function loadMessageCenter() {
@@ -7071,79 +7104,111 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </button>
             </div>
 
-            <div style={styles.noticeBox}>
-              Safe automation rule: AI can draft missing-info requests, but it cannot send prices, proposals, purchase orders, contractor commitments, or final approvals without human review.
+            <p style={styles.workflowFootnote}>
+              AI drafts require human review before any message, price, proposal, purchase order, or contractor commitment is used.
+            </p>
+
+            <div style={styles.segmentedControl}>
+              {[
+                { label: 'All', value: 'all' },
+                { label: 'Drafts', value: 'draft' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Sent', value: 'sent' },
+              ].map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  style={messageFilter === filter.value ? styles.segmentedActive : styles.segmentedButton}
+                  onClick={() => setMessageFilter(filter.value as 'all' | 'draft' | 'sent' | 'approved')}
+                >
+                  {filter.label}
+                </button>
+              ))}
             </div>
 
-            <select
-              style={styles.input}
-              value={messageFilter}
-              onChange={(e) => setMessageFilter(e.target.value as 'all' | 'draft' | 'sent' | 'approved')}
-            >
-              <option value="all">All messages</option>
-              <option value="draft">Drafts</option>
-              <option value="approved">Approved</option>
-              <option value="sent">Marked Sent</option>
-            </select>
+            {(() => {
+              const filteredMessages = messageLogs.filter((log) => messageFilter === 'all' || log.status === messageFilter)
 
-            <h3>Drafts + Message Logs</h3>
-            {messageLogs.filter((log) => messageFilter === 'all' || log.status === messageFilter).length === 0 && (
-              <p style={styles.muted}>No messages yet. Generate a missing-info request from a dashboard card, or save an AI Intake reply draft.</p>
-            )}
+              if (filteredMessages.length === 0) {
+                return (
+                  <div style={styles.messageEmptyState}>
+                    No messages yet. Drafts will appear here when a property needs follow-up.
+                  </div>
+                )
+              }
 
-            {messageLogs
-              .filter((log) => messageFilter === 'all' || log.status === messageFilter)
-              .map((log) => (
-                <div key={log.id} style={styles.requestCard}>
-                  <div style={styles.grid3}>
-                    <div>
-                      <strong>Status</strong>
-                      <p style={styles.small}>{log.status || 'draft'}</p>
+              return filteredMessages.map((log) => {
+                const request = getLinkedRequest(log.lead_id)
+                const propertyAddress = request?.propertyAddress || getRequestLabel(log.lead_id)
+                const propertyLocation = [request?.city, request?.zip].filter(Boolean).join(' ')
+                const recipient = [log.recipient_name, log.recipient_email, log.recipient_phone].filter(Boolean).join(' • ') || 'Recipient not set'
+                const createdLabel = log.created_at ? new Date(log.created_at).toLocaleString() : 'Time not set'
+                const isReviewing = reviewingMessageId === log.id
+
+                return (
+                  <div key={log.id} style={styles.messageCard}>
+                    <div style={styles.messageCardHeader}>
+                      <div>
+                        <h3 style={styles.messagePropertyTitle}>{propertyAddress}</h3>
+                        {propertyLocation && <p style={styles.messagePropertyMeta}>{propertyLocation}</p>}
+                      </div>
+                      <span style={styles.workflowStateChip}>{getMessageWorkflowState(log, request)}</span>
                     </div>
-                    <div>
-                      <strong>Linked Job</strong>
-                      <p style={styles.small}>{getRequestLabel(log.lead_id)}</p>
+
+                    <div style={styles.messagePurposeRow}>
+                      <strong>{getMessagePurpose(log)}</strong>
+                      <span>{recipient}</span>
+                      <span>{createdLabel}</span>
                     </div>
-                    <div>
-                      <strong>Recipient</strong>
-                      <p style={styles.small}>
-                        {[log.recipient_name, log.recipient_email, log.recipient_phone].filter(Boolean).join(' • ') || 'Not set'}
-                      </p>
+
+                    <p style={styles.messagePreview}>{isReviewing ? log.message_body : getMessagePreview(log.message_body)}</p>
+                    {isReviewing && log.notes && <p style={styles.messageNote}>Notes: {log.notes}</p>}
+
+                    <div style={styles.messageActionRow}>
+                      <button
+                        type="button"
+                        style={styles.primaryButton}
+                        onClick={() => setReviewingMessageId(isReviewing ? null : log.id)}
+                      >
+                        Review Draft
+                      </button>
+                      <details style={styles.messageMore}>
+                        <summary style={styles.messageMoreSummary}>More</summary>
+                        <div style={styles.messageMoreGrid}>
+                          <button type="button" style={styles.workflowSecondaryButton} onClick={() => copyToClipboard(log.message_body)}>
+                            Copy Message
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.workflowSecondaryButton}
+                            disabled={messageSavingId === log.id}
+                            onClick={() => markMessageLog(log, 'approved')}
+                          >
+                            Approve Draft
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.workflowSecondaryButton}
+                            disabled={messageSavingId === log.id}
+                            onClick={() => markMessageLog(log, 'sent')}
+                          >
+                            Mark Sent
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.workflowSecondaryButton}
+                            disabled={messageSavingId === log.id || !log.recipient_email}
+                            onClick={() => sendMessageEmail(log)}
+                          >
+                            Send Email
+                          </button>
+                        </div>
+                      </details>
                     </div>
                   </div>
-
-                  <p style={styles.scopeText}>{log.message_body}</p>
-                  {log.notes && <p style={styles.small}>Notes: {log.notes}</p>}
-                  <p style={styles.small}>Created: {log.created_at ? new Date(log.created_at).toLocaleString() : 'Not set'}</p>
-
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    <button style={styles.outlineButton} onClick={() => copyToClipboard(log.message_body)}>
-                      Copy Message
-                    </button>
-                    <button
-                      style={styles.outlineButton}
-                      disabled={messageSavingId === log.id}
-                      onClick={() => markMessageLog(log, 'approved')}
-                    >
-                      Approve Draft
-                    </button>
-                    <button
-                      style={styles.primaryButton}
-                      disabled={messageSavingId === log.id}
-                      onClick={() => markMessageLog(log, 'sent')}
-                    >
-                      Mark Sent
-                    </button>
-                    <button
-                      style={styles.primaryButton}
-                      disabled={messageSavingId === log.id || !log.recipient_email}
-                      onClick={() => sendMessageEmail(log)}
-                    >
-                      Send Email
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })
+            })()}
 
             <hr style={styles.divider} />
 
@@ -9450,6 +9515,136 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #dfe8da',
     borderRadius: 12,
     padding: 12,
+  },
+  segmentedControl: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 6,
+    padding: 5,
+    border: '1px solid #d7dfd3',
+    borderRadius: 16,
+    background: '#f7faf5',
+    margin: '16px 0',
+  },
+  segmentedButton: {
+    border: 'none',
+    background: 'transparent',
+    color: '#5f6f63',
+    borderRadius: 12,
+    minHeight: 48,
+    padding: '10px 8px',
+    fontSize: 14,
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+  segmentedActive: {
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    color: '#173425',
+    borderRadius: 12,
+    minHeight: 48,
+    padding: '10px 8px',
+    fontSize: 14,
+    fontWeight: 900,
+    cursor: 'pointer',
+    boxShadow: '0 4px 12px rgba(15,84,45,0.08)',
+  },
+  messageEmptyState: {
+    border: '1px solid #dfe8da',
+    background: '#fbfcfa',
+    borderRadius: 18,
+    padding: 18,
+    color: '#5f6f63',
+    lineHeight: 1.5,
+  },
+  messageCard: {
+    background: '#ffffff',
+    border: '1px solid #d7dfd3',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 12,
+    maxWidth: 920,
+  },
+  messageCardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  messagePropertyTitle: {
+    margin: 0,
+    color: '#173425',
+    fontSize: 21,
+    lineHeight: 1.2,
+    letterSpacing: 0,
+  },
+  messagePropertyMeta: {
+    margin: '4px 0 0',
+    color: '#7a857d',
+    fontSize: 13,
+    lineHeight: 1.3,
+  },
+  workflowStateChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: 30,
+    borderRadius: 999,
+    background: '#eef6ec',
+    color: '#0f542d',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  messagePurposeRow: {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 12,
+    color: '#5f6f63',
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+  messagePreview: {
+    whiteSpace: 'pre-wrap',
+    margin: '12px 0',
+    color: '#273b2f',
+    fontSize: 15,
+    lineHeight: 1.5,
+  },
+  messageNote: {
+    margin: '0 0 12px',
+    color: '#5f6f63',
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+  messageActionRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(160px, auto) minmax(120px, 1fr)',
+    gap: 10,
+    alignItems: 'start',
+  },
+  messageMore: {
+    minWidth: 0,
+  },
+  messageMoreSummary: {
+    minHeight: 48,
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0 14px',
+    border: '1px solid #d7dfd3',
+    borderRadius: 14,
+    color: '#173425',
+    background: '#ffffff',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+  messageMoreGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+    gap: 8,
+    marginTop: 8,
   },
   mutedList: {
     color: '#536056',
