@@ -5444,6 +5444,178 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     'pending_approval',
   ]
 
+  function getPropertyWorkflow(request: WorkRequest) {
+    const isOpenEstimate = selectedEstimateRequest?.id === request.id
+    const scopedItems = isOpenEstimate
+      ? currentScopeEstimateItems
+      : estimateItems.filter((item) => estimateItemMatchesCurrentScope(item, request))
+    const hasEstimateDraft = scopedItems.length > 0 || Boolean(request.aiEstimate)
+    const pendingReview = scopedItems.some((item) => !item.human_approved && !isEstimateItemRejected(item))
+    const approvedEstimate = scopedItems.length > 0 && scopedItems.every((item) => item.human_approved || isEstimateItemRejected(item))
+    const missingInfo = request.status === 'needs_info' || getMissingInfoItems(request).length > 0
+    const hasSellerSummary = sellerPrepSelectedId === request.id && Boolean(sellerPrepAnalysisV1)
+
+    if (request.archived) {
+      return {
+        stage: 'Complete',
+        title: 'Work archived',
+        body: 'The property is out of the active workflow. History and supporting files remain available.',
+        buttonLabel: 'Export Job Packet',
+        onPrimary: () => exportJobPacket(request),
+        disabled: false,
+      }
+    }
+
+    if (hasSellerSummary) {
+      return {
+        stage: 'Seller Summary',
+        title: 'Seller summary ready',
+        body: 'Repair priorities and seller-facing recommendations are ready to review.',
+        buttonLabel: sellerPrepLoadingId === request.id ? 'Opening...' : 'View Seller Summary',
+        onPrimary: () => loadSellerPrepDraftForRequest(request),
+        disabled: sellerPrepLoadingId === request.id,
+      }
+    }
+
+    if (pendingReview || request.status === 'pending_approval') {
+      return {
+        stage: 'Review Required',
+        title: 'Estimate draft ready',
+        body: 'Labor, materials, and scope notes are prepared. Human review is required before sending or routing.',
+        buttonLabel: estimateLoading ? 'Opening...' : 'Review Estimate',
+        onPrimary: () => openEstimateReview(request),
+        disabled: estimateLoading,
+      }
+    }
+
+    if (approvedEstimate || request.status === 'estimate_ready') {
+      return {
+        stage: 'Contractor Routing',
+        title: 'Estimate ready for packet',
+        body: 'Reviewed estimate information is ready to package for reporting or contractor coordination.',
+        buttonLabel: 'Export Job Packet',
+        onPrimary: () => exportJobPacket(request),
+        disabled: false,
+      }
+    }
+
+    if (missingInfo) {
+      return {
+        stage: 'Intake',
+        title: 'Missing information needed',
+        body: 'A few details are needed before this job can move forward.',
+        buttonLabel: messageSavingId === request.id ? 'Creating...' : 'Create Info Request',
+        onPrimary: () => generateMissingInfoRequest(request),
+        disabled: messageSavingId === request.id,
+      }
+    }
+
+    if (hasEstimateDraft) {
+      return {
+        stage: 'Estimate Draft',
+        title: 'Estimate draft started',
+        body: 'Initial pricing and scope assumptions are available. Review the estimate before sharing or routing.',
+        buttonLabel: 'Review Estimate',
+        onPrimary: () => openEstimateReview(request),
+        disabled: false,
+      }
+    }
+
+    return {
+      stage: request.photos.length || request.documents.length ? 'Scope Organized' : 'Intake',
+      title: 'Ready to organize scope',
+      body: 'Photos, documents, and request details are attached. Shelter Prep can prepare the first repair scope and estimate draft.',
+      buttonLabel: materialEstimateLoadingId === request.id ? 'Preparing...' : 'Prepare Draft',
+      onPrimary: () => buildMaterialEstimate(request),
+      disabled: materialEstimateLoadingId === request.id,
+    }
+  }
+
+  function renderPropertyWorkflowCard(request: WorkRequest) {
+    const workflow = getPropertyWorkflow(request)
+
+    const secondaryActions = [
+      {
+        label: aiLoadingId === request.id ? 'Preparing...' : 'Prepare Estimate Draft',
+        onClick: () => runAiEstimate(request),
+        disabled: aiLoadingId === request.id,
+      },
+      {
+        label: sellerPrepLoadingId === request.id ? 'Preparing...' : 'Prepare Seller Summary',
+        onClick: () => runSellerPrepDraftV1(request),
+        disabled: sellerPrepLoadingId === request.id,
+      },
+      {
+        label: sellerPrepLoadingId === request.id ? 'Opening...' : 'View Seller Summary',
+        onClick: () => loadSellerPrepDraftForRequest(request),
+        disabled: sellerPrepLoadingId === request.id,
+      },
+      {
+        label: materialEstimateLoadingId === request.id ? 'Refreshing...' : 'Refresh Material Package',
+        onClick: () => buildMaterialEstimate(request),
+        disabled: materialEstimateLoadingId === request.id,
+      },
+      {
+        label: 'Refresh Estimate Intelligence',
+        onClick: () => buildLocalEstimateIntelligence(request),
+        disabled: false,
+      },
+      {
+        label: 'Export Job Packet',
+        onClick: () => exportJobPacket(request),
+        disabled: false,
+      },
+      {
+        label: autoWorkflowLoadingId === request.id ? 'Researching...' : 'Research + Takeoff Draft',
+        onClick: () => autoProcessLead(request),
+        disabled: autoWorkflowLoadingId === request.id,
+      },
+      {
+        label: messageSavingId === request.id ? 'Creating...' : 'Create Info Request',
+        onClick: () => generateMissingInfoRequest(request),
+        disabled: messageSavingId === request.id,
+      },
+    ]
+
+    return (
+      <div style={isCompact ? { ...styles.workflowCard, ...styles.mobileWorkflowCard } : styles.workflowCard}>
+        <div style={isCompact ? styles.mobileStack : styles.workflowHeader}>
+          <div>
+            <span style={styles.workflowStage}>{workflow.stage}</span>
+            <h3 style={styles.workflowTitle}>{workflow.title}</h3>
+            <p style={styles.workflowBody}>{workflow.body}</p>
+            <p style={styles.workflowFootnote}>AI drafts stay in review until a human approves them.</p>
+          </div>
+          <button
+            type="button"
+            style={styles.workflowPrimaryButton}
+            disabled={workflow.disabled}
+            onClick={workflow.onPrimary}
+          >
+            {workflow.buttonLabel}
+          </button>
+        </div>
+
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>More actions</summary>
+          <div style={isCompact ? styles.mobileStack : styles.moreActionsGrid}>
+            {secondaryActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                style={styles.workflowSecondaryButton}
+                disabled={action.disabled}
+                onClick={action.onClick}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </details>
+      </div>
+    )
+  }
+
   const currentScopeEstimateItems = useMemo(
     () =>
       estimateItems.filter((item) =>
@@ -6502,171 +6674,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           </div>
                         ))}
 
-<details
-  style={{
-    marginTop: 12,
-    border: '1px solid #d8c2ad',
-    borderRadius: 16,
-    background: '#ffffff',
-    overflow: 'hidden',
-  }}
->
-  <summary
-    style={{
-      padding: '14px 16px',
-      cursor: 'pointer',
-      fontWeight: 900,
-      color: '#06542d',
-      listStyle: 'none',
-    }}
-  >
-    Actions ▾
-  </summary>
-
-  <div
-    style={{
-      display: 'grid',
-      gap: 10,
-      padding: 12,
-      borderTop: '1px solid #eee1d4',
-      background: '#fbf8f2',
-    }}
-  >
-    <button
-      type="button"
-      style={styles.wideButton}
-      disabled={aiLoadingId === request.id}
-      onClick={() => runAiEstimate(request)}
-    >
-      {aiLoadingId === request.id ? 'Running AI...' : 'Run AI Estimate'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#ffffff',
-        color: '#06542d',
-        border: '1px solid #06542d',
-      }}
-      disabled={sellerPrepLoadingId === request.id}
-      onClick={() => runSellerPrepDraftV1(request)}
-    >
-      {sellerPrepLoadingId === request.id
-        ? 'Running Seller Prep...'
-        : 'Run Seller Prep Draft'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#f7efe7',
-        color: '#4c3b2f',
-        border: '1px solid #d8c2ad',
-      }}
-      disabled={sellerPrepLoadingId === request.id}
-      onClick={() => loadSellerPrepDraftForRequest(request)}
-    >
-      {sellerPrepLoadingId === request.id
-        ? 'Opening Seller Prep...'
-        : 'Open Seller Prep V1'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#0f542d',
-        color: '#ffffff',
-        border: '1px solid #0f542d',
-      }}
-      disabled={materialEstimateLoadingId === request.id}
-      onClick={() => buildMaterialEstimate(request)}
-    >
-      {materialEstimateLoadingId === request.id
-        ? 'Building Material Estimate...'
-        : 'Build Material Estimate'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#0f542d',
-        color: '#ffffff',
-        border: '1px solid #0f542d',
-      }}
-      onClick={() => buildLocalEstimateIntelligence(request)}
-    >
-      Build Estimate Intelligence
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#f4f1ec',
-        color: '#173425',
-        border: '1px solid #d7dfd3',
-      }}
-      onClick={() => openEstimateReview(request)}
-    >
-      Open Estimate Review
-      
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#ffffff',
-        color: '#0f542d',
-        border: '1px solid #0f542d',
-      }}
-      onClick={() => exportJobPacket(request)}
-    >
-      Export Job Packet
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#173425',
-        color: '#ffffff',
-        border: '1px solid #173425',
-      }}
-      disabled={autoWorkflowLoadingId === request.id}
-      onClick={() => autoProcessLead(request)}
-    >
-      {autoWorkflowLoadingId === request.id
-        ? 'Auto Processing...'
-        : 'Auto Run Research + Takeoff'}
-    </button>
-
-    <button
-      type="button"
-      style={{
-        ...styles.wideButton,
-        background: '#fff8e8',
-        color: '#6f4f14',
-        border: '1px solid #ecd9a7',
-      }}
-      disabled={messageSavingId === request.id}
-      onClick={() => generateMissingInfoRequest(request)}
-    >
-      {messageSavingId === request.id
-        ? 'Creating Message...'
-        : 'Generate Missing Info Request'}
-    </button>
-
-    <div style={styles.noticeBox}>
-      AI research drafts only. Human approval is required before any estimate,
-      proposal, purchase order, email, or submission.
-    </div>
-  </div>
-</details>
+                        {renderPropertyWorkflowCard(request)}
 
                         {request.aiEstimate && (
                           <div style={styles.aiBox}>
@@ -8836,6 +8844,91 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     padding: 16,
     margin: '16px 0',
+  },
+  workflowCard: {
+    border: '1px solid #d7dfd3',
+    background: '#fbfcfa',
+    borderRadius: 14,
+    padding: 16,
+    margin: '16px 0',
+  },
+  mobileWorkflowCard: {
+    padding: 14,
+    borderRadius: 18,
+  },
+  workflowHeader: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: 16,
+  },
+  workflowStage: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    color: '#5f6f63',
+    borderRadius: 999,
+    padding: '5px 9px',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  workflowTitle: {
+    margin: '10px 0 4px',
+    color: '#173425',
+    fontSize: 18,
+    lineHeight: 1.25,
+  },
+  workflowBody: {
+    margin: 0,
+    color: '#4c5b50',
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
+  workflowFootnote: {
+    margin: '8px 0 0',
+    color: '#7a857d',
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
+  workflowPrimaryButton: {
+    border: '1px solid #0f542d',
+    background: '#0f542d',
+    color: '#ffffff',
+    padding: '13px 18px',
+    borderRadius: 14,
+    cursor: 'pointer',
+    fontWeight: 900,
+    minHeight: 48,
+    minWidth: 168,
+  },
+  workflowSecondaryButton: {
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    color: '#173425',
+    padding: '12px 14px',
+    borderRadius: 14,
+    cursor: 'pointer',
+    fontWeight: 800,
+    minHeight: 48,
+    textAlign: 'left',
+  },
+  moreActions: {
+    marginTop: 14,
+  },
+  moreActionsSummary: {
+    cursor: 'pointer',
+    color: '#0f542d',
+    fontWeight: 900,
+    minHeight: 44,
+    display: 'flex',
+    alignItems: 'center',
+  },
+  moreActionsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: 10,
+    paddingTop: 8,
   },
   packetBox: {
     whiteSpace: 'pre-wrap',
