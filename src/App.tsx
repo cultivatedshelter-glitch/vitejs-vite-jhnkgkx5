@@ -3191,8 +3191,30 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         .select()
 
       if (error) {
-        if (String(error.message || '').includes('column')) {
-          throw new Error('Material package columns are missing. Run migration 202605110003_material_package_estimates.sql first.')
+        const message = String(error.message || '')
+        const isSchemaMismatch =
+          message.includes('column') ||
+          message.includes('schema cache') ||
+          message.includes('Could not find')
+
+        if (isSchemaMismatch) {
+          const localItems = inserts.map((item) => ({
+            ...item,
+            id: makeId(),
+            created_at: new Date().toISOString(),
+          })) as EstimateItem[]
+
+          setActiveTab('estimates')
+          setSelectedEstimateRequest(request)
+          setEstimateItems(localItems)
+          setEstimateResearchRows([])
+          setEstimateIntelligence(null)
+          await applyBestLaborRateForRequest(request, false)
+
+          alert(
+            'Material estimate built as a local draft because Supabase is missing package columns. Apply migration 202605110003_material_package_estimates.sql to save these rows to the database.'
+          )
+          return
         }
         throw error
       }
