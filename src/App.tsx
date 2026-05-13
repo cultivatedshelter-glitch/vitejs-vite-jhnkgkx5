@@ -1,13 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { Suspense, useEffect, useMemo, useState } from 'react'
 import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from './supabase'
-import Gallery from './components/Gallery'
-import HistoricalUpload from './components/historical/HistoricalUpload'
 import { emptyPropertyFacts, lookupPropertyFacts, type PropertyFacts, type PropertyLookupStatus } from './propertyLookup'
 import { buildPropertyResearchPack } from './propertyIntelligence'
 import {
   buildEstimateIntelligence,
   type EstimateIntelligenceResult,
 } from './estimateIntelligence'
+
+const Gallery = React.lazy(() => import('./components/Gallery'))
+const HistoricalUpload = React.lazy(() => import('./components/historical/HistoricalUpload'))
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
@@ -54,6 +55,40 @@ type WorkRequest = {
   archiveReason?: string
   aiEstimate?: AiEstimate
 }
+
+type PropertyAgentName =
+  | 'property_profile_agent'
+  | 'photo_agent'
+  | 'measurement_agent'
+  | 'material_agent'
+  | 'labor_scope_agent'
+  | 'pricing_agent'
+  | 'seller_prep_agent'
+  | 'logistics_agent'
+  | 'audit_agent'
+  | 'coordination_agent'
+
+type PropertyAgentStatus = 'ai_draft' | 'needs_review' | 'human_reviewed' | 'approved' | 'rejected'
+
+type PropertyAgentResult = {
+  id: string
+  created_at?: string | null
+  property_id: string
+  work_request_id: string
+  repair_item_id?: string | null
+  agent_name: PropertyAgentName
+  input_summary: string
+  output_json: Record<string, unknown>
+  assumptions: string[]
+  confidence: string
+  missing_info: string[]
+  audit_notes: string[]
+  status: PropertyAgentStatus
+  reviewed_at?: string | null
+  reviewed_by?: string | null
+}
+
+type PropertyAgentResultInsert = Omit<PropertyAgentResult, 'id' | 'created_at'>
 
 type IntakeDraft = {
   requesterName?: string
@@ -587,6 +622,7 @@ const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
 const JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-learning-v1'
 const JOB_PACKET_METADATA_LOCAL_STORAGE_KEY = 'shelter-prep-job-packets-v1'
 const AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY = 'shelter-prep-ai-research-drafts-v1'
+const PROPERTY_AGENT_OUTPUT_LOCAL_STORAGE_KEY = 'shelter-prep-property-agent-outputs-v1'
 
 function getJobScopeStorageKey(requestId: string) {
   return `${JOB_SCOPE_LOCAL_STORAGE_KEY}:${requestId}`
@@ -594,6 +630,10 @@ function getJobScopeStorageKey(requestId: string) {
 
 function getAiResearchDraftStorageKey(requestId: string) {
   return `${AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY}:${requestId}`
+}
+
+function getPropertyAgentOutputStorageKey(requestId: string) {
+  return `${PROPERTY_AGENT_OUTPUT_LOCAL_STORAGE_KEY}:${requestId}`
 }
 
 function sortJobExecutionSteps(steps: JobExecutionStep[]) {
@@ -774,6 +814,400 @@ function buildJobExecutionSteps(request: WorkRequest, learnedRecords: JobExecuti
     repair_item_id: repairItemId,
     step_number: index + 1,
   }))
+}
+
+function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
+  const propertyId = getRequestPropertyId(request)
+  const repairItemId = getDefaultRepairItemId(request, request.workType || request.description)
+  const missingInfo = [
+    ...getMissingInfoForAgentDraft(request),
+    ...(!request.propertyFacts?.bedrooms ? ['bedrooms'] : []),
+    ...(!request.propertyFacts?.squareFeet ? ['square footage'] : []),
+  ]
+  const propertyPack = buildPropertyResearchPack(request.propertyAddress, request.city, request.state || 'OR', request.zip)
+  const intelligence = buildEstimateIntelligence({
+    id: request.id,
+    workType: request.workType,
+    description: request.description,
+    urgency: request.urgency,
+    occupancy: request.occupancy,
+    timeline: request.timeline,
+    city: request.city,
+    state: request.state,
+    zip: request.zip,
+    propertyFacts: request.propertyFacts,
+    photoCount: request.photos.length,
+    documentCount: request.documents.length,
+  })
+  const jobSteps = buildJobExecutionSteps(request).map((step) => ({
+    title: step.title,
+    trade: step.trade,
+    hours: `${step.estimated_hours_low}-${step.estimated_hours_high}`,
+  }))
+  const logisticsAudit = buildLogisticsAgentAudit(request, intelligence, jobSteps)
+  const now = new Date().toISOString()
+  const base = {
+    property_id: propertyId,
+    work_request_id: request.id,
+    repair_item_id: repairItemId,
+    status: 'ai_draft' as PropertyAgentStatus,
+    reviewed_at: null,
+    reviewed_by: null,
+    created_at: now,
+  }
+
+  const drafts: Array<Omit<PropertyAgentResult, 'id'>> = [
+    {
+      ...base,
+      agent_name: 'property_profile_agent',
+      input_summary: `${request.propertyAddress}, ${request.city}, ${request.state} ${request.zip}`,
+      output_json: {
+        beds: request.propertyFacts?.bedrooms || null,
+        baths: request.propertyFacts?.bathrooms || null,
+        sqft: request.propertyFacts?.squareFeet || null,
+        year_built: request.propertyFacts?.yearBuilt || null,
+        property_type: request.propertyFacts?.propertyType || null,
+        jurisdiction: request.propertyFacts?.jurisdiction || propertyPack.jurisdiction,
+        map_links: propertyPack.links,
+      },
+      assumptions: ['Public-record style facts must be verified before permit-sensitive scope is finalized.'],
+      confidence: request.propertyFacts?.verified ? 'medium_verified_by_operator' : 'low_needs_property_review',
+      missing_info: missingInfo.filter((item) => ['bedrooms', 'square footage', 'property address'].includes(item)),
+      audit_notes: ['Property profile is contextual support only; it does not approve pricing or scope.'],
+    },
+    {
+      ...base,
+      agent_name: 'photo_agent',
+      input_summary: `${request.photos.length} photo(s), ${request.documents.length} document(s), ${request.description.slice(0, 120)}`,
+      output_json: {
+        visible_repair_conditions: request.photos.length ? ['Uploaded visuals available for human/photo review.'] : [],
+        room_area_classification: inferRoomOrArea(request),
+        trade_category: intelligence.tradeBreakdown,
+        likely_repair_items: intelligence.draftItems.slice(0, 4).map((item) => item.itemName),
+      },
+      assumptions: ['Photo analysis is limited to uploaded context and request text in this local draft.'],
+      confidence: request.photos.length ? 'medium_needs_visual_review' : 'low_missing_photos',
+      missing_info: request.photos.length ? [] : ['photos'],
+      audit_notes: ['Missing angles, close-ups, and measurements may materially change scope.'],
+    },
+    {
+      ...base,
+      agent_name: 'measurement_agent',
+      input_summary: request.description,
+      output_json: {
+        quantity_assumptions: intelligence.quantityBasis,
+        material_quantity_estimates: intelligence.draftItems.map((item) => ({
+          item: item.itemName,
+          quantity: item.quantity,
+          unit: item.unit,
+        })),
+        field_verified_required: true,
+      },
+      assumptions: intelligence.quantityBasis,
+      confidence: 'medium_rule_based',
+      missing_info: intelligence.missingInfo,
+      audit_notes: ['All quantities are rough planning assumptions until field verified.'],
+    },
+    {
+      ...base,
+      agent_name: 'material_agent',
+      input_summary: `${request.workType} material package draft`,
+      output_json: {
+        materials: intelligence.draftItems.map((item) => ({
+          name: item.itemName,
+          quantity: item.quantity,
+          unit: item.unit,
+          estimated_cost: item.quantity * item.unitPrice,
+          confidence: item.confidence,
+        })),
+        human_review_status: 'needs_review',
+      },
+      assumptions: ['Material package prices are draft assumptions and must be source-reviewed.'],
+      confidence: 'medium_needs_source_review',
+      missing_info: intelligence.missingInfo,
+      audit_notes: ['Do not purchase materials from agent output; approved estimate lines remain the source of truth.'],
+    },
+    {
+      ...base,
+      agent_name: 'labor_scope_agent',
+      input_summary: `${request.workType} labor scope plan`,
+      output_json: {
+        labor_steps: jobSteps,
+        safety_access_cleanup_required: true,
+      },
+      assumptions: ['Labor step order may change after field conditions are verified.'],
+      confidence: 'medium_scope_draft',
+      missing_info: intelligence.missingInfo,
+      audit_notes: ['Labor steps are draft until a proficient human approves job execution scope.'],
+    },
+    {
+      ...base,
+      agent_name: 'pricing_agent',
+      input_summary: `${request.workType} pricing draft`,
+      output_json: {
+        labor_hours: intelligence.laborHours,
+        labor_rate: intelligence.laborRate,
+        labor_subtotal: intelligence.laborSubtotal,
+        material_subtotal: intelligence.materialSubtotal,
+        markup_percent: intelligence.overheadPercent + intelligence.coordinationPercent,
+        contingency_percent: intelligence.riskPercent,
+        suggested_range: [intelligence.suggestedLow, intelligence.suggestedHigh],
+      },
+      assumptions: ['Pricing uses local draft intelligence and known request context only.'],
+      confidence: 'medium_pricing_draft',
+      missing_info: intelligence.missingInfo,
+      audit_notes: ['Pricing Agent cannot approve, send, purchase, submit, or finalize.'],
+    },
+    {
+      ...base,
+      agent_name: 'seller_prep_agent',
+      input_summary: `${request.workType} seller-prep decision support`,
+      output_json: {
+        recommendation: intelligence.riskFlags.length ? 'review_priority_repairs' : 'review_scope_before_credit_decision',
+        buyer_impact_score: intelligence.riskFlags.length ? 7 : 5,
+        inspection_risk_score: intelligence.riskFlags.length ? 7 : 4,
+        priority_ranking: intelligence.tradeBreakdown,
+      },
+      assumptions: ['Seller-facing recommendations must be reviewed for local market and transaction context.'],
+      confidence: 'medium_decision_support',
+      missing_info: intelligence.missingInfo,
+      audit_notes: ['Seller Prep Agent supports decisions; it does not make final recommendations.'],
+    },
+    {
+      ...base,
+      agent_name: 'logistics_agent',
+      input_summary: `Audit ${request.workType} against site access, material handling, staging, parking, disposal, safety, weather, occupancy, and hidden labor.`,
+      output_json: logisticsAudit,
+      assumptions: [
+        'Logistics Agent audits execution reality only; it does not approve scope, pricing, seller reports, contractor packages, or proposals.',
+        'Access, staging, delivery, disposal, and field conditions can materially change labor and pricing.',
+      ],
+      confidence: logisticsAudit.blocked_until_verified ? 'medium_blocked_until_verified' : 'medium_execution_audit',
+      missing_info: logisticsAudit.missing_info_questions,
+      audit_notes: logisticsAudit.audit_notes,
+    },
+    {
+      ...base,
+      agent_name: 'audit_agent',
+      input_summary: 'Audit all draft outputs for missing info, assumptions, and failure points.',
+      output_json: {
+        needs_human_review: true,
+        possible_failure_points: [
+          ...intelligence.riskFlags,
+          ...logisticsAudit.logistics_conflicts,
+          ...logisticsAudit.hidden_labor_flags,
+          ...(!request.photos.length ? ['No photos uploaded.'] : []),
+          ...(!request.documents.length ? ['No documents uploaded.'] : []),
+        ],
+      },
+      assumptions: ['Every agent output is an AI draft until human reviewed.'],
+      confidence: 'high_policy_guardrail',
+      missing_info: [...new Set([...missingInfo, ...intelligence.missingInfo, ...logisticsAudit.missing_info_questions])],
+      audit_notes: ['AI may organize, estimate, research, compare, audit, and recommend only.'],
+    },
+    {
+      ...base,
+      agent_name: 'coordination_agent',
+      input_summary: 'Merge agent outputs into one property workflow recommendation.',
+      output_json: {
+        unified_scope_summary: `${request.workType || 'Repair'} request for ${request.propertyAddress}. Draft scope, material assumptions, labor steps, pricing, and seller context require human review.`,
+        recommended_next_step: logisticsAudit.blocked_until_verified || missingInfo.length ? 'Create Info Request' : 'Prepare Draft',
+        contradictions: logisticsAudit.logistics_conflicts,
+        logistics_blockers: logisticsAudit.blocked_until_verified ? logisticsAudit.missing_info_questions : [],
+        contamination_guardrail: 'Only current property/request context and matching learned scope should influence this job.',
+        final_output_targets: ['scope of work', 'material list', 'labor steps', 'estimate summary', 'seller explanation', 'audit trail'],
+      },
+      assumptions: ['Coordination organizes and audits; it does not approve final decisions.'],
+      confidence: logisticsAudit.blocked_until_verified || missingInfo.length ? 'medium_needs_review' : 'medium_ready_for_review',
+      missing_info: [...new Set([...missingInfo, ...intelligence.missingInfo, ...logisticsAudit.missing_info_questions])],
+      audit_notes: [
+        'Human approval remains mandatory for scope, estimate, seller report, contractor package, and proposal.',
+        ...logisticsAudit.audit_notes,
+      ],
+    },
+  ]
+
+  return drafts.map((draft) => ({ ...draft, id: makeId() }))
+}
+
+function getMissingInfoForAgentDraft(request: WorkRequest) {
+  const items: string[] = []
+  if (!request.propertyAddress || !request.city || !request.state || !request.zip) items.push('property address')
+  if (request.photos.length === 0) items.push('photos')
+  if (!request.timeline) items.push('deadline')
+  if (!request.description || request.description.trim().length < 35) items.push('scope clarity')
+  if (!request.occupancy || request.occupancy === 'Unknown') items.push('access/occupancy context')
+  return [...new Set(items)]
+}
+
+function buildLogisticsAgentAudit(
+  request: WorkRequest,
+  intelligence: EstimateIntelligenceResult,
+  jobSteps: Array<{ title: string; trade: string; hours: string }>
+) {
+  const text = normalizeScopeText(
+    [
+      request.workType,
+      request.description,
+      request.urgency,
+      request.occupancy,
+      request.timeline,
+      request.propertyFacts?.verificationNotes || '',
+    ].join(' ')
+  )
+  const conflicts: string[] = []
+  const hiddenLaborFlags: string[] = []
+  const missingQuestions: string[] = []
+  const recommendedLineItems: string[] = []
+  const confidenceAdjustments: string[] = []
+  const auditNotes: string[] = []
+
+  const hasAccessClues = [
+    'parking',
+    'driveway',
+    'garage',
+    'stairs',
+    'elevator',
+    'floor',
+    'crawl',
+    'attic',
+    'roof',
+    'vacant',
+    'occupied',
+    'tenant',
+    'hoa',
+    'dumpster',
+    'dump',
+    'lockbox',
+  ].some((word) => text.includes(word))
+  const constrainedAccess = ['crawl', 'attic', 'roof', 'stairs', 'second floor', 'third floor', 'tenant', 'occupied', 'hoa'].some((word) =>
+    text.includes(word)
+  )
+  const heavyMaterials = ['drywall', 'sheetrock', 'cabinet', 'deck', 'lumber', 'concrete', 'tile', 'roof', 'shingle'].some((word) =>
+    text.includes(word)
+  )
+  const exteriorWeather = ['roof', 'deck', 'fence', 'exterior', 'gutter', 'siding', 'paint exterior'].some((word) => text.includes(word))
+  const disposalLikely = ['demo', 'remove', 'tear out', 'cabinet', 'drywall', 'deck', 'floor', 'roof', 'debris'].some((word) => text.includes(word))
+  const protectionLikely = ['paint', 'drywall', 'cabinet', 'floor', 'occupied', 'kitchen', 'bath'].some((word) => text.includes(word))
+
+  if (!hasAccessClues) {
+    conflicts.push('Material handling path is unclear.')
+    missingQuestions.push('Where can crews park, unload, and stage materials?')
+    confidenceAdjustments.push('Access unknown: reduce confidence until parking/loading/staging is verified.')
+  }
+
+  if (constrainedAccess) {
+    hiddenLaborFlags.push('Constrained access may increase labor for setup, protection, movement, and cleanup.')
+    recommendedLineItems.push('Access difficulty allowance')
+  }
+
+  if (heavyMaterials) {
+    hiddenLaborFlags.push('Material handling labor may be missing from specialist estimates.')
+    missingQuestions.push('Are stairs, hallway turns, elevator limits, or truck-to-work-area distance known?')
+    recommendedLineItems.push('Material delivery and handling allowance')
+  }
+
+  if (disposalLikely) {
+    hiddenLaborFlags.push('Disposal path, dump run, or dumpster feasibility should be priced before final approval.')
+    missingQuestions.push('Will debris be bagged, hauled by crew, staged for pickup, or placed in a dumpster?')
+    recommendedLineItems.push('Debris removal / dump fee')
+  }
+
+  if (protectionLikely) {
+    hiddenLaborFlags.push('Site protection and dust containment should be included in labor scope.')
+    recommendedLineItems.push('Protection, masking, and cleanup allowance')
+  }
+
+  if (request.occupancy === 'Occupied' || text.includes('occupied') || text.includes('tenant')) {
+    conflicts.push('Occupied-property constraints may affect work hours, dust control, pets/children, and access.')
+    missingQuestions.push('Are there pets, tenants, children, work-hour limits, or rooms that must stay usable?')
+  }
+
+  if (exteriorWeather) {
+    conflicts.push('Weather exposure may affect schedule, safety setup, and material staging.')
+    recommendedLineItems.push('Weather/safety setup allowance')
+  }
+
+  if (intelligence.laborHours <= 4 && (heavyMaterials || constrainedAccess || disposalLikely)) {
+    hiddenLaborFlags.push('Labor hours may be low because logistics-heavy work often needs staging, handling, and cleanup time.')
+    confidenceAdjustments.push('Labor scope should be reviewed against logistics before approval.')
+  }
+
+  if (jobSteps.length > 0 && !jobSteps.some((step) => normalizeScopeText(step.title).includes('clean'))) {
+    hiddenLaborFlags.push('Job steps may be missing cleanup/disposal sequence.')
+  }
+
+  auditNotes.push('Logistics Agent sends execution objections upward to Coordination; it does not approve final decisions.')
+  auditNotes.push('Human field verification is required before final scope, price, report, package, or proposal.')
+
+  const blockedUntilVerified = missingQuestions.length > 0 || conflicts.length > 0
+
+  return {
+    logistics_summary: blockedUntilVerified
+      ? 'Site logistics need verification before final estimate approval.'
+      : 'No major logistics blocker detected from current request text; field verification still required.',
+    audited_agents: [
+      'property_profile_agent',
+      'photo_agent',
+      'measurement_agent',
+      'material_agent',
+      'labor_scope_agent',
+      'pricing_agent',
+      'seller_prep_agent',
+    ],
+    logistics_conflicts: conflicts,
+    hidden_labor_flags: hiddenLaborFlags,
+    missing_info_questions: [...new Set(missingQuestions)],
+    recommended_line_items: [...new Set(recommendedLineItems)],
+    confidence_adjustments: confidenceAdjustments,
+    blocked_until_verified: blockedUntilVerified,
+    access_classification: !hasAccessClues ? 'unknown' : constrainedAccess ? 'constrained' : 'normal',
+    material_handling_difficulty: heavyMaterials && constrainedAccess ? 'high' : heavyMaterials ? 'medium' : hasAccessClues ? 'low' : 'unknown',
+    delivery_feasibility: heavyMaterials
+      ? 'Verify supplier delivery, parking/loading zone, turn radius, floor level, and staging before final estimate.'
+      : 'Standard delivery assumptions; verify parking/loading.',
+    staging_plan: hasAccessClues
+      ? 'Stage materials near work area without blocking egress; confirm protection needs.'
+      : 'Staging area not confirmed.',
+    transportation_notes: hasAccessClues
+      ? 'Transportation assumptions depend on current access notes.'
+      : 'Truck-to-work-area distance and unloading conditions are unknown.',
+    disposal_plan: disposalLikely
+      ? 'Confirm bagging, hauling, dump run, dumpster, or client-provided disposal path.'
+      : 'No heavy disposal detected; keep cleanup allowance in scope.',
+    safety_setup_notes: constrainedAccess
+      ? 'Plan PPE, ventilation/dust control, lighting, egress, and confined/height access safety.'
+      : 'Standard PPE and site protection still required.',
+    weather_risk: exteriorWeather ? 'Weather may affect schedule and safety.' : 'Low obvious weather risk from current scope.',
+    audit_notes: auditNotes,
+    status: 'ai_draft' as PropertyAgentStatus,
+  }
+}
+
+function getJsonString(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function getJsonStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+}
+
+function inferRoomOrArea(request: WorkRequest) {
+  const text = normalizeScopeText([request.workType, request.description].join(' '))
+  if (text.includes('kitchen') || text.includes('cabinet')) return 'Kitchen / cabinetry'
+  if (text.includes('bath') || text.includes('toilet') || text.includes('shower')) return 'Bathroom'
+  if (text.includes('roof') || text.includes('gutter')) return 'Exterior / roof'
+  if (text.includes('deck') || text.includes('fence') || text.includes('yard')) return 'Exterior / site'
+  if (text.includes('paint') || text.includes('drywall') || text.includes('wall')) return 'Interior finish'
+  return 'General property area'
+}
+
+function getAgentDisplayName(agentName: PropertyAgentName) {
+  return agentName
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 type EstimateResearchRow = {
@@ -1604,6 +2038,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [aiResearchDrafts, setAiResearchDrafts] = useState<AiResearchDraft[]>([])
   const [aiResearchSavingId, setAiResearchSavingId] = useState<string | null>(null)
   const [aiResearchMessage, setAiResearchMessage] = useState('AI Research Draft — Human Review Required')
+  const [propertyAgentOutputsByRequest, setPropertyAgentOutputsByRequest] = useState<Record<string, PropertyAgentResult[]>>({})
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -2293,6 +2728,81 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
   }
 
+  function loadLocalPropertyAgentOutputs(request: WorkRequest) {
+    try {
+      return JSON.parse(
+        window.localStorage.getItem(getPropertyAgentOutputStorageKey(request.id)) || '[]'
+      ) as PropertyAgentResult[]
+    } catch {
+      return []
+    }
+  }
+
+  function saveLocalPropertyAgentOutputs(request: WorkRequest, outputs: PropertyAgentResult[]) {
+    window.localStorage.setItem(getPropertyAgentOutputStorageKey(request.id), JSON.stringify(outputs))
+  }
+
+  async function savePropertyAgentOutputs(request: WorkRequest, outputs: PropertyAgentResult[]) {
+    saveLocalPropertyAgentOutputs(request, outputs)
+    setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: outputs }))
+
+    try {
+      const rows = outputs.map((output) => ({
+        property_id: output.property_id,
+        work_request_id: output.work_request_id,
+        repair_item_id: output.repair_item_id || null,
+        agent_name: output.agent_name,
+        input_summary: output.input_summary,
+        output_json: output.output_json,
+        assumptions: output.assumptions,
+        confidence: output.confidence,
+        missing_info: output.missing_info,
+        audit_notes: output.audit_notes,
+        status: output.status,
+        reviewed_at: output.reviewed_at || null,
+        reviewed_by: output.reviewed_by || null,
+      }))
+
+      const { error } = await supabase.from('property_intelligence_agent_outputs').insert(rows)
+      if (error) throw error
+    } catch (error) {
+      console.warn('Property intelligence agent outputs saved locally only.', error)
+    }
+  }
+
+  async function loadOrCreatePropertyAgentOutputs(request: WorkRequest) {
+    if (propertyAgentOutputsByRequest[request.id]?.length) return propertyAgentOutputsByRequest[request.id]
+
+    try {
+      const { data, error } = await supabase
+        .from('property_intelligence_agent_outputs')
+        .select('*')
+        .eq('work_request_id', request.id)
+        .order('created_at', { ascending: true })
+
+      if (error) throw error
+
+      const rows = (data || []) as PropertyAgentResult[]
+      if (rows.length) {
+        setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: rows }))
+        saveLocalPropertyAgentOutputs(request, rows)
+        return rows
+      }
+    } catch (error) {
+      console.warn('Property intelligence agent output table unavailable; using local outputs.', error)
+    }
+
+    const localRows = loadLocalPropertyAgentOutputs(request)
+    if (localRows.length) {
+      setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: localRows }))
+      return localRows
+    }
+
+    const drafts = buildPropertyAgentDrafts(request)
+    await savePropertyAgentOutputs(request, drafts)
+    return drafts
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSuccessMessage('')
@@ -2376,6 +2886,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       }
 
       setRequests((prev) => [newRequest, ...prev])
+      void savePropertyAgentOutputs(newRequest, buildPropertyAgentDrafts(newRequest))
       setSuccessMessage('Request submitted. Shelter Prep will review and follow up.')
       resetForm()
     } catch (error: any) {
@@ -2438,6 +2949,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         setEstimateIntelligence(null)
         setJobExecutionSteps([])
         setAiResearchDrafts([])
+        setPropertyAgentOutputsByRequest((prev) => {
+          const next = { ...prev }
+          delete next[request.id]
+          return next
+        })
       }
     } catch (error: any) {
       console.error(error)
@@ -5398,6 +5914,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
     filteredRequests.forEach((request) => {
       if (!request.propertyAddress.trim()) return
+      if (!propertyAgentOutputsByRequest[request.id]?.length) {
+        void loadOrCreatePropertyAgentOutputs(request)
+      }
       if (propertyProfilesByLeadId[request.id]) return
       if (propertyProfileLoadingByLeadId[request.id]) return
       if (propertyProfileErrorsByLeadId[request.id]) return
@@ -5410,6 +5929,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     propertyProfileErrorsByLeadId,
     propertyProfileLoadingByLeadId,
     propertyProfilesByLeadId,
+    propertyAgentOutputsByRequest,
   ])
 
   const filteredArchivedRequests = useMemo(() => {
@@ -5533,6 +6053,40 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
   function renderPropertyWorkflowCard(request: WorkRequest) {
     const workflow = getPropertyWorkflow(request)
+    const agentOutputs = propertyAgentOutputsByRequest[request.id] || []
+    const coordinationOutput = agentOutputs.find((output) => output.agent_name === 'coordination_agent')
+    const logisticsOutput = agentOutputs.find((output) => output.agent_name === 'logistics_agent')
+    const hasLogisticsOutput = Boolean(logisticsOutput)
+    const coordinationJson = coordinationOutput?.output_json || {}
+    const logisticsJson = logisticsOutput?.output_json || {}
+    const unifiedScopeSummary =
+      typeof coordinationJson.unified_scope_summary === 'string'
+        ? coordinationJson.unified_scope_summary
+        : workflow.body
+    const recommendedNextStep =
+      typeof coordinationJson.recommended_next_step === 'string'
+        ? coordinationJson.recommended_next_step
+        : workflow.buttonLabel
+    const missingInfoCount = agentOutputs.reduce((sum, output) => sum + output.missing_info.length, 0)
+    const needsReviewCount = agentOutputs.filter((output) => output.status !== 'approved').length
+    const logisticsSummary = getJsonString(
+      logisticsJson.logistics_summary,
+      'Site logistics are being audited against access, staging, handling, disposal, and safety.'
+    )
+    const accessClassification = getJsonString(logisticsJson.access_classification, 'unknown')
+    const materialHandlingDifficulty = getJsonString(logisticsJson.material_handling_difficulty, 'unknown')
+    const hiddenLaborFlags = getJsonStringArray(logisticsJson.hidden_labor_flags)
+    const logisticsQuestions = getJsonStringArray(logisticsJson.missing_info_questions)
+    const recommendedLineItems = getJsonStringArray(logisticsJson.recommended_line_items)
+    const logisticsBlockers = getJsonStringArray(coordinationJson.logistics_blockers)
+    const criticalLogisticsBlockers = (logisticsBlockers.length ? logisticsBlockers : logisticsQuestions).slice(0, 3)
+    const logisticsAuditNotes = getJsonStringArray(logisticsJson.audit_notes)
+    const logisticsConfidence = logisticsOutput?.confidence || 'pending'
+    const reviewSummary = agentOutputs.length
+      ? `${needsReviewCount} of ${agentOutputs.length} agent output(s) need human review${
+          missingInfoCount ? `; ${missingInfoCount} missing-info flag(s).` : '.'
+        }`
+      : 'Property intelligence is being prepared in the background.'
 
     const secondaryActions = [
       {
@@ -5596,6 +6150,69 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </button>
         </div>
 
+        <div style={styles.intelligenceSummary}>
+          <strong>Property Intelligence Summary</strong>
+          <p style={styles.workflowBody}>{unifiedScopeSummary}</p>
+          {criticalLogisticsBlockers.length > 0 ? (
+            <div style={styles.logisticsAlert}>
+              {criticalLogisticsBlockers.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          ) : null}
+          <p style={styles.workflowFootnote}>
+            Recommended next step: {recommendedNextStep}. {reviewSummary}
+          </p>
+          {hasLogisticsOutput ? (
+            <div style={styles.logisticsSummaryBox}>
+              <div style={styles.badgeRow}>
+                <span style={styles.badgeMuted}>Logistics & Site Conditions</span>
+                <span style={styles.badge}>Confidence: {logisticsConfidence.replace(/_/g, ' ')}</span>
+              </div>
+              <p style={styles.workflowBody}>{logisticsSummary}</p>
+              <div style={styles.logisticsFactGrid}>
+                <span>Access: {accessClassification}</span>
+                <span>Material handling: {materialHandlingDifficulty}</span>
+              </div>
+              {hiddenLaborFlags.length ? (
+                <>
+                  <strong>Hidden labor flags</strong>
+                  <ul style={styles.smallList}>
+                    {hiddenLaborFlags.slice(0, 4).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {recommendedLineItems.length ? (
+                <>
+                  <strong>Recommended line items</strong>
+                  <ul style={styles.smallList}>
+                    {recommendedLineItems.slice(0, 4).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {logisticsQuestions.length ? (
+                <>
+                  <strong>Missing info questions</strong>
+                  <ul style={styles.smallList}>
+                    {logisticsQuestions.slice(0, 4).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {logisticsAuditNotes.length ? (
+                <p style={styles.workflowFootnote}>{logisticsAuditNotes[0]}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p style={styles.workflowFootnote}>Logistics & Site Conditions will appear after the background audit is prepared.</p>
+          )}
+        </div>
+
         <details style={styles.moreActions}>
           <summary style={styles.moreActionsSummary}>More actions</summary>
           <div style={isCompact ? styles.mobileStack : styles.moreActionsGrid}>
@@ -5611,6 +6228,46 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </button>
             ))}
           </div>
+        </details>
+
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Advanced intelligence details</summary>
+          {agentOutputs.length === 0 ? (
+            <div style={styles.empty}>Property intelligence is being prepared in the background.</div>
+          ) : (
+            <div style={styles.agentOutputGrid}>
+              {agentOutputs.map((output) => (
+                <div key={output.id} style={styles.agentOutputCard}>
+                  <div style={styles.badgeRow}>
+                    <span style={styles.badgeMuted}>{getAgentDisplayName(output.agent_name)}</span>
+                    <span style={output.status === 'rejected' ? styles.badgeDanger : styles.badge}>
+                      {output.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <p style={styles.small}>Confidence: {output.confidence}</p>
+                  <p style={styles.small}>{output.input_summary}</p>
+                  <strong>Assumptions</strong>
+                  <ul style={styles.smallList}>
+                    {(output.assumptions.length ? output.assumptions : ['None listed']).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <strong>Missing Info</strong>
+                  <ul style={styles.smallList}>
+                    {(output.missing_info.length ? output.missing_info : ['None obvious']).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <strong>Audit Notes</strong>
+                  <ul style={styles.smallList}>
+                    {(output.audit_notes.length ? output.audit_notes : ['Human review required before final use.']).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </details>
       </div>
     )
@@ -6261,7 +6918,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </div>
         )}
 
-        {activeTab === 'gallery' && <Gallery />}
+        {activeTab === 'gallery' && (
+          <Suspense fallback={<div style={styles.empty}>Loading gallery...</div>}>
+            <Gallery />
+          </Suspense>
+        )}
 
         {isAdmin && activeTab === 'intake' && (
           <section style={styles.card}>
@@ -6908,7 +7569,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'history' && <HistoricalUpload />}
+        {isAdmin && activeTab === 'history' && (
+          <Suspense fallback={<div style={styles.empty}>Loading history...</div>}>
+            <HistoricalUpload />
+          </Suspense>
+        )}
 
         {isAdmin && activeTab === 'sellerPrep' && (
           <section style={styles.card}>
@@ -8902,6 +9567,40 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 48,
     minWidth: 168,
   },
+  intelligenceSummary: {
+    border: '1px solid #dfe8da',
+    background: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+  },
+  logisticsAlert: {
+    display: 'grid',
+    gap: 6,
+    marginTop: 10,
+    padding: 10,
+    border: '1px solid #ecd9a7',
+    background: '#fff8e8',
+    borderRadius: 10,
+    color: '#6f4f14',
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
+  logisticsSummaryBox: {
+    borderTop: '1px solid #edf1ea',
+    marginTop: 12,
+    paddingTop: 12,
+  },
+  logisticsFactGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+    gap: 8,
+    margin: '10px 0',
+    color: '#5f6f63',
+    fontSize: 13,
+    fontWeight: 800,
+    textTransform: 'capitalize',
+  },
   workflowSecondaryButton: {
     border: '1px solid #d7dfd3',
     background: '#ffffff',
@@ -8929,6 +9628,18 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: 10,
     paddingTop: 8,
+  },
+  agentOutputGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: 12,
+    paddingTop: 8,
+  },
+  agentOutputCard: {
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
   },
   packetBox: {
     whiteSpace: 'pre-wrap',
