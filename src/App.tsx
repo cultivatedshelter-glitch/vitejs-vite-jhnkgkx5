@@ -12,7 +12,7 @@ const HistoricalUpload = React.lazy(() => import('./components/historical/Histor
 
 type RequestStatus = 'new' | 'needs_info' | 'estimate_ready' | 'pending_approval'
 
-type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'sellerPrep' | 'pricingMemory' | 'materials' | 'labor' | 'estimates'
+type Tab = 'new' | 'gallery' | 'intake' | 'messages' | 'dashboard' | 'archived' | 'invoices' | 'history' | 'sellerPrep' | 'pricingMemory' | 'materials' | 'labor' | 'estimates' | 'agentLearning' | 'fieldLessons'
 
 type StoredFile = {
   id?: string
@@ -89,6 +89,372 @@ type PropertyAgentResult = {
 }
 
 type PropertyAgentResultInsert = Omit<PropertyAgentResult, 'id' | 'created_at'>
+
+type AgentName =
+  | 'design_agent'
+  | 'estimator_agent'
+  | 'material_takeoff_agent'
+  | 'photo_interpreter_agent'
+  | 'client_communication_agent'
+  | 'project_workflow_agent'
+  | 'contractor_review_agent'
+  | 'pricing_memory_agent'
+  | 'quality_check_agent'
+
+type CorrectionCategory =
+  | 'function'
+  | 'safety'
+  | 'access'
+  | 'sequencing'
+  | 'cost'
+  | 'quantity'
+  | 'labor'
+  | 'material'
+  | 'code_or_best_practice'
+  | 'user_comfort'
+  | 'workflow_logic'
+  | 'client_communication'
+  | 'style_preference'
+  | 'wording_preference'
+  | 'visual_preference'
+
+type LessonStatus = 'draft' | 'needs_confirmation' | 'human_verified' | 'rejected' | 'deprecated'
+
+type AgentLearningEvent = {
+  id: string
+  created_at?: string | null
+  property_id?: string | null
+  work_request_id?: string | null
+  memory_scope?: string | null
+  lesson_status: LessonStatus
+  source_agent: AgentName
+  affected_agents: AgentName[]
+  task_type: string
+  original_agent_output: string
+  human_correction: string
+  correction_category: CorrectionCategory
+  inferred_reason: string
+  confirmation_question: string
+  human_confirmed_reason: string
+  learning_value_score: number
+  reusable: boolean
+  human_verified: boolean
+  verified_by?: string | null
+  confidence: string
+  notes: string
+}
+
+type AgentLearningRule = {
+  id: string
+  created_at?: string | null
+  updated_at?: string | null
+  title: string
+  memory_scope?: string | null
+  lesson_status: LessonStatus
+  rule_type: string
+  rule_text: string
+  reason: string
+  applies_when: string
+  does_not_apply_when: string
+  source_event_id?: string | null
+  source_agent: AgentName
+  affected_agents: AgentName[]
+  confidence: string
+  human_verified: boolean
+  active: boolean
+  usage_count: number
+  last_used_at?: string | null
+  conflict_group_id?: string | null
+  conflicts_with_rule_ids?: string[] | null
+  conflict_notes?: string | null
+  priority_level?: 'low' | 'normal' | 'high' | 'critical' | null
+  context_precedence?: string | null
+}
+
+type AgentMemoryConflictStatus = 'needs_review' | 'resolved' | 'dismissed' | 'escalated' | 'needs_site_review' | 'ask_client'
+
+type AgentMemoryConflict = {
+  id: string
+  created_at?: string | null
+  resolved_at?: string | null
+  property_id?: string | null
+  work_request_id?: string | null
+  task_type: string
+  detected_by_agent: AgentName
+  conflicting_rule_ids: string[]
+  conflict_summary: string
+  recommended_resolution?: string | null
+  human_selected_rule_id?: string | null
+  human_resolution_notes?: string | null
+  resolution_status: AgentMemoryConflictStatus
+  resolved_by?: string | null
+  creates_new_rule: boolean
+  new_rule_id?: string | null
+}
+
+type MemoryActorRole = 'owner' | 'admin' | 'estimator' | 'contractor' | 'agent' | 'client' | 'viewer'
+
+type SourceLessonSourceType = 'youtube' | 'article' | 'manual' | 'field_note'
+type SourceLessonStatus = 'draft' | 'needs_review' | 'approved' | 'rejected' | 'archived'
+type SourceLessonConfidence = 'low' | 'medium' | 'high'
+
+type SourceLesson = {
+  id: string
+  created_at?: string | null
+  created_by?: string | null
+  source_type: SourceLessonSourceType
+  source_url: string
+  source_title: string
+  work_type: string
+  problem_description: string
+  admin_intent: string
+  lesson_summary: string
+  observed_method: string
+  hidden_labor: string
+  job_steps: string[]
+  tools_materials: string[]
+  safety_notes: string
+  access_notes: string
+  cleanup_notes: string
+  estimate_impact: string
+  missing_info_questions: string[]
+  applies_when: string
+  does_not_apply_when: string
+  confidence: SourceLessonConfidence
+  status: SourceLessonStatus
+  approved_by?: string | null
+  approved_at?: string | null
+  admin_notes: string
+  linked_property_id?: string | null
+  linked_work_request_id?: string | null
+  linked_repair_item_id?: string | null
+}
+
+type SourceLessonDraft = Omit<SourceLesson, 'id' | 'created_at' | 'created_by' | 'approved_by' | 'approved_at'>
+
+type AgentMemoryAuditLog = {
+  id: string
+  created_at?: string | null
+  actor_id?: string | null
+  actor_role?: MemoryActorRole | null
+  action_type: string
+  target_table: string
+  target_id: string
+  previous_value?: Record<string, unknown> | null
+  new_value?: Record<string, unknown> | null
+  reason?: string | null
+  property_id?: string | null
+  work_request_id?: string | null
+}
+
+type ContractorProfile = {
+  id: string
+  email?: string | null
+  full_name?: string | null
+  role: MemoryActorRole
+}
+
+type ContractorAssignmentStatus =
+  | 'assigned'
+  | 'accepted'
+  | 'declined'
+  | 'walkthrough_requested'
+  | 'revision_requested'
+  | 'completed'
+  | 'cancelled'
+
+type ContractorAssignment = {
+  id: string
+  created_at?: string | null
+  updated_at?: string | null
+  property_id?: string | null
+  work_request_id?: string | null
+  contractor_profile_id: string
+  assigned_by?: string | null
+  status: ContractorAssignmentStatus
+  assignment_notes?: string | null
+  contractor_notes?: string | null
+  last_status_change_at?: string | null
+}
+
+type AgentRuleApplication = {
+  id: string
+  created_at?: string | null
+  rule_id: string
+  application_type: 'suggested' | 'applied'
+  applied_by_agent: AgentName
+  property_id?: string | null
+  work_request_id?: string | null
+  task_type: string
+  output_context: string
+  generated_output_excerpt: string
+  human_feedback_status: 'accepted' | 'edited' | 'rejected' | 'ignored'
+  human_feedback_notes?: string | null
+  confidence_before?: string | null
+  confidence_after?: string | null
+  reviewed_at?: string | null
+}
+
+type AgentRuleApplicationFeedbackStatus = AgentRuleApplication['human_feedback_status']
+type AgentRuleApplicationType = AgentRuleApplication['application_type']
+
+type LearningRuleApplicationContext = {
+  property_id?: string | null
+  work_request_id?: string | null
+  generated_output_excerpt?: string
+  confidence_before?: string | null
+  application_type?: AgentRuleApplicationType
+}
+
+type CorrectionLearningEvaluation = {
+  correction_category: CorrectionCategory
+  learning_value_score: number
+  reusable: boolean
+  should_ask_confirmation: boolean
+  confirmation_question: string
+  affected_agents: AgentName[]
+  inferred_reason: string
+}
+
+type CorrectionLearningInput = {
+  source_agent: AgentName
+  task_type: string
+  original_agent_output: string
+  human_correction: string
+}
+
+const AGENT_NAMES: AgentName[] = [
+  'design_agent',
+  'estimator_agent',
+  'material_takeoff_agent',
+  'photo_interpreter_agent',
+  'client_communication_agent',
+  'project_workflow_agent',
+  'contractor_review_agent',
+  'pricing_memory_agent',
+  'quality_check_agent',
+]
+
+const CORRECTION_CATEGORIES: CorrectionCategory[] = [
+  'function',
+  'safety',
+  'access',
+  'sequencing',
+  'cost',
+  'quantity',
+  'labor',
+  'material',
+  'code_or_best_practice',
+  'user_comfort',
+  'workflow_logic',
+  'client_communication',
+  'style_preference',
+  'wording_preference',
+  'visual_preference',
+]
+
+const LESSON_STATUSES: LessonStatus[] = [
+  'human_verified',
+  'needs_confirmation',
+  'draft',
+  'rejected',
+  'deprecated',
+]
+
+const AGENT_RULE_FEEDBACK_STATUSES: AgentRuleApplicationFeedbackStatus[] = [
+  'ignored',
+  'accepted',
+  'edited',
+  'rejected',
+]
+
+const AGENT_RULE_APPLICATION_TYPES: AgentRuleApplicationType[] = ['suggested', 'applied']
+
+const AGENT_MEMORY_CONFLICT_STATUSES: AgentMemoryConflictStatus[] = [
+  'needs_review',
+  'resolved',
+  'dismissed',
+  'escalated',
+  'needs_site_review',
+  'ask_client',
+]
+
+const SOURCE_LESSON_SOURCE_TYPES: SourceLessonSourceType[] = ['youtube', 'article', 'manual', 'field_note']
+const SOURCE_LESSON_STATUSES: SourceLessonStatus[] = ['needs_review', 'draft', 'approved', 'rejected', 'archived']
+
+const EMPTY_SOURCE_LESSON_DRAFT: SourceLessonDraft = {
+  source_type: 'youtube',
+  source_url: '',
+  source_title: '',
+  work_type: 'General Repair',
+  problem_description: '',
+  admin_intent: 'Extract hidden labor, tools, safety risks, cleanup, missing info, and estimate impact.',
+  lesson_summary: '',
+  observed_method: '',
+  hidden_labor: '',
+  job_steps: [],
+  tools_materials: [],
+  safety_notes: '',
+  access_notes: '',
+  cleanup_notes: '',
+  estimate_impact: '',
+  missing_info_questions: [],
+  applies_when: '',
+  does_not_apply_when: '',
+  confidence: 'low',
+  status: 'draft',
+  admin_notes: '',
+  linked_property_id: '',
+  linked_work_request_id: '',
+  linked_repair_item_id: '',
+}
+
+const ACTIVE_CONTRACTOR_ASSIGNMENT_STATUSES: ContractorAssignmentStatus[] = [
+  'assigned',
+  'accepted',
+  'walkthrough_requested',
+  'revision_requested',
+]
+
+const CONTRACTOR_UPDATABLE_ASSIGNMENT_STATUSES: ContractorAssignmentStatus[] = [
+  'accepted',
+  'declined',
+  'walkthrough_requested',
+  'revision_requested',
+  'completed',
+]
+
+function canApproveOperationalMemory(role: MemoryActorRole) {
+  return role === 'owner' || role === 'admin'
+}
+
+function canResolveMemoryConflict(role: MemoryActorRole) {
+  return role === 'owner' || role === 'admin'
+}
+
+function canEditOperationalMemory(role: MemoryActorRole) {
+  return role === 'owner' || role === 'admin' || role === 'estimator'
+}
+
+function canProvideRuleFeedback(
+  role: MemoryActorRole,
+  application?: AgentRuleApplication | null,
+  status?: AgentRuleApplicationFeedbackStatus,
+  assignments: ContractorAssignment[] = [],
+  currentUserId?: string | null
+) {
+  if (role === 'owner' || role === 'admin') return true
+  if (role === 'estimator') return status !== 'accepted'
+  if (role !== 'contractor') return false
+  if (!application || application.application_type !== 'applied' || !currentUserId) return false
+  return assignments.some((assignment) => {
+    const active = ACTIVE_CONTRACTOR_ASSIGNMENT_STATUSES.includes(assignment.status)
+    const sameContractor = assignment.contractor_profile_id === currentUserId
+    const sameProperty = Boolean(application.property_id && assignment.property_id === application.property_id)
+    const sameRequest = Boolean(application.work_request_id && assignment.work_request_id === application.work_request_id)
+    return active && sameContractor && (sameProperty || sameRequest)
+  })
+}
 
 type IntakeDraft = {
   requesterName?: string
@@ -222,6 +588,27 @@ type PricingMemoryEntry = {
   human_verified: boolean | null
   notes: string | null
   last_checked?: string | null
+}
+
+type HumanPricingMemory = {
+  id: string
+  property_id?: string | null
+  work_request_id?: string | null
+  repair_item_id?: string | null
+  work_type?: string | null
+  item_name?: string | null
+  original_ai_price?: number | null
+  human_approved_price?: number | null
+  unit?: string | null
+  zip?: string | null
+  source?: string | null
+  markup_notes?: string | null
+  admin_notes?: string | null
+  confidence_before?: string | null
+  confidence_after?: string | null
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+  human_verified?: boolean | null
 }
 
 type MaterialEstimateDraftLine = {
@@ -524,19 +911,54 @@ type JobExecutionStep = {
 }
 
 type JobExecutionStepLearningRecord = {
+  id?: string
+  property_id?: string | null
+  work_request_id?: string | null
+  repair_item_id?: string | null
   work_type: string
+  repair_context?: string | null
   repair_description_context: string
   step_title: string
   labor_scope: string
+  trade?: string | null
+  ai_hours_low?: number | null
+  ai_hours_high?: number | null
+  approved_hours_low?: number | null
+  approved_hours_high?: number | null
   approved_hours: number | null
+  materials_tools?: string | null
+  equipment?: string | null
+  access_notes?: string | null
+  safety_notes?: string | null
+  cleanup_notes?: string | null
+  disposal_needed?: boolean | null
   rejected_reason: string | null
   admin_notes: string | null
+  status?: 'approved' | 'edited' | 'rejected' | 'added_by_human' | null
   confidence_before: string
   confidence_after: string
   reviewed_at: string
 }
 
 type JobExecutionStepAction = 'edited' | 'approved' | 'rejected' | 'added' | 'reordered'
+
+type PhotoFieldMemory = {
+  id: string
+  property_id?: string | null
+  work_request_id?: string | null
+  file_id?: string | null
+  photo_description?: string | null
+  trade_category?: string | null
+  work_phase?: string | null
+  equipment_seen?: string | null
+  field_consequence?: string | null
+  estimate_impact?: string | null
+  required_line_items?: string[] | null
+  risk_flags?: string[] | null
+  human_verified?: boolean | null
+  follow_up_lesson?: string | null
+  reviewed_at?: string | null
+}
 
 type JobPacketMetadata = {
   id: string
@@ -619,7 +1041,6 @@ const JOB_STEP_STATUSES: JobExecutionStepStatus[] = ['ai_draft', 'needs_review',
 const AI_RESEARCH_DRAFT_STATUSES: AiResearchDraftStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
 
 const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
-const JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-learning-v1'
 const JOB_PACKET_METADATA_LOCAL_STORAGE_KEY = 'shelter-prep-job-packets-v1'
 const AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY = 'shelter-prep-ai-research-drafts-v1'
 const PROPERTY_AGENT_OUTPUT_LOCAL_STORAGE_KEY = 'shelter-prep-property-agent-outputs-v1'
@@ -651,13 +1072,118 @@ function normalizeJobScopeTokenText(value = '') {
 function jobScopeMemoryMatchesCurrentRequest(memory: JobExecutionStepLearningRecord, request: WorkRequest) {
   const requestText = normalizeJobScopeTokenText([request.workType, request.description].join(' '))
   const memoryText = normalizeJobScopeTokenText(
-    [memory.work_type, memory.repair_description_context, memory.step_title, memory.labor_scope].join(' ')
+    [memory.work_type, memory.repair_context, memory.repair_description_context, memory.step_title, memory.labor_scope, memory.trade].join(' ')
   )
   const requestTokens = requestText.split(' ').filter((word) => word.length > 4)
   if (!requestTokens.length || !memoryText) return false
 
   const matchedTokens = requestTokens.filter((word) => memoryText.includes(word))
   return matchedTokens.length >= Math.min(2, requestTokens.length)
+}
+
+function pricingMemoryMatchesCurrentRequest(memory: HumanPricingMemory, request: WorkRequest) {
+  if (!memory.human_verified) return false
+  const sameZipOrUnknown = !memory.zip || !request.zip || memory.zip === request.zip
+  const requestText = normalizeJobScopeTokenText([request.workType, request.description, request.propertyFacts?.propertyType || ''].join(' '))
+  const memoryText = normalizeJobScopeTokenText([memory.work_type, memory.item_name, memory.admin_notes, memory.markup_notes].join(' '))
+  const requestTokens = requestText.split(' ').filter((word) => word.length > 4)
+  const matchedTokens = requestTokens.filter((word) => memoryText.includes(word))
+  return sameZipOrUnknown && matchedTokens.length >= Math.min(2, requestTokens.length || 2)
+}
+
+function evaluateCorrectionForLearning(input: CorrectionLearningInput): CorrectionLearningEvaluation {
+  const text = normalizeJobScopeTokenText(
+    [input.task_type, input.original_agent_output, input.human_correction].join(' ')
+  )
+  const hasAny = (words: string[]) => words.some((word) => text.includes(word))
+  let score = 0
+  let correctionCategory: CorrectionCategory = 'style_preference'
+  let inferredReason = 'Correction appears to be a preference unless the human confirms reusable operational logic.'
+
+  const functionHit = hasAny(['function', 'usable', 'feasible', 'work', 'operate', 'placement', 'layout'])
+  const safetyAccessComfortHit = hasAny(['safe', 'safety', 'access', 'spray', 'reach', 'entry', 'comfort', 'ergonomic', 'hazard'])
+  const costMaterialLaborHit = hasAny(['cost', 'price', 'labor', 'hour', 'material', 'quantity', 'takeoff', 'waste', 'markup'])
+  const assumptionHit = hasAny(['instead', 'not', 'wrong', 'actually', 'because', 'should', 'move', 'change'])
+  const futureHit = hasAny(['when', 'usually', 'future', 'similar', 'feasible', 'before', 'after', 'avoid'])
+  const styleOnly = hasAny(['color', 'font', 'visual', 'style', 'taste', 'prettier'])
+  const wordingOnly = hasAny(['wording', 'tone', 'phrase', 'copy', 'say'])
+
+  if (functionHit) {
+    score += 2
+    correctionCategory = 'function'
+    inferredReason = 'The correction may affect how the repair or design works in the field.'
+  }
+  if (safetyAccessComfortHit) {
+    score += 2
+    correctionCategory = text.includes('access') || text.includes('reach') ? 'access' : text.includes('safe') ? 'safety' : 'user_comfort'
+    inferredReason = 'The correction may improve safety, access, or user comfort.'
+  }
+  if (costMaterialLaborHit) {
+    score += 2
+    correctionCategory = text.includes('labor') || text.includes('hour') ? 'labor' : text.includes('material') || text.includes('quantity') ? 'material' : 'cost'
+    inferredReason = 'The correction may change cost, labor, quantity, or material assumptions.'
+  }
+  if (assumptionHit) score += 2
+  if (futureHit) score += 2
+  if (styleOnly && !functionHit && !safetyAccessComfortHit && !costMaterialLaborHit) {
+    score -= 2
+    correctionCategory = 'visual_preference'
+  }
+  if (wordingOnly && !functionHit && !safetyAccessComfortHit && !costMaterialLaborHit) {
+    score -= 2
+    correctionCategory = 'wording_preference'
+  }
+
+  const affectedAgents = new Set<AgentName>([input.source_agent, 'quality_check_agent'])
+  if (['function', 'user_comfort', 'code_or_best_practice'].includes(correctionCategory)) {
+    affectedAgents.add('design_agent')
+    affectedAgents.add('estimator_agent')
+  }
+  if (['cost', 'quantity', 'labor', 'material'].includes(correctionCategory)) {
+    affectedAgents.add('estimator_agent')
+    affectedAgents.add('material_takeoff_agent')
+    affectedAgents.add('pricing_memory_agent')
+  }
+  if (['safety', 'access', 'sequencing', 'workflow_logic'].includes(correctionCategory)) {
+    affectedAgents.add('project_workflow_agent')
+    affectedAgents.add('contractor_review_agent')
+  }
+  if (correctionCategory === 'client_communication' || correctionCategory === 'wording_preference') {
+    affectedAgents.add('client_communication_agent')
+  }
+  if (input.source_agent === 'photo_interpreter_agent') affectedAgents.add('photo_interpreter_agent')
+
+  const shouldAskConfirmation = score >= 6
+  const confirmationQuestion = shouldAskConfirmation
+    ? buildTargetedLearningConfirmation(input.human_correction, correctionCategory, inferredReason)
+    : ''
+
+  return {
+    correction_category: correctionCategory,
+    learning_value_score: Math.max(0, score),
+    reusable: score >= 3,
+    should_ask_confirmation: shouldAskConfirmation,
+    confirmation_question: confirmationQuestion,
+    affected_agents: Array.from(affectedAgents),
+    inferred_reason: inferredReason,
+  }
+}
+
+function buildTargetedLearningConfirmation(
+  correction: string,
+  category: CorrectionCategory,
+  inferredReason: string
+) {
+  const normalized = normalizeJobScopeTokenText(correction)
+  if (normalized.includes('shower') || normalized.includes('handle') || normalized.includes('control')) {
+    return 'Got it - is the reason so the user can turn the water on before stepping into the spray?'
+  }
+  if (category === 'access') return 'Should this become a reusable access rule for similar site conditions, with exceptions for constraints or client preference?'
+  if (category === 'safety') return 'Should future drafts treat this as a safety rule when similar hazards or access conditions appear?'
+  if (category === 'labor') return 'Should future estimates include this labor adjustment when similar scope, access, and sequencing conditions match?'
+  if (category === 'material' || category === 'quantity') return 'Should future takeoffs use this quantity/material adjustment only when the same scope and field conditions match?'
+  if (category === 'cost') return 'Should future estimates use this pricing logic only for similar work type, region, and verified scope?'
+  return `${inferredReason} Should Shelter Prep save this as a conditional rule for similar future jobs?`
 }
 
 function buildJobExecutionSteps(request: WorkRequest, learnedRecords: JobExecutionStepLearningRecord[] = []) {
@@ -773,15 +1299,15 @@ function buildJobExecutionSteps(request: WorkRequest, learnedRecords: JobExecuti
       step_number: 0,
       title: record.step_title,
       labor_scope: record.labor_scope,
-      trade: request.workType || 'General repair',
-      estimated_hours_low: Math.max(0, Number(record.approved_hours || 0) * 0.8),
-      estimated_hours_high: Number(record.approved_hours || 0) || 1,
-      materials_tools: 'Use learned scope as a review prompt; verify current materials before approval.',
-      equipment: 'Verify against current site conditions.',
-      safety_notes: 'Apply only if current scope matches the learned repair context.',
-      access_notes: 'Confirm current job access before relying on memory.',
-      cleanup_notes: 'Match cleanup to current scope.',
-      disposal_needed: false,
+      trade: record.trade || request.workType || 'General repair',
+      estimated_hours_low: Number(record.approved_hours_low ?? record.approved_hours ?? 1),
+      estimated_hours_high: Number(record.approved_hours_high ?? record.approved_hours ?? 1),
+      materials_tools: record.materials_tools || 'Use verified memory as supporting context; verify current materials before approval.',
+      equipment: record.equipment || 'Verify against current site conditions.',
+      safety_notes: record.safety_notes || 'Apply only if current scope matches the learned repair context.',
+      access_notes: record.access_notes || 'Confirm current job access before relying on memory.',
+      cleanup_notes: record.cleanup_notes || 'Match cleanup to current scope.',
+      disposal_needed: Boolean(record.disposal_needed),
       confidence: 'learned_scope_match_needs_review',
       status: 'ai_draft' as JobExecutionStepStatus,
       admin_notes: `Learned from prior review on ${new Date(record.reviewed_at).toLocaleDateString()}.`,
@@ -1208,6 +1734,132 @@ function getAgentDisplayName(agentName: PropertyAgentName) {
   return agentName
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function getLearningDisplayName(value?: string | null) {
+  return (value || 'Not set')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function getLearningAgentList(agents?: AgentName[] | null) {
+  return Array.isArray(agents) && agents.length
+    ? agents.map((agent) => getLearningDisplayName(agent)).join(', ')
+    : 'No agents assigned yet'
+}
+
+function getSourceLessonArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+}
+
+function getSourceLessonDisplayList(value: unknown) {
+  return getSourceLessonArray(value).join('\n')
+}
+
+function splitSourceLessonLines(value: string) {
+  return value
+    .split(/\n|;/)
+    .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+    .filter(Boolean)
+}
+
+function inferSourceLessonType(url: string): SourceLessonSourceType {
+  const normalized = url.toLowerCase()
+  if (normalized.includes('youtube.com') || normalized.includes('youtu.be')) return 'youtube'
+  if (normalized.endsWith('.pdf') || normalized.includes('manual')) return 'manual'
+  if (normalized.startsWith('http')) return 'article'
+  return 'field_note'
+}
+
+function asNullableUuid(value?: string | null) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null
+}
+
+function getSourceLessonRequestLabel(request: WorkRequest) {
+  return `${request.propertyAddress || 'Property'} - ${request.workType || 'Work request'}`
+}
+
+function normalizeSourceLessonRow(row: SourceLesson): SourceLesson {
+  return {
+    ...row,
+    job_steps: getSourceLessonArray(row.job_steps),
+    tools_materials: getSourceLessonArray(row.tools_materials),
+    missing_info_questions: getSourceLessonArray(row.missing_info_questions),
+    linked_property_id: row.linked_property_id || '',
+    linked_work_request_id: row.linked_work_request_id || '',
+    linked_repair_item_id: row.linked_repair_item_id || '',
+  }
+}
+
+function buildSourceLessonDraftFromNotes(input: SourceLessonDraft, notes: string): SourceLessonDraft {
+  const allText = normalizeJobScopeTokenText([input.work_type, input.problem_description, input.admin_intent, notes].join(' '))
+  const lines = splitSourceLessonLines(notes)
+  const jobSteps = lines
+    .filter((line) =>
+      normalizeJobScopeTokenText(line).match(/\b(remove|prep|protect|measure|cut|install|fasten|patch|sand|prime|paint|clean|haul|verify|inspect|stage|mask|dry|seal|caulk|replace|repair)\b/)
+    )
+    .slice(0, 8)
+  const toolsMaterials = lines
+    .filter((line) =>
+      normalizeJobScopeTokenText(line).match(/\b(tool|saw|drill|screw|fastener|caulk|adhesive|primer|paint|tape|plastic|ladder|vacuum|glove|mask|blade|brush|roller|lumber|drywall|compound|material)\b/)
+    )
+    .slice(0, 10)
+  const missingQuestions = [
+    'Are dimensions, quantities, and site photos sufficient for estimating?',
+    'Are utilities, moisture, structural damage, or code constraints involved?',
+    'Who is responsible for access, parking, staging, and debris removal?',
+  ]
+  const safetyNotes: string[] = []
+  const accessNotes: string[] = []
+  const cleanupNotes: string[] = []
+  const hiddenLaborNotes: string[] = []
+
+  if (allText.match(/\b(ladder|roof|height|deck|exterior|saw|blade|electrical|wire|mold|lead|asbestos|dust|ppe|glove|mask)\b/)) {
+    safetyNotes.push('Confirm hazards, PPE, dust control, utilities, and fall/ladder exposure before work.')
+  }
+  if (allText.match(/\b(access|parking|staging|occupied|tenant|key|entry|tight|crawl|attic|stairs|haul)\b/)) {
+    accessNotes.push('Verify entry, parking, staging, work hours, material path, and occupied-area constraints.')
+  }
+  if (allText.match(/\b(clean|debris|haul|dust|vacuum|dispose|dump|protect|mask)\b/)) {
+    cleanupNotes.push('Include protection removal, dust/debris cleanup, and haul-away responsibility.')
+  }
+  if (allText.match(/\b(mask|protect|dry|return|setup|staging|demo|haul|patch|prime|paint|dispose|trip|pickup)\b/)) {
+    hiddenLaborNotes.push('Include setup/protection, material handling, dry-time returns, debris handling, and finish cleanup as separate labor.')
+  }
+
+  return {
+    ...input,
+    source_type: input.source_url ? inferSourceLessonType(input.source_url) : input.source_type,
+    lesson_summary:
+      input.lesson_summary ||
+      `Draft field lesson for ${input.work_type || 'this repair'}: use the source notes as evidence, then confirm scope, hidden labor, safety, access, cleanup, and estimate impact before saving memory.`,
+    observed_method:
+      input.observed_method ||
+      (jobSteps.length
+        ? jobSteps.slice(0, 4).join(' ')
+        : 'Manual notes captured the source method. Admin review should confirm exact sequence before use.'),
+    hidden_labor: input.hidden_labor || hiddenLaborNotes.join(' ') || 'Check for prep, protection, staging, material handling, return trips, disposal, and cleanup labor.',
+    job_steps: input.job_steps.length ? input.job_steps : jobSteps.length ? jobSteps : ['Review source notes and photos/transcript.', 'Confirm site conditions and constraints.', 'Draft scope steps for admin review.'],
+    tools_materials: input.tools_materials.length ? input.tools_materials : toolsMaterials.length ? toolsMaterials : ['Confirm tools and materials from source notes before estimating.'],
+    safety_notes: input.safety_notes || safetyNotes.join(' ') || 'Human review required for safety risks before operational use.',
+    access_notes: input.access_notes || accessNotes.join(' ') || 'Confirm access, staging, parking, and occupied-area limits.',
+    cleanup_notes: input.cleanup_notes || cleanupNotes.join(' ') || 'Confirm dust control, debris removal, and final cleanup expectations.',
+    estimate_impact: input.estimate_impact || 'May affect labor hours, material allowances, trip count, protection, disposal, and contingency.',
+    missing_info_questions: input.missing_info_questions.length ? input.missing_info_questions : missingQuestions,
+    applies_when: input.applies_when || `Apply only to similar ${input.work_type || 'repair'} scopes with matching source evidence and field conditions.`,
+    does_not_apply_when: input.does_not_apply_when || 'Do not apply when site conditions, access, materials, code requirements, moisture/structural risk, or client expectations differ.',
+    confidence: notes.trim().length > 600 ? 'medium' : 'low',
+    status: 'needs_review',
+    admin_notes: [
+      input.admin_notes,
+      notes ? `Manual notes/transcript used for draft:\n${notes}` : 'TODO: Add transcript extraction API integration before automated source extraction.',
+      'TODO: YouTube transcript extraction API integration later. Do not automatically train from YouTube.',
+    ].filter(Boolean).join('\n\n'),
+  }
 }
 
 type EstimateResearchRow = {
@@ -1912,6 +2564,8 @@ export default function App() {
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [adminPinInput, setAdminPinInput] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [currentUserRole, setCurrentUserRole] = useState<MemoryActorRole>('viewer')
   const [isCompact, setIsCompact] = useState(() =>
     typeof window === 'undefined' ? false : window.matchMedia('(max-width: 760px)').matches
   )
@@ -2000,6 +2654,39 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [sellerPrepSavingId, setSellerPrepSavingId] = useState<string | null>(null)
   const [pricingMemoryEntries, setPricingMemoryEntries] = useState<PricingMemoryEntry[]>([])
   const [pricingMemoryLoading, setPricingMemoryLoading] = useState(false)
+  const [agentLearningEvents, setAgentLearningEvents] = useState<AgentLearningEvent[]>([])
+  const [agentLearningRules, setAgentLearningRules] = useState<AgentLearningRule[]>([])
+  const [agentRuleApplications, setAgentRuleApplications] = useState<AgentRuleApplication[]>([])
+  const [agentMemoryConflicts, setAgentMemoryConflicts] = useState<AgentMemoryConflict[]>([])
+  const [agentMemoryAuditLogs, setAgentMemoryAuditLogs] = useState<AgentMemoryAuditLog[]>([])
+  const [contractorProfiles, setContractorProfiles] = useState<ContractorProfile[]>([])
+  const [contractorAssignments, setContractorAssignments] = useState<ContractorAssignment[]>([])
+  const [contractorAssignmentLoading, setContractorAssignmentLoading] = useState(false)
+  const [contractorAssignmentSavingId, setContractorAssignmentSavingId] = useState<string | null>(null)
+  const [selectedContractorByRequest, setSelectedContractorByRequest] = useState<Record<string, string>>({})
+  const [contractorNotesByAssignment, setContractorNotesByAssignment] = useState<Record<string, string>>({})
+  const [agentLearningLoading, setAgentLearningLoading] = useState(false)
+  const [agentLearningSavingId, setAgentLearningSavingId] = useState<string | null>(null)
+  const [agentLearningStatusFilter, setAgentLearningStatusFilter] = useState<'all' | LessonStatus>('human_verified')
+  const [sourceLessons, setSourceLessons] = useState<SourceLesson[]>([])
+  const [sourceLessonsLoading, setSourceLessonsLoading] = useState(false)
+  const [sourceLessonSavingId, setSourceLessonSavingId] = useState<string | null>(null)
+  const [sourceLessonStatusFilter, setSourceLessonStatusFilter] = useState<'all' | SourceLessonStatus>('needs_review')
+  const [sourceLessonDraft, setSourceLessonDraft] = useState<SourceLessonDraft>(EMPTY_SOURCE_LESSON_DRAFT)
+  const [sourceLessonManualNotes, setSourceLessonManualNotes] = useState('')
+  const [ruleApplicationRuleFilter, setRuleApplicationRuleFilter] = useState('all')
+  const [ruleApplicationTypeFilter, setRuleApplicationTypeFilter] = useState<'all' | AgentRuleApplicationType>('all')
+  const [ruleApplicationAgentFilter, setRuleApplicationAgentFilter] = useState<'all' | AgentName>('all')
+  const [ruleApplicationFeedbackFilter, setRuleApplicationFeedbackFilter] = useState<'all' | AgentRuleApplicationFeedbackStatus>('all')
+  const [ruleApplicationTaskFilter, setRuleApplicationTaskFilter] = useState('')
+  const [memoryConflictStatusFilter, setMemoryConflictStatusFilter] = useState<'all' | AgentMemoryConflictStatus>('needs_review')
+  const [learningDraft, setLearningDraft] = useState<CorrectionLearningInput>({
+    source_agent: 'quality_check_agent',
+    task_type: '',
+    original_agent_output: '',
+    human_correction: '',
+  })
+  const memoryActorRole: MemoryActorRole = currentUserRole
 
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])
   const [laborTrade, setLaborTrade] = useState('')
@@ -2030,6 +2717,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [estimateContingencyPercent, setEstimateContingencyPercent] = useState('10')
   const [estimateNotes, setEstimateNotes] = useState('Draft estimate. Final price requires human review and site verification.')
   const [estimateIntelligence, setEstimateIntelligence] = useState<EstimateIntelligenceResult | null>(null)
+  const [matchedPricingMemory, setMatchedPricingMemory] = useState<HumanPricingMemory[]>([])
+  const [matchedJobStepMemory, setMatchedJobStepMemory] = useState<JobExecutionStepLearningRecord[]>([])
+  const [matchedFieldMemory, setMatchedFieldMemory] = useState<PhotoFieldMemory[]>([])
   const [showRejectedEstimateItems, setShowRejectedEstimateItems] = useState(false)
   const [showManualMaterialForm, setShowManualMaterialForm] = useState(false)
   const [manualMaterialDraft, setManualMaterialDraft] = useState<ManualMaterialDraft>(EMPTY_MANUAL_MATERIAL_DRAFT)
@@ -2043,6 +2733,57 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   useEffect(() => {
     loadRequestsFromSupabase()
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    async function loadProfileRole() {
+      try {
+        const { data: userData } = await supabase.auth.getUser()
+        const user = userData?.user
+        if (!mounted) return
+
+    if (!user) {
+      setCurrentUserId(null)
+      setCurrentUserRole('viewer')
+      return
+    }
+
+        setCurrentUserId(user.id)
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle()
+
+        if (error) throw error
+
+        const role = String((profile as { role?: string } | null)?.role || 'viewer') as MemoryActorRole
+        setCurrentUserRole(
+          ['owner', 'admin', 'estimator', 'contractor', 'agent', 'client', 'viewer'].includes(role)
+            ? role
+            : 'viewer'
+        )
+        if (role === 'contractor') {
+          setActiveTab((tab) => (tab === 'new' ? 'dashboard' : tab))
+        }
+      } catch (error) {
+        console.warn('Could not load Supabase profile role; using viewer role.', error)
+        if (mounted) {
+          setCurrentUserId(null)
+          setCurrentUserRole('viewer')
+        }
+      }
+    }
+
+    loadProfileRole()
+    const { data } = supabase.auth.onAuthStateChange(() => loadProfileRole())
+
+    return () => {
+      mounted = false
+      data.subscription.unsubscribe()
+    }
   }, [])
 
   useEffect(() => {
@@ -2067,7 +2808,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (isAdmin && activeTab === 'messages') loadMessageCenter()
     if (isAdmin && activeTab === 'archived') loadArchivedRequestsFromSupabase()
     if (isAdmin && activeTab === 'pricingMemory') loadPricingMemoryEntries()
-  }, [isAdmin, activeTab])
+    if (isAdmin && activeTab === 'agentLearning') loadAgentLearning()
+    if (isAdmin && activeTab === 'fieldLessons') loadSourceLessons()
+    if ((isAdmin || currentUserRole === 'contractor') && activeTab === 'dashboard') loadContractorAssignments()
+  }, [isAdmin, activeTab, currentUserRole])
 
   useEffect(() => {
     if (!appliedLaborRate) return
@@ -2761,6 +3505,51 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
   }
 
+  async function savePhotoFieldMemory(request: WorkRequest, file: StoredFile) {
+    const photoDescription = window.prompt('What did you verify from this photo or field note?', file.name)
+    if (!photoDescription?.trim()) return
+
+    const fieldConsequence = window.prompt('What should future estimates remember from this?', 'Include access, protection, cleanup, or hidden labor if similar.')
+    if (!fieldConsequence?.trim()) return
+
+    const requiredLineItems = window
+      .prompt('Required line items to remember? Separate with commas.', '')
+      ?.split(',')
+      .map((item) => item.trim())
+      .filter(Boolean) || []
+    const riskFlags = window
+      .prompt('Risk flags to remember? Separate with commas.', '')
+      ?.split(',')
+      .map((item) => item.trim())
+      .filter(Boolean) || []
+
+    const record = {
+      property_id: getRequestPropertyId(request),
+      work_request_id: request.id,
+      file_id: file.id || file.path || file.name,
+      photo_description: photoDescription.trim(),
+      trade_category: request.workType || 'General repair',
+      work_phase: 'field_review',
+      equipment_seen: '',
+      field_consequence: fieldConsequence.trim(),
+      estimate_impact: fieldConsequence.trim(),
+      required_line_items: requiredLineItems,
+      risk_flags: riskFlags,
+      human_verified: true,
+      follow_up_lesson: fieldConsequence.trim(),
+      reviewed_at: new Date().toISOString(),
+    }
+
+    try {
+      const { error } = await supabase.from('photo_field_memory').insert(record)
+      if (error) throw error
+      alert('Saved as verified field memory.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save field memory. Run the human-verified learning migration first.')
+    }
+  }
+
   function loadLocalPropertyAgentOutputs(request: WorkRequest) {
     try {
       return JSON.parse(
@@ -2840,8 +3629,17 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     e.preventDefault()
     setSuccessMessage('')
 
-    if (!requesterName || !email || !propertyAddress || !city || !stateValue || !zip || !description) {
-      alert('Please fill out all required fields.')
+    const hasMedia = photoFiles.length > 0 || documentFiles.length > 0
+    const trimmedDescription = description.trim()
+    const safeDescription = trimmedDescription || (hasMedia ? 'Needs review from uploaded media.' : '')
+
+    if (!propertyAddress.trim()) {
+      alert('Add the property address to start.')
+      return
+    }
+
+    if (!safeDescription) {
+      alert('Add a short note or attach photos, video, or an inspection report.')
       return
     }
 
@@ -2858,7 +3656,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           city,
           state: stateValue,
           zip,
-          description,
+          description: safeDescription,
           status: 'new',
         })
         .select('id, created_at')
@@ -2912,7 +3710,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         occupancy,
         timeline,
         propertyFacts: verifiedPropertyFacts,
-        description,
+        description: safeDescription,
         photos,
         documents,
         status: 'new',
@@ -3693,6 +4491,20 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         .order('last_checked', { ascending: false })
 
       if (memoryError) throw memoryError
+      const humanPricingMatches = await loadVerifiedPricingMemory(request)
+      const mappedHumanPricingMemory: PricingMemoryEntry[] = humanPricingMatches.map((memory) => ({
+        id: memory.id,
+        created_at: memory.reviewed_at || null,
+        item_name: memory.item_name || null,
+        category: memory.work_type || 'Material',
+        unit: memory.unit || 'unit',
+        verified_price: memory.human_approved_price || null,
+        zip: memory.zip || null,
+        source: memory.source || 'human_pricing_memory',
+        human_verified: true,
+        notes: memory.admin_notes || 'Based on verified memory from similar jobs.',
+        last_checked: memory.reviewed_at || null,
+      }))
 
       const sourceText = [request.workType, request.description].join(' ').toLowerCase()
       if (!sourceText.includes('deck')) {
@@ -3700,7 +4512,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         return
       }
 
-      const draftLines = buildDeckMaterialEstimateLines(request, (memoryRows || []) as PricingMemoryEntry[])
+      const draftLines = buildDeckMaterialEstimateLines(request, [
+        ...mappedHumanPricingMemory,
+        ...((memoryRows || []) as PricingMemoryEntry[]),
+      ])
 
       const inserts = draftLines.map((line) => ({
         property_id: getRequestPropertyId(request),
@@ -3758,6 +4573,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           setEstimateItems(localItems)
           setEstimateResearchRows([])
           setEstimateIntelligence(null)
+          await loadVerifiedPricingMemory(request)
+          await loadVerifiedFieldMemory(request)
           await applyBestLaborRateForRequest(request, false)
 
           alert(
@@ -3773,6 +4590,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateItems((data || []) as EstimateItem[])
       setEstimateResearchRows([])
       setEstimateIntelligence(null)
+      await loadVerifiedPricingMemory(request)
+      await loadVerifiedFieldMemory(request)
       await applyBestLaborRateForRequest(request, false)
 
       alert(
@@ -3912,16 +4731,6 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
-  function loadLocalJobScopeLearning() {
-    try {
-      return JSON.parse(
-        window.localStorage.getItem(JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY) || '[]'
-      ) as JobExecutionStepLearningRecord[]
-    } catch {
-      return []
-    }
-  }
-
   function loadLocalJobScopeSteps(request: WorkRequest) {
     try {
       return JSON.parse(
@@ -3939,6 +4748,94 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     )
   }
 
+  async function loadVerifiedJobStepMemory(request: WorkRequest) {
+    try {
+      const { data, error } = await supabase
+        .from('job_execution_step_learning')
+        .select('*')
+        .in('status', ['approved', 'edited', 'added_by_human'])
+        .order('reviewed_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+
+      const matches = ((data || []) as JobExecutionStepLearningRecord[])
+        .filter((record) => jobScopeMemoryMatchesCurrentRequest(record, request))
+        .slice(0, 6)
+      setMatchedJobStepMemory(matches)
+      return matches
+    } catch (error) {
+      console.warn('Verified job step memory unavailable; continuing without learned scope context.', error)
+      setMatchedJobStepMemory([])
+      return []
+    }
+  }
+
+  async function loadVerifiedPricingMemory(request: WorkRequest) {
+    try {
+      const { data, error } = await supabase
+        .from('human_pricing_memory')
+        .select('*')
+        .eq('human_verified', true)
+        .order('reviewed_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+
+      const matches = ((data || []) as HumanPricingMemory[])
+        .filter((record) => pricingMemoryMatchesCurrentRequest(record, request))
+        .slice(0, 8)
+      setMatchedPricingMemory(matches)
+      return matches
+    } catch (error) {
+      console.warn('Human pricing memory unavailable; continuing without pricing memory context.', error)
+      setMatchedPricingMemory([])
+      return []
+    }
+  }
+
+  async function loadVerifiedFieldMemory(request: WorkRequest) {
+    try {
+      const { data, error } = await supabase
+        .from('photo_field_memory')
+        .select('*')
+        .eq('human_verified', true)
+        .order('reviewed_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+
+      const requestText = normalizeJobScopeTokenText([
+        request.workType,
+        request.description,
+        request.propertyFacts?.propertyType || '',
+        request.occupancy,
+      ].join(' '))
+      const requestTokens = requestText.split(' ').filter((word) => word.length > 4)
+      const matches = ((data || []) as PhotoFieldMemory[])
+        .filter((record) => {
+          const memoryText = normalizeJobScopeTokenText([
+            record.trade_category,
+            record.photo_description,
+            record.field_consequence,
+            record.estimate_impact,
+            record.follow_up_lesson,
+            ...(record.required_line_items || []),
+            ...(record.risk_flags || []),
+          ].join(' '))
+          const matchedTokens = requestTokens.filter((word) => memoryText.includes(word))
+          return matchedTokens.length >= Math.min(2, requestTokens.length || 2)
+        })
+        .slice(0, 4)
+      setMatchedFieldMemory(matches)
+      return matches
+    } catch (error) {
+      console.warn('Photo/field memory unavailable; continuing without field memory context.', error)
+      setMatchedFieldMemory([])
+      return []
+    }
+  }
+
   function refreshJobScopeLaborTotals(steps: JobExecutionStep[]) {
     const approvedSteps = steps.filter((step) => step.status === 'approved')
     const activeSteps = steps.filter((step) => step.status !== 'rejected')
@@ -3954,9 +4851,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function loadJobExecutionScope(request: WorkRequest, createDraftIfMissing = true) {
-    const learnedRecords = loadLocalJobScopeLearning().filter((record) =>
-      jobScopeMemoryMatchesCurrentRequest(record, request)
-    )
+    const learnedRecords = await loadVerifiedJobStepMemory(request)
 
     try {
       const { data, error } = await supabase
@@ -3999,7 +4894,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function generateJobExecutionScope(request: WorkRequest) {
-    const draftSteps = buildJobExecutionSteps(request, loadLocalJobScopeLearning())
+    const draftSteps = buildJobExecutionSteps(request, await loadVerifiedJobStepMemory(request))
     setJobExecutionSteps(draftSteps)
     saveLocalJobScopeSteps(request, draftSteps)
     setJobScopeMessage('New AI-generated job execution draft created. Human approval required before final use.')
@@ -4066,14 +4961,32 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     confidenceBefore = step.confidence
   ) {
     const request = selectedEstimateRequest
+    const status =
+      action === 'approved' ? 'approved' : action === 'rejected' ? 'rejected' : action === 'added' ? 'added_by_human' : 'edited'
     const record: JobExecutionStepLearningRecord = {
+      property_id: step.property_id || getRequestPropertyId(request),
+      work_request_id: step.job_request_id || request?.id || null,
+      repair_item_id: step.repair_item_id || getDefaultRepairItemId(request, step.title),
       work_type: request?.workType || step.trade || 'General repair',
+      repair_context: getCurrentScopeReason(request),
       repair_description_context: getCurrentScopeReason(request),
       step_title: step.title,
       labor_scope: step.labor_scope,
+      trade: step.trade,
+      ai_hours_low: Number(step.estimated_hours_low || 0),
+      ai_hours_high: Number(step.estimated_hours_high || 0),
+      approved_hours_low: action === 'rejected' ? null : Number(step.estimated_hours_low || 0),
+      approved_hours_high: action === 'rejected' ? null : Number(step.estimated_hours_high || 0),
       approved_hours: action === 'rejected' ? null : Number(step.estimated_hours_high || 0),
+      materials_tools: step.materials_tools,
+      equipment: step.equipment,
+      access_notes: step.access_notes,
+      safety_notes: step.safety_notes,
+      cleanup_notes: step.cleanup_notes,
+      disposal_needed: step.disposal_needed,
       rejected_reason: action === 'rejected' ? step.admin_notes || 'Rejected by admin' : null,
       admin_notes: step.admin_notes || null,
+      status,
       confidence_before: confidenceBefore || 'ai_draft',
       confidence_after: step.confidence || (action === 'rejected' ? 'human_rejected' : 'human_reviewed'),
       reviewed_at: new Date().toISOString(),
@@ -4082,25 +4995,22 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     try {
       const { error } = await supabase.from('job_execution_step_learning').insert(record)
       if (error) throw error
+      if (request) await loadVerifiedJobStepMemory(request)
     } catch (error) {
-      console.warn('Job step learning table unavailable; storing local learning record.', error)
-      const existing = loadLocalJobScopeLearning()
-      window.localStorage.setItem(
-        JOB_SCOPE_LEARNING_LOCAL_STORAGE_KEY,
-        JSON.stringify([record, ...existing].slice(0, 200))
-      )
+      console.warn('Job step learning table unavailable; learning record was not saved.', error)
     }
   }
 
   async function saveJobExecutionStep(
     step: JobExecutionStep,
     action: JobExecutionStepAction = 'edited',
-    logLearning = true
+    logLearning = true,
+    confidenceBeforeOverride?: string
   ) {
     if (!selectedEstimateRequest) return
 
     setJobStepSavingId(step.id)
-    const confidenceBefore = step.confidence
+    const confidenceBefore = confidenceBeforeOverride || step.confidence
     const normalized: JobExecutionStep = {
       ...step,
       property_id: step.property_id || getRequestPropertyId(selectedEstimateRequest),
@@ -4151,7 +5061,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       confidence: 'human_approved',
     }
     updateLocalJobExecutionStep(step.id, updated)
-    await saveJobExecutionStep(updated, 'approved')
+    await saveJobExecutionStep(updated, 'approved', true, step.confidence)
   }
 
   async function rejectJobExecutionStep(step: JobExecutionStep) {
@@ -4166,7 +5076,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       confidence: 'human_rejected',
     }
     updateLocalJobExecutionStep(step.id, updated)
-    await saveJobExecutionStep(updated, 'rejected')
+    await saveJobExecutionStep(updated, 'rejected', true, step.confidence)
   }
 
   async function moveJobExecutionStep(id: string, direction: -1 | 1) {
@@ -4660,6 +5570,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       setEstimateItems((items || []) as EstimateItem[])
       setEstimateResearchRows((researchRows || []) as EstimateResearchRow[])
       setEstimateIntelligence(null)
+      await loadVerifiedPricingMemory(request)
+      await loadVerifiedFieldMemory(request)
       await applyBestLaborRateForRequest(request, false)
       await loadJobExecutionScope(request)
       await loadAiResearchDrafts(request)
@@ -4841,10 +5753,44 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       const { error } = await supabase.from('material_review_memory').insert(memoryRecord)
       if (error) throw error
     } catch (error) {
-      console.warn('Material review memory table unavailable; storing local learning record.', error)
-      const storageKey = 'shelter-prep-material-review-memory-v1'
-      const existing = JSON.parse(window.localStorage.getItem(storageKey) || '[]')
-      window.localStorage.setItem(storageKey, JSON.stringify([memoryRecord, ...existing].slice(0, 200)))
+      console.warn('Material review memory table unavailable; learning record was not saved.', error)
+    }
+  }
+
+  async function recordHumanPricingMemory(
+    item: EstimateItem,
+    confidenceBefore = item.confidence || 'needs_review'
+  ) {
+    const request = selectedEstimateRequest
+    const approvedPrice = Number(item.package_price || item.unit_price || 0)
+    if (!request || !item.human_approved || isEstimateItemRejected(item) || approvedPrice <= 0) return
+
+    const record = {
+      property_id: item.property_id || getRequestPropertyId(request),
+      work_request_id: item.request_id || item.job_id || item.lead_id || request.id,
+      repair_item_id: item.repair_item_id || getDefaultRepairItemId(request, item.item_name),
+      work_type: request.workType || item.category || 'Material estimate',
+      item_name: item.item_name,
+      original_ai_price: Number(item.original_unit_price ?? item.unit_price ?? 0),
+      human_approved_price: approvedPrice,
+      unit: item.package_unit || item.required_unit || 'unit',
+      zip: request.zip || '',
+      source: item.source_url || item.source || 'human_review',
+      markup_notes: `Markup ${estimateMarkupPercent || 0}%, contingency ${estimateContingencyPercent || 0}%.`,
+      admin_notes: item.admin_notes || item.quantity_reason || null,
+      confidence_before: confidenceBefore,
+      confidence_after: item.confidence || 'human_approved',
+      reviewed_by: 'admin',
+      reviewed_at: new Date().toISOString(),
+      human_verified: true,
+    }
+
+    try {
+      const { error } = await supabase.from('human_pricing_memory').insert(record)
+      if (error) throw error
+      if (request) await loadVerifiedPricingMemory(request)
+    } catch (error) {
+      console.warn('Human pricing memory table unavailable; learning record was not saved.', error)
     }
   }
 
@@ -4904,6 +5850,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           total_price: totalPrice,
           unit_price: unitPrice,
         })
+        if ((data as EstimateItem).human_approved) await recordHumanPricingMemory(data as EstimateItem, item.confidence || 'needs_review')
       }
     } catch (error: any) {
       console.error(error)
@@ -4994,7 +5941,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
     updateLocalEstimateItem(item.id, updated)
     await saveEstimateItem(updated, nextApproved ? 'approved' : 'edited', false)
-    if (nextApproved) await recordMaterialReviewLearning(updated, 'approved')
+    if (nextApproved) {
+      await recordMaterialReviewLearning(updated, 'approved')
+      await recordHumanPricingMemory(updated, item.confidence || 'needs_review')
+    }
   }
 
   async function rejectEstimateItem(item: EstimateItem) {
@@ -5058,6 +6008,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           )
         )
       )
+      await Promise.all(
+        approvableItems.map((item) =>
+          recordHumanPricingMemory(
+            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'approved' },
+            item.confidence || 'needs_review'
+          )
+        )
+      )
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not approve estimate items.')
@@ -5109,6 +6067,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
 
     alert('Saved. Future material estimates will use this human-approved local price first.')
+    await recordHumanPricingMemory(item, item.confidence || 'needs_review')
     await recordMaterialReviewLearning(item, 'saved_for_next_time', {
       confidence: 'saved_for_next_time',
     })
@@ -5520,6 +6479,1131 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       alert(error?.message || 'Could not load pricing memory. Run the pricing memory migration if needed.')
     } finally {
       setPricingMemoryLoading(false)
+    }
+  }
+
+  async function loadAgentLearning() {
+    setAgentLearningLoading(true)
+
+    try {
+      const [
+        { data: events, error: eventsError },
+        { data: rules, error: rulesError },
+        { data: applications, error: applicationsError },
+        { data: conflicts, error: conflictsError },
+        { data: auditLogs, error: auditError },
+      ] = await Promise.all([
+        supabase.from('agent_learning_events').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('agent_learning_rules').select('*').order('updated_at', { ascending: false }).limit(100),
+        supabase.from('agent_rule_applications').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('agent_memory_conflicts').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('agent_memory_audit_log').select('*').order('created_at', { ascending: false }).limit(200),
+      ])
+
+      if (eventsError) throw eventsError
+      if (rulesError) throw rulesError
+      if (applicationsError) throw applicationsError
+      if (conflictsError) throw conflictsError
+      if (auditError) throw auditError
+
+      setAgentLearningEvents((events || []) as AgentLearningEvent[])
+      setAgentLearningRules((rules || []) as AgentLearningRule[])
+      setAgentRuleApplications((applications || []) as AgentRuleApplication[])
+      setAgentMemoryConflicts((conflicts || []) as AgentMemoryConflict[])
+      setAgentMemoryAuditLogs((auditLogs || []) as AgentMemoryAuditLog[])
+    } catch (error) {
+      console.warn('Agent learning tables unavailable; apply the agent learning migration.', error)
+      setAgentLearningEvents([])
+      setAgentLearningRules([])
+      setAgentRuleApplications([])
+      setAgentMemoryConflicts([])
+      setAgentMemoryAuditLogs([])
+    } finally {
+      setAgentLearningLoading(false)
+    }
+  }
+
+  async function loadSourceLessons() {
+    setSourceLessonsLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('source_lessons')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+      setSourceLessons(((data || []) as SourceLesson[]).map(normalizeSourceLessonRow))
+    } catch (error) {
+      console.warn('Source lesson table unavailable; apply the source lessons migration.', error)
+      setSourceLessons([])
+    } finally {
+      setSourceLessonsLoading(false)
+    }
+  }
+
+  function selectSourceLessonLinkedRequest(requestId: string) {
+    const request = requests.find((item) => item.id === requestId)
+    setSourceLessonDraft((draft) => ({
+      ...draft,
+      linked_work_request_id: requestId,
+      linked_property_id: request ? getRequestPropertyId(request) : '',
+      linked_repair_item_id: request ? getDefaultRepairItemId(request, draft.work_type || request.workType) : draft.linked_repair_item_id,
+      work_type: request?.workType || draft.work_type,
+      problem_description: request?.description || draft.problem_description,
+    }))
+  }
+
+  async function generateSourceLessonDraft() {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to draft source lessons.')
+      return
+    }
+    if (!sourceLessonDraft.source_url.trim() && !sourceLessonManualNotes.trim()) {
+      alert('Paste a source link or manual field notes first.')
+      return
+    }
+    if (!sourceLessonDraft.problem_description.trim()) {
+      alert('Add the problem description first.')
+      return
+    }
+
+    const draft = buildSourceLessonDraftFromNotes(sourceLessonDraft, sourceLessonManualNotes)
+    setSourceLessonSavingId('new-source-lesson')
+    try {
+      const insert = {
+        ...draft,
+        created_by: currentUserId,
+        linked_property_id: draft.linked_property_id || null,
+        linked_work_request_id: draft.linked_work_request_id || null,
+        linked_repair_item_id: draft.linked_repair_item_id || null,
+      }
+      const { data, error } = await supabase.from('source_lessons').insert(insert).select().single()
+      if (error) throw error
+      const saved = normalizeSourceLessonRow(data as SourceLesson)
+      setSourceLessons((prev) => [saved, ...prev])
+      setSourceLessonDraft(EMPTY_SOURCE_LESSON_DRAFT)
+      setSourceLessonManualNotes('')
+      await logAgentMemoryAudit({
+        action_type: 'source_lesson_draft_created',
+        target_table: 'source_lessons',
+        target_id: saved.id,
+        previous_value: null,
+        new_value: saved as unknown as Record<string, unknown>,
+        reason: 'Lesson Summary Draft created from admin-provided source notes. Not operational memory.',
+        property_id: asNullableUuid(saved.linked_property_id),
+        work_request_id: asNullableUuid(saved.linked_work_request_id),
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save Lesson Summary Draft. Apply the source lessons migration first.')
+    } finally {
+      setSourceLessonSavingId(null)
+    }
+  }
+
+  async function updateSourceLesson(lesson: SourceLesson, changes: Partial<SourceLesson>, actionType = 'source_lesson_edited') {
+    const approving = changes.status === 'approved' || Boolean(changes.approved_at || changes.approved_by)
+    const rejecting = changes.status === 'rejected' || changes.status === 'archived'
+    if ((approving || rejecting) && !canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admins can approve, reject, or archive source lessons.')
+      return null
+    }
+    if (!approving && !rejecting && !canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to edit source lessons.')
+      return null
+    }
+
+    setSourceLessonSavingId(lesson.id)
+    try {
+      const patch = {
+        ...changes,
+        linked_property_id: changes.linked_property_id === '' ? null : changes.linked_property_id,
+        linked_work_request_id: changes.linked_work_request_id === '' ? null : changes.linked_work_request_id,
+        linked_repair_item_id: changes.linked_repair_item_id === '' ? null : changes.linked_repair_item_id,
+      }
+      const { data, error } = await supabase
+        .from('source_lessons')
+        .update(patch)
+        .eq('id', lesson.id)
+        .select()
+        .single()
+      if (error) throw error
+      const saved = normalizeSourceLessonRow(data as SourceLesson)
+      setSourceLessons((prev) => prev.map((item) => (item.id === lesson.id ? saved : item)))
+      await logAgentMemoryAudit({
+        action_type: actionType,
+        target_table: 'source_lessons',
+        target_id: lesson.id,
+        previous_value: lesson as unknown as Record<string, unknown>,
+        new_value: saved as unknown as Record<string, unknown>,
+        reason: 'Source lesson review action recorded.',
+        property_id: asNullableUuid(saved.linked_property_id),
+        work_request_id: asNullableUuid(saved.linked_work_request_id),
+      })
+      return saved
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update source lesson.')
+      return null
+    } finally {
+      setSourceLessonSavingId(null)
+    }
+  }
+
+  async function createLearningEventFromSourceLesson(lesson: SourceLesson, memoryScope: 'global_operational' | 'project_specific') {
+    const humanVerified = lesson.status === 'approved'
+    const insert = {
+      property_id: asNullableUuid(lesson.linked_property_id),
+      work_request_id: asNullableUuid(lesson.linked_work_request_id),
+      memory_scope: memoryScope,
+      lesson_status: humanVerified ? 'human_verified' : 'needs_confirmation',
+      source_agent: 'quality_check_agent' as AgentName,
+      affected_agents: ['estimator_agent', 'project_workflow_agent', 'contractor_review_agent', 'quality_check_agent'] as AgentName[],
+      task_type: lesson.work_type || 'field_lesson',
+      original_agent_output: [
+        `Source URL: ${lesson.source_url || 'Manual field note'}`,
+        `Admin intent: ${lesson.admin_intent}`,
+        `Observed method: ${lesson.observed_method}`,
+      ].join('\n'),
+      human_correction: lesson.lesson_summary,
+      correction_category: 'workflow_logic' as CorrectionCategory,
+      inferred_reason: lesson.estimate_impact || lesson.hidden_labor,
+      confirmation_question: '',
+      human_confirmed_reason: lesson.admin_notes || 'Human approved source lesson.',
+      learning_value_score: 8,
+      reusable: memoryScope === 'global_operational',
+      human_verified: humanVerified,
+      verified_by: currentUserId,
+      confidence: humanVerified ? 'human_verified' : lesson.confidence,
+      notes: [
+        `source_lesson_id=${lesson.id}`,
+        `source_url=${lesson.source_url || 'manual'}`,
+        `admin_intent=${lesson.admin_intent}`,
+        `hidden_labor=${lesson.hidden_labor}`,
+        `job_steps=${lesson.job_steps.join(' | ')}`,
+        `tools_materials=${lesson.tools_materials.join(' | ')}`,
+        `safety_notes=${lesson.safety_notes}`,
+        `access_notes=${lesson.access_notes}`,
+        `cleanup_notes=${lesson.cleanup_notes}`,
+      ].join('\n'),
+    }
+
+    const { data, error } = await supabase.from('agent_learning_events').insert(insert).select().single()
+    if (error) throw error
+    const savedEvent = data as AgentLearningEvent
+    setAgentLearningEvents((prev) => [savedEvent, ...prev])
+    await logAgentMemoryAudit({
+      action_type: 'learning_event_created_from_source_lesson',
+      target_table: 'agent_learning_events',
+      target_id: savedEvent.id,
+      previous_value: null,
+      new_value: savedEvent as unknown as Record<string, unknown>,
+      reason: 'Human Verified source lesson connected to Shelter Prep memory.',
+      property_id: savedEvent.property_id || null,
+      work_request_id: savedEvent.work_request_id || null,
+    })
+    return savedEvent
+  }
+
+  async function approveSourceLesson(lesson: SourceLesson) {
+    const saved = await updateSourceLesson(
+      lesson,
+      {
+        status: 'approved',
+        approved_by: currentUserId,
+        approved_at: new Date().toISOString(),
+        confidence: lesson.confidence === 'low' ? 'medium' : lesson.confidence,
+      },
+      'source_lesson_approved'
+    )
+    if (!saved) return
+    try {
+      await createLearningEventFromSourceLesson(saved, saved.linked_work_request_id ? 'project_specific' : 'global_operational')
+      await loadAgentLearning()
+      alert('Lesson approved and saved as Human Verified learning event.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Lesson was approved, but the learning event could not be created.')
+    }
+  }
+
+  async function rejectSourceLesson(lesson: SourceLesson) {
+    const notes = window.prompt('Reason for rejection', lesson.admin_notes || 'Not reliable enough for Shelter Prep memory.') || lesson.admin_notes
+    await updateSourceLesson(
+      lesson,
+      { status: 'rejected', approved_by: null, approved_at: null, admin_notes: notes },
+      'source_lesson_rejected'
+    )
+  }
+
+  async function saveSourceLessonProjectSpecific(lesson: SourceLesson) {
+    if (!lesson.linked_work_request_id && !lesson.linked_property_id && !lesson.linked_repair_item_id) {
+      alert('Link this lesson to a property, request, or repair item before saving it as project-specific memory.')
+      return
+    }
+    const approved = lesson.status === 'approved'
+      ? lesson
+      : await updateSourceLesson(
+          lesson,
+          { status: 'approved', approved_by: currentUserId, approved_at: new Date().toISOString() },
+          'source_lesson_project_specific_approved'
+        )
+    if (!approved) return
+    try {
+      await createLearningEventFromSourceLesson(approved, 'project_specific')
+      alert('Saved as project-specific Human Verified memory.')
+      await loadAgentLearning()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save project-specific memory.')
+    }
+  }
+
+  async function saveSourceLessonGlobalMemory(lesson: SourceLesson) {
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only an admin or owner can save Global Labor Memory.')
+      return
+    }
+    const approved = lesson.status === 'approved'
+      ? lesson
+      : await updateSourceLesson(
+          lesson,
+          { status: 'approved', approved_by: currentUserId, approved_at: new Date().toISOString() },
+          'source_lesson_global_approved'
+        )
+    if (!approved) return
+    try {
+      const event = await createLearningEventFromSourceLesson(approved, 'global_operational')
+      const title = `${approved.work_type || 'Field'} lesson: ${approved.problem_description || approved.source_title}`.slice(0, 90)
+      const { data, error } = await supabase.from('agent_learning_rules').insert({
+        title,
+        memory_scope: 'global_operational',
+        lesson_status: 'human_verified',
+        rule_type: 'labor',
+        rule_text: [
+          approved.lesson_summary,
+          approved.hidden_labor ? `Hidden labor: ${approved.hidden_labor}` : '',
+          approved.estimate_impact ? `Estimate impact: ${approved.estimate_impact}` : '',
+        ].filter(Boolean).join('\n'),
+        reason: `Human Verified from source lesson. Source URL: ${approved.source_url || 'manual field note'}. Admin intent: ${approved.admin_intent}`,
+        applies_when: approved.applies_when,
+        does_not_apply_when: approved.does_not_apply_when,
+        source_event_id: event.id,
+        source_agent: 'quality_check_agent',
+        affected_agents: ['estimator_agent', 'project_workflow_agent', 'contractor_review_agent'],
+        confidence: 'human_verified',
+        human_verified: true,
+        active: true,
+        usage_count: 0,
+      }).select().single()
+      if (error) throw error
+      const savedRule = data as AgentLearningRule
+      setAgentLearningRules((prev) => [savedRule, ...prev])
+      await logAgentMemoryAudit({
+        action_type: 'global_labor_memory_created_from_source_lesson',
+        target_table: 'agent_learning_rules',
+        target_id: savedRule.id,
+        previous_value: null,
+        new_value: savedRule as unknown as Record<string, unknown>,
+        reason: 'Admin approved source lesson as Global Labor Memory.',
+      property_id: asNullableUuid(approved.linked_property_id),
+      work_request_id: asNullableUuid(approved.linked_work_request_id),
+      })
+      alert('Saved as Global Labor Memory.')
+      await loadAgentLearning()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save Global Labor Memory.')
+    }
+  }
+
+  async function createJobExecutionStepsFromSourceLesson(lesson: SourceLesson) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to create job execution steps.')
+      return
+    }
+    const request = lesson.linked_work_request_id
+      ? requests.find((item) => item.id === lesson.linked_work_request_id)
+      : selectedEstimateRequest
+    if (!request) {
+      alert('Link the lesson to a work request first, or open a request in Estimate Review.')
+      return
+    }
+    const steps = (lesson.job_steps.length ? lesson.job_steps : [lesson.observed_method || lesson.lesson_summary])
+      .filter(Boolean)
+      .map((stepText, index): JobExecutionStep => ({
+        id: makeId(),
+        created_at: new Date().toISOString(),
+        property_id: lesson.linked_property_id || getRequestPropertyId(request),
+        job_request_id: request.id,
+        repair_item_id: lesson.linked_repair_item_id || getDefaultRepairItemId(request, lesson.work_type),
+        step_number: index + 1,
+        title: stepText.slice(0, 80) || `Source lesson step ${index + 1}`,
+        labor_scope: stepText,
+        trade: lesson.work_type || request.workType || 'General repair',
+        estimated_hours_low: 1,
+        estimated_hours_high: 2,
+        materials_tools: lesson.tools_materials.join(', '),
+        equipment: '',
+        safety_notes: lesson.safety_notes,
+        access_notes: lesson.access_notes,
+        cleanup_notes: lesson.cleanup_notes,
+        disposal_needed: normalizeJobScopeTokenText([lesson.cleanup_notes, lesson.hidden_labor].join(' ')).includes('debris'),
+        confidence: 'source_lesson_needs_review',
+        status: 'needs_review',
+        admin_notes: `Created from source lesson ${lesson.id}. Review before approval.`,
+      }))
+
+    setSelectedEstimateRequest(request)
+    const nextSteps = sortJobExecutionSteps(steps)
+    setJobExecutionSteps(nextSteps)
+    saveLocalJobScopeSteps(request, nextSteps)
+    setJobScopeMessage('Job execution steps created from Lesson Summary Draft. Review each step before approval.')
+    setActiveTab('estimates')
+
+    try {
+      await ensureLeadExists(request)
+      const { error } = await supabase.from('job_execution_steps').insert(nextSteps)
+      if (error) throw error
+      await logAgentMemoryAudit({
+        action_type: 'job_execution_steps_created_from_source_lesson',
+        target_table: 'source_lessons',
+        target_id: lesson.id,
+        previous_value: null,
+        new_value: { step_count: nextSteps.length, request_id: request.id },
+        reason: 'Admin created draft job execution steps from a human-reviewed source lesson draft.',
+        property_id: asNullableUuid(getRequestPropertyId(request)),
+        work_request_id: asNullableUuid(request.id),
+      })
+    } catch (error) {
+      console.warn('Source lesson job steps saved locally only.', error)
+    }
+  }
+
+  async function saveAgentLearningEvent(input: CorrectionLearningInput) {
+    const evaluation = evaluateCorrectionForLearning(input)
+    const confirmedReason = evaluation.should_ask_confirmation
+      ? window.prompt(evaluation.confirmation_question, evaluation.inferred_reason) || ''
+      : ''
+    const lessonStatus: LessonStatus =
+      evaluation.should_ask_confirmation && !confirmedReason.trim()
+        ? 'needs_confirmation'
+        : evaluation.learning_value_score >= 6 && confirmedReason.trim()
+          ? 'human_verified'
+          : evaluation.reusable
+            ? 'draft'
+            : 'draft'
+    const humanVerified = lessonStatus === 'human_verified'
+    const eventInsert = {
+      property_id: null,
+      work_request_id: null,
+      memory_scope: 'global_operational',
+      lesson_status: lessonStatus,
+      source_agent: input.source_agent,
+      affected_agents: evaluation.affected_agents,
+      task_type: input.task_type || 'general_correction',
+      original_agent_output: input.original_agent_output,
+      human_correction: input.human_correction,
+      correction_category: evaluation.correction_category,
+      inferred_reason: evaluation.inferred_reason,
+      confirmation_question: evaluation.confirmation_question,
+      human_confirmed_reason: confirmedReason,
+      learning_value_score: evaluation.learning_value_score,
+      reusable: evaluation.reusable,
+      human_verified: humanVerified,
+      verified_by: null,
+      confidence: humanVerified ? 'human_verified' : 'draft_needs_confirmation',
+      notes:
+        evaluation.learning_value_score <= 2
+          ? 'Applied as a correction only; low reusable learning value.'
+          : 'Evaluated as conditional operational memory.',
+    }
+
+    const { data, error } = await supabase
+      .from('agent_learning_events')
+      .insert(eventInsert)
+      .select()
+      .single()
+
+    if (error) throw error
+
+    const savedEvent = data as AgentLearningEvent
+    setAgentLearningEvents((prev) => [savedEvent, ...prev])
+    await logAgentMemoryAudit({
+      action_type: 'learning_event_created',
+      target_table: 'agent_learning_events',
+      target_id: savedEvent.id,
+      previous_value: null,
+      new_value: savedEvent as unknown as Record<string, unknown>,
+      reason: savedEvent.notes || 'Human correction evaluated for operational memory.',
+      property_id: savedEvent.property_id || null,
+      work_request_id: savedEvent.work_request_id || null,
+    })
+    if (savedEvent.reusable && savedEvent.lesson_status !== 'rejected' && savedEvent.lesson_status !== 'deprecated') {
+      await createAgentLearningRuleFromConfirmedEvent(savedEvent)
+    }
+    return savedEvent
+  }
+
+  async function createAgentLearningRuleFromConfirmedEvent(event: AgentLearningEvent) {
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admins can approve shared operational memory.')
+      return null
+    }
+    const reason = event.human_confirmed_reason || event.inferred_reason
+    const title = event.human_correction
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'Human-verified operational rule'
+    const insert = {
+      title,
+      rule_type: event.correction_category,
+      rule_text: event.human_correction,
+      reason,
+      memory_scope: 'global_operational',
+      lesson_status: event.lesson_status,
+      applies_when: `Use only for similar ${event.task_type || 'tasks'} where the same field condition or user need is present.`,
+      does_not_apply_when: 'Do not apply when scope, access, budget, code, client preference, or site constraints differ.',
+      source_event_id: event.id,
+      source_agent: event.source_agent,
+      affected_agents: event.affected_agents,
+      confidence: event.confidence || event.lesson_status,
+      human_verified: event.lesson_status === 'human_verified',
+      active: true,
+      usage_count: 0,
+      last_used_at: null,
+    }
+
+    const { data, error } = await supabase
+      .from('agent_learning_rules')
+      .insert(insert)
+      .select()
+      .single()
+
+    if (error) throw error
+
+    const savedRule = data as AgentLearningRule
+    setAgentLearningRules((prev) => [savedRule, ...prev])
+    await logAgentMemoryAudit({
+      action_type: 'conditional_rule_creation',
+      target_table: 'agent_learning_rules',
+      target_id: savedRule.id,
+      previous_value: null,
+      new_value: savedRule as unknown as Record<string, unknown>,
+      reason: 'Created from human-reviewed learning event.',
+      property_id: event.property_id || null,
+      work_request_id: event.work_request_id || null,
+    })
+    return savedRule
+  }
+
+  async function getRelevantLearningRulesForAgent(
+    agentName: AgentName,
+    taskType: string,
+    context: string,
+    includeUnverified = false
+  ) {
+    const contextText = normalizeJobScopeTokenText([taskType, context].join(' '))
+    const tokens = contextText.split(' ').filter((word) => word.length > 4)
+
+    try {
+      const { data, error } = await supabase
+        .from('agent_learning_rules')
+        .select('*')
+        .eq('active', true)
+        .eq('memory_scope', 'global_operational')
+        .order('updated_at', { ascending: false })
+        .limit(100)
+
+      if (error) throw error
+
+      const matchedRules = ((data || []) as AgentLearningRule[])
+        .filter((rule) =>
+          includeUnverified
+            ? rule.lesson_status === 'human_verified' || rule.lesson_status === 'needs_confirmation' || rule.lesson_status === 'draft'
+            : rule.lesson_status === 'human_verified' && rule.human_verified
+        )
+        .map((rule) => {
+          const ruleText = normalizeJobScopeTokenText([
+            rule.rule_type,
+            rule.rule_text,
+            rule.reason,
+            rule.applies_when,
+            rule.does_not_apply_when,
+            rule.source_agent,
+          ].join(' '))
+          const matched = tokens.filter((token) => ruleText.includes(token))
+          const routedToAgent = Array.isArray(rule.affected_agents) && rule.affected_agents.includes(agentName)
+          return {
+            rule,
+            score: matched.length + (routedToAgent ? 2 : 0),
+          }
+        })
+        .filter(({ score }) => score >= Math.min(2, tokens.length || 2))
+        .sort((a, b) => b.score - a.score)
+        .map(({ rule }) => rule)
+
+      if (!includeUnverified && matchedRules.length > 1) {
+        const conflict = detectOperationalMemoryConflict(matchedRules, taskType, agentName)
+        if (conflict) {
+          await createAgentMemoryConflict(conflict, agentName, taskType, context)
+          return []
+        }
+      }
+
+      return matchedRules
+    } catch (error) {
+      console.warn('Relevant agent learning rules unavailable.', error)
+      return []
+    }
+  }
+
+  function detectOperationalMemoryConflict(rules: AgentLearningRule[], taskType: string, agentName: AgentName) {
+    const highImpact = ['cost', 'safety', 'access', 'code', 'best', 'labor', 'material', 'schedule', 'design', 'function', 'client']
+    const combinedTask = normalizeJobScopeTokenText([taskType, agentName].join(' '))
+    const relevantRules = rules.filter((rule) => {
+      const text = normalizeJobScopeTokenText([rule.rule_type, rule.rule_text, rule.reason, rule.applies_when].join(' '))
+      return highImpact.some((word) => text.includes(word) || combinedTask.includes(word))
+    })
+    if (relevantRules.length < 2) return null
+
+    const hasRelocationOrUsability = relevantRules.some((rule) =>
+      normalizeJobScopeTokenText([rule.rule_text, rule.reason].join(' ')).match(/\b(entry|relocation|move|place|usability|comfort)\b/)
+    )
+    const hasConstraintOrCost = relevantRules.some((rule) =>
+      normalizeJobScopeTokenText([rule.rule_text, rule.reason, rule.does_not_apply_when].join(' ')).match(/\b(existing|budget|cost|constraint|cannot|keep|complexity|plumbing)\b/)
+    )
+    const priorities = new Set(relevantRules.map((rule) => rule.priority_level || 'normal'))
+    if (!hasRelocationOrUsability && !hasConstraintOrCost && priorities.size < 2) return null
+
+    return {
+      rules: relevantRules.slice(0, 4),
+      summary: `${getLearningDisplayName(relevantRules[0].rule_type)} rules point toward different field priorities for this task.`,
+      recommendation:
+        'Use the rule whose applies/does-not-apply boundaries best match the current scope, budget, access, safety, and client expectation. If field conditions are unclear, require site review before final output.',
+    }
+  }
+
+  async function createAgentMemoryConflict(
+    conflict: { rules: AgentLearningRule[]; summary: string; recommendation: string },
+    agentName: AgentName,
+    taskType: string,
+    context: string
+  ) {
+    const ruleIds = conflict.rules.map((rule) => rule.id)
+    const existingOpen = agentMemoryConflicts.find(
+      (item) =>
+        item.resolution_status === 'needs_review' &&
+        item.task_type === (taskType || 'general_task') &&
+        ruleIds.every((id) => item.conflicting_rule_ids.includes(id))
+    )
+    if (existingOpen) return existingOpen
+
+    const { data, error } = await supabase
+      .from('agent_memory_conflicts')
+      .insert({
+        property_id: null,
+        work_request_id: null,
+        task_type: taskType || 'general_task',
+        detected_by_agent: agentName,
+        conflicting_rule_ids: ruleIds,
+        conflict_summary: `${conflict.summary} Context: ${context}`.slice(0, 1200),
+        recommended_resolution: conflict.recommendation,
+        resolution_status: 'needs_review',
+        creates_new_rule: false,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.warn('Could not create memory conflict.', error)
+      return null
+    }
+
+    const saved = data as AgentMemoryConflict
+    setAgentMemoryConflicts((prev) => [saved, ...prev])
+    await logAgentMemoryAudit({
+      action_type: 'memory_conflict_created',
+      target_table: 'agent_memory_conflicts',
+      target_id: saved.id,
+      previous_value: null,
+      new_value: saved as unknown as Record<string, unknown>,
+      reason: 'Relevant human-verified rules conflict and require review.',
+      property_id: saved.property_id || null,
+      work_request_id: saved.work_request_id || null,
+    })
+    return saved
+  }
+
+  async function logAgentRuleApplication(
+    rules: AgentLearningRule[],
+    agentName: AgentName,
+    taskType: string,
+    context: string,
+    applicationContext: LearningRuleApplicationContext = {}
+  ) {
+    if (!rules.length) return []
+    const applicationType = applicationContext.application_type || 'applied'
+    const inserts = rules.map((rule) => ({
+      rule_id: rule.id,
+      application_type: applicationType,
+      applied_by_agent: agentName,
+      property_id: applicationContext.property_id || null,
+      work_request_id: applicationContext.work_request_id || null,
+      task_type: taskType || 'general_task',
+      output_context: context,
+      generated_output_excerpt: (applicationContext.generated_output_excerpt || context || '').slice(0, 800),
+      human_feedback_status: 'ignored' as AgentRuleApplicationFeedbackStatus,
+      human_feedback_notes: '',
+      confidence_before: applicationContext.confidence_before || rule.confidence || null,
+      confidence_after: null,
+      reviewed_at: null,
+    }))
+
+    const { data, error } = await supabase
+      .from('agent_rule_applications')
+      .insert(inserts)
+      .select()
+
+    if (error) {
+      console.warn('Could not record agent rule applications.', error)
+      return []
+    }
+
+    setAgentRuleApplications((prev) => [...((data || []) as AgentRuleApplication[]), ...prev].slice(0, 100))
+    const savedApplications = (data || []) as AgentRuleApplication[]
+    await Promise.all(
+      savedApplications.map((application) =>
+        logAgentMemoryAudit({
+          action_type: `rule_application_${application.application_type}`,
+          target_table: 'agent_rule_applications',
+          target_id: application.id,
+          previous_value: null,
+          new_value: application as unknown as Record<string, unknown>,
+          reason: application.application_type === 'applied' ? 'Operational memory influenced generated output.' : 'Operational memory was shown as a suggestion.',
+          property_id: application.property_id || null,
+          work_request_id: application.work_request_id || null,
+        })
+      )
+    )
+    return savedApplications
+  }
+
+  async function logAgentMemoryAudit(entry: Omit<AgentMemoryAuditLog, 'id' | 'created_at' | 'actor_role'> & { actor_role?: MemoryActorRole | null }) {
+    const insert = {
+      actor_id: entry.actor_id || currentUserId || null,
+      actor_role: entry.actor_role || memoryActorRole,
+      action_type: entry.action_type,
+      target_table: entry.target_table,
+      target_id: entry.target_id,
+      previous_value: entry.previous_value || null,
+      new_value: entry.new_value || null,
+      reason: entry.reason || null,
+      property_id: entry.property_id || null,
+      work_request_id: entry.work_request_id || null,
+    }
+    const { data, error } = await supabase.from('agent_memory_audit_log').insert(insert).select().single()
+    if (error) {
+      console.warn('Could not write agent memory audit log.', error)
+      return null
+    }
+    const saved = data as AgentMemoryAuditLog
+    setAgentMemoryAuditLogs((prev) => [saved, ...prev].slice(0, 200))
+    return saved
+  }
+
+  async function logContractorAssignmentAudit(
+    actionType: string,
+    assignment: ContractorAssignment,
+    previousValue: ContractorAssignment | null,
+    reason: string
+  ) {
+    await logAgentMemoryAudit({
+      action_type: actionType,
+      target_table: 'contractor_assignments',
+      target_id: assignment.id,
+      previous_value: previousValue as unknown as Record<string, unknown> | null,
+      new_value: assignment as unknown as Record<string, unknown>,
+      reason,
+      property_id: assignment.property_id || null,
+      work_request_id: assignment.work_request_id || null,
+    })
+  }
+
+  async function loadContractorAssignments() {
+    setContractorAssignmentLoading(true)
+    try {
+      const [{ data: assignments, error: assignmentsError }, { data: profiles, error: profilesError }] = await Promise.all([
+        supabase.from('contractor_assignments').select('*').order('created_at', { ascending: false }).limit(200),
+        supabase.from('profiles').select('id,email,full_name,role').eq('role', 'contractor').order('full_name', { ascending: true }),
+      ])
+      if (assignmentsError) throw assignmentsError
+      if (profilesError && canApproveOperationalMemory(memoryActorRole)) throw profilesError
+      setContractorAssignments((assignments || []) as ContractorAssignment[])
+      setContractorProfiles(((profiles || []) as ContractorProfile[]).filter((profile) => profile.role === 'contractor'))
+    } catch (error) {
+      console.warn('Could not load contractor assignments.', error)
+      setContractorAssignments([])
+      if (canApproveOperationalMemory(memoryActorRole)) setContractorProfiles([])
+    } finally {
+      setContractorAssignmentLoading(false)
+    }
+  }
+
+  async function assignContractorToRequest(request: WorkRequest) {
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admins can assign contractors.')
+      return
+    }
+    const contractorId = selectedContractorByRequest[request.id]
+    if (!contractorId) {
+      alert('Choose a contractor first.')
+      return
+    }
+    setContractorAssignmentSavingId(request.id)
+    try {
+      const insert = {
+        property_id: getRequestPropertyId(request),
+        work_request_id: request.id,
+        contractor_profile_id: contractorId,
+        assigned_by: currentUserId,
+        status: 'assigned' as ContractorAssignmentStatus,
+        assignment_notes: '',
+        contractor_notes: '',
+        last_status_change_at: new Date().toISOString(),
+      }
+      const { data, error } = await supabase.from('contractor_assignments').insert(insert).select().single()
+      if (error) throw error
+      const saved = data as ContractorAssignment
+      setContractorAssignments((prev) => [saved, ...prev])
+      await logContractorAssignmentAudit('contractor_assignment_created', saved, null, 'Contractor assigned from property workflow.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not assign contractor.')
+    } finally {
+      setContractorAssignmentSavingId(null)
+    }
+  }
+
+  async function updateContractorAssignment(
+    assignment: ContractorAssignment,
+    changes: Partial<Pick<ContractorAssignment, 'status' | 'contractor_notes' | 'assignment_notes'>>
+  ) {
+    const contractorChangingOwn =
+      memoryActorRole === 'contractor' &&
+      assignment.contractor_profile_id === currentUserId &&
+      (!changes.status || CONTRACTOR_UPDATABLE_ASSIGNMENT_STATUSES.includes(changes.status)) &&
+      !Object.prototype.hasOwnProperty.call(changes, 'assignment_notes')
+    if (!canApproveOperationalMemory(memoryActorRole) && !contractorChangingOwn) {
+      alert('You do not have permission to update this contractor assignment.')
+      return
+    }
+    setContractorAssignmentSavingId(assignment.id)
+    try {
+      const patch = {
+        ...changes,
+        updated_at: new Date().toISOString(),
+        ...(changes.status ? { last_status_change_at: new Date().toISOString() } : {}),
+      }
+      const { data, error } = await supabase
+        .from('contractor_assignments')
+        .update(patch)
+        .eq('id', assignment.id)
+        .select()
+        .single()
+      if (error) throw error
+      const saved = data as ContractorAssignment
+      setContractorAssignments((prev) => prev.map((item) => (item.id === assignment.id ? saved : item)))
+      await logContractorAssignmentAudit(
+        changes.status === 'cancelled'
+          ? 'contractor_assignment_cancelled'
+          : changes.status
+            ? 'contractor_assignment_status_changed'
+            : 'contractor_assignment_notes_updated',
+        saved,
+        assignment,
+        changes.status ? `Status changed to ${changes.status}.` : 'Contractor notes updated.'
+      )
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update contractor assignment.')
+    } finally {
+      setContractorAssignmentSavingId(null)
+    }
+  }
+
+  async function submitLearningDraft() {
+    if (!learningDraft.human_correction.trim()) {
+      alert('Add the human correction first.')
+      return
+    }
+
+    setAgentLearningSavingId('new-learning-event')
+    try {
+      await saveAgentLearningEvent(learningDraft)
+      setLearningDraft({
+        source_agent: 'quality_check_agent',
+        task_type: '',
+        original_agent_output: '',
+        human_correction: '',
+      })
+      await loadAgentLearning()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save agent learning. Apply the shared agent learning migration first.')
+    } finally {
+      setAgentLearningSavingId(null)
+    }
+  }
+
+  async function updateAgentLearningRule(rule: AgentLearningRule, changes: Partial<AgentLearningRule>) {
+    const approving =
+      changes.human_verified === true ||
+      changes.lesson_status === 'human_verified' ||
+      (changes.active === true && rule.memory_scope === 'global_operational')
+    const rejectingOrDeprecating = changes.lesson_status === 'rejected' || changes.lesson_status === 'deprecated'
+    const restricted = approving || rejectingOrDeprecating || Object.prototype.hasOwnProperty.call(changes, 'priority_level')
+    if (restricted && !canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admins can approve shared operational memory.')
+      return
+    }
+    if (!restricted && !canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to edit operational memory.')
+      return
+    }
+    setAgentLearningSavingId(rule.id)
+    try {
+      const patch = { ...changes, updated_at: new Date().toISOString() }
+      const { data, error } = await supabase
+        .from('agent_learning_rules')
+        .update(patch)
+        .eq('id', rule.id)
+        .select()
+        .single()
+      if (error) throw error
+      setAgentLearningRules((prev) => prev.map((item) => (item.id === rule.id ? (data as AgentLearningRule) : item)))
+      const trackedKeys = ['lesson_status', 'human_verified', 'active', 'confidence', 'priority_level', 'applies_when', 'does_not_apply_when']
+      const actionKey = trackedKeys.find((key) => Object.prototype.hasOwnProperty.call(changes, key)) || 'rule_update'
+      await logAgentMemoryAudit({
+        action_type:
+          changes.lesson_status === 'deprecated'
+            ? 'rule_deprecation'
+            : changes.lesson_status === 'rejected'
+              ? 'rule_rejection'
+              : `${actionKey}_change`,
+        target_table: 'agent_learning_rules',
+        target_id: rule.id,
+        previous_value: rule as unknown as Record<string, unknown>,
+        new_value: data as Record<string, unknown>,
+        reason: 'Operational memory rule updated from Agent Learning.',
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update learning rule.')
+    } finally {
+      setAgentLearningSavingId(null)
+    }
+  }
+
+  async function updateAgentRuleApplicationFeedback(
+    application: AgentRuleApplication,
+    status: AgentRuleApplicationFeedbackStatus,
+    notes = application.human_feedback_notes || ''
+  ) {
+    if (!canProvideRuleFeedback(memoryActorRole, application, status, contractorAssignments, currentUserId)) {
+      alert('You do not have permission to modify operational memory feedback.')
+      return
+    }
+    setAgentLearningSavingId(application.id)
+    try {
+      const reviewedAt = new Date().toISOString()
+      const confidenceAfter =
+        status === 'accepted'
+          ? 'reinforced'
+          : status === 'edited'
+            ? 'needs_review'
+            : status === 'rejected'
+              ? 'lowered_needs_review'
+              : application.confidence_after || null
+
+      const { data, error } = await supabase
+        .from('agent_rule_applications')
+        .update({
+          human_feedback_status: status,
+          human_feedback_notes: notes,
+          confidence_after: confidenceAfter,
+          reviewed_at: status === 'ignored' ? null : reviewedAt,
+        })
+        .eq('id', application.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setAgentRuleApplications((prev) =>
+        prev.map((item) => (item.id === application.id ? (data as AgentRuleApplication) : item))
+      )
+      await logAgentMemoryAudit({
+        action_type: `rule_feedback_${status}`,
+        target_table: 'agent_rule_applications',
+        target_id: application.id,
+        previous_value: application as unknown as Record<string, unknown>,
+        new_value: data as Record<string, unknown>,
+        reason: notes || `Rule application feedback marked ${status}.`,
+        property_id: application.property_id || null,
+        work_request_id: application.work_request_id || null,
+      })
+
+      const currentRule = agentLearningRules.find((rule) => rule.id === application.rule_id)
+      if (currentRule && status === 'accepted' && application.application_type === 'applied') {
+        await updateAgentLearningRule(currentRule, {
+          usage_count: Number(currentRule.usage_count || 0) + 1,
+          last_used_at: reviewedAt,
+          confidence: currentRule.confidence === 'high' ? 'high' : 'reinforced',
+        })
+      }
+
+      if (currentRule && status === 'edited') {
+        await updateAgentLearningRule(currentRule, {
+          lesson_status: 'needs_confirmation',
+          confidence: 'needs_review',
+        })
+      }
+
+      if (currentRule && status === 'rejected') {
+        await updateAgentLearningRule(currentRule, {
+          lesson_status: 'needs_confirmation',
+          confidence: 'lowered_needs_review',
+        })
+      }
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save rule feedback.')
+    } finally {
+      setAgentLearningSavingId(null)
+    }
+  }
+
+  async function resolveAgentMemoryConflict(
+    conflict: AgentMemoryConflict,
+    resolutionStatus: AgentMemoryConflictStatus,
+    selectedRuleId: string | null = null,
+    createNewRule = false
+  ) {
+    if (!canResolveMemoryConflict(memoryActorRole)) {
+      alert('Only admins can resolve shared operational memory conflicts.')
+      return
+    }
+    setAgentLearningSavingId(conflict.id)
+    try {
+      const notes = window.prompt('Add human resolution notes for this memory conflict.', conflict.human_resolution_notes || '') || ''
+      const resolvedAt = new Date().toISOString()
+      let newRuleId: string | null = null
+
+      if (createNewRule) {
+        const selectedRule = selectedRuleId ? agentLearningRuleById.get(selectedRuleId) : null
+        const { data: ruleData, error: ruleError } = await supabase
+          .from('agent_learning_rules')
+          .insert({
+            title: `Resolved boundary: ${conflict.task_type}`,
+            memory_scope: 'global_operational',
+            lesson_status: 'human_verified',
+            rule_type: selectedRule?.rule_type || 'workflow_logic',
+            rule_text: notes || conflict.recommended_resolution || conflict.conflict_summary,
+            reason: 'Created from a human-reviewed operational memory conflict.',
+            applies_when: notes || 'Apply only when the human-reviewed conflict resolution matches the current field context.',
+            does_not_apply_when: 'Do not apply when cost, safety, access, code, client preference, or scope constraints differ.',
+            source_agent: conflict.detected_by_agent,
+            affected_agents: selectedRule?.affected_agents || ['quality_check_agent'],
+            confidence: 'human_verified',
+            human_verified: true,
+            active: true,
+            usage_count: 0,
+          })
+          .select()
+          .single()
+        if (ruleError) throw ruleError
+        const createdRule = ruleData as AgentLearningRule
+        newRuleId = createdRule.id
+        setAgentLearningRules((prev) => [createdRule, ...prev])
+        await logAgentMemoryAudit({
+          action_type: 'conditional_rule_creation',
+          target_table: 'agent_learning_rules',
+          target_id: createdRule.id,
+          previous_value: null,
+          new_value: createdRule as unknown as Record<string, unknown>,
+          reason: 'Created from human-reviewed memory conflict resolution.',
+          property_id: conflict.property_id || null,
+          work_request_id: conflict.work_request_id || null,
+        })
+      }
+
+      const { data, error } = await supabase
+        .from('agent_memory_conflicts')
+        .update({
+          resolved_at: ['resolved', 'dismissed', 'ask_client', 'needs_site_review'].includes(resolutionStatus)
+            ? resolvedAt
+            : null,
+          human_selected_rule_id: selectedRuleId,
+          human_resolution_notes: notes,
+          resolution_status: resolutionStatus,
+          creates_new_rule: createNewRule,
+          new_rule_id: newRuleId,
+        })
+        .eq('id', conflict.id)
+        .select()
+        .single()
+      if (error) throw error
+
+      setAgentMemoryConflicts((prev) => prev.map((item) => (item.id === conflict.id ? (data as AgentMemoryConflict) : item)))
+      await logAgentMemoryAudit({
+        action_type: 'conflict_resolution',
+        target_table: 'agent_memory_conflicts',
+        target_id: conflict.id,
+        previous_value: conflict as unknown as Record<string, unknown>,
+        new_value: data as Record<string, unknown>,
+        reason: notes || resolutionStatus,
+        property_id: conflict.property_id || null,
+        work_request_id: conflict.work_request_id || null,
+      })
+
+      const { data: resolutionEvent, error: resolutionEventError } = await supabase.from('agent_learning_events').insert({
+        property_id: conflict.property_id || null,
+        work_request_id: conflict.work_request_id || null,
+        memory_scope: 'global_operational',
+        lesson_status: resolutionStatus === 'resolved' ? 'human_verified' : 'needs_confirmation',
+        source_agent: conflict.detected_by_agent,
+        affected_agents: ['quality_check_agent'],
+        task_type: conflict.task_type,
+        original_agent_output: conflict.conflict_summary,
+        human_correction: notes || resolutionStatus,
+        correction_category: 'workflow_logic',
+        inferred_reason: conflict.recommended_resolution || '',
+        human_confirmed_reason: notes,
+        learning_value_score: 8,
+        reusable: createNewRule,
+        human_verified: resolutionStatus === 'resolved',
+        confidence: resolutionStatus === 'resolved' ? 'human_verified' : 'needs_review',
+        notes: 'Saved from human-reviewed operational memory conflict resolution.',
+      }).select().single()
+      if (resolutionEventError) throw resolutionEventError
+      await logAgentMemoryAudit({
+        action_type: 'learning_event_created',
+        target_table: 'agent_learning_events',
+        target_id: (resolutionEvent as AgentLearningEvent).id,
+        previous_value: null,
+        new_value: resolutionEvent as Record<string, unknown>,
+        reason: 'Conflict resolution documented as an operational memory learning event.',
+        property_id: conflict.property_id || null,
+        work_request_id: conflict.work_request_id || null,
+      })
+      await loadAgentLearning()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not resolve memory conflict.')
+    } finally {
+      setAgentLearningSavingId(null)
     }
   }
 
@@ -6112,6 +8196,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const logisticsQuestions = getJsonStringArray(logisticsJson.missing_info_questions)
     const recommendedLineItems = getJsonStringArray(logisticsJson.recommended_line_items)
     const logisticsBlockers = getJsonStringArray(coordinationJson.logistics_blockers)
+    const unresolvedMemoryConflicts = agentMemoryConflicts.filter(
+      (conflict) =>
+        conflict.resolution_status === 'needs_review' &&
+        (!conflict.work_request_id || conflict.work_request_id === request.id)
+    )
     const criticalLogisticsBlockers = (logisticsBlockers.length ? logisticsBlockers : logisticsQuestions).slice(0, 3)
     const logisticsAuditNotes = getJsonStringArray(logisticsJson.audit_notes)
     const logisticsConfidence = logisticsOutput?.confidence || 'pending'
@@ -6163,6 +8252,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         disabled: messageSavingId === request.id,
       },
     ]
+    const requestAssignments = contractorAssignments.filter(
+      (assignment) =>
+        assignment.property_id === getRequestPropertyId(request) ||
+        assignment.work_request_id === request.id
+    )
+    const visibleAssignments =
+      memoryActorRole === 'contractor'
+        ? requestAssignments.filter((assignment) => assignment.contractor_profile_id === currentUserId)
+        : requestAssignments
 
     return (
       <div style={isCompact ? { ...styles.workflowCard, ...styles.mobileWorkflowCard } : styles.workflowCard}>
@@ -6191,6 +8289,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               {criticalLogisticsBlockers.map((item) => (
                 <span key={item}>{item}</span>
               ))}
+            </div>
+          ) : null}
+          {unresolvedMemoryConflicts.length ? (
+            <div style={styles.warningBox}>
+              Operational memory conflict needs human decision before final output.
             </div>
           ) : null}
           <p style={styles.workflowFootnote}>
@@ -6262,6 +8365,101 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             ))}
           </div>
         </details>
+
+        {(canApproveOperationalMemory(memoryActorRole) || visibleAssignments.length > 0) && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Contractor assignment</summary>
+            {canApproveOperationalMemory(memoryActorRole) && (
+              <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                <select
+                  style={styles.input}
+                  value={selectedContractorByRequest[request.id] || ''}
+                  onChange={(event) =>
+                    setSelectedContractorByRequest((prev) => ({ ...prev, [request.id]: event.target.value }))
+                  }
+                >
+                  <option value="">Choose contractor</option>
+                  {contractorProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.full_name || profile.email || profile.id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  style={styles.workflowSecondaryButton}
+                  disabled={contractorAssignmentSavingId === request.id || !selectedContractorByRequest[request.id]}
+                  onClick={() => assignContractorToRequest(request)}
+                >
+                  Assign Contractor
+                </button>
+              </div>
+            )}
+            {contractorAssignmentLoading && <p style={styles.small}>Loading assignments...</p>}
+            {visibleAssignments.length === 0 ? (
+              <p style={styles.small}>No contractor assigned yet.</p>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleAssignments.map((assignment) => {
+                  const contractor = contractorProfiles.find((profile) => profile.id === assignment.contractor_profile_id)
+                  const notesDraft = contractorNotesByAssignment[assignment.id] ?? assignment.contractor_notes ?? ''
+                  return (
+                    <div key={assignment.id} style={styles.aiBox}>
+                      <div style={styles.badgeRow}>
+                        <span style={assignment.status === 'cancelled' ? styles.badgeDanger : styles.badge}>
+                          {getLearningDisplayName(assignment.status)}
+                        </span>
+                        <span style={styles.badgeMuted}>{contractor?.full_name || contractor?.email || 'Assigned contractor'}</span>
+                      </div>
+                      {assignment.assignment_notes && <p style={styles.small}>Admin notes: {assignment.assignment_notes}</p>}
+                      <textarea
+                        style={{ ...styles.input, minHeight: 72 }}
+                        placeholder="Contractor notes"
+                        value={notesDraft}
+                        disabled={memoryActorRole !== 'contractor' && !canApproveOperationalMemory(memoryActorRole)}
+                        onChange={(event) =>
+                          setContractorNotesByAssignment((prev) => ({ ...prev, [assignment.id]: event.target.value }))
+                        }
+                      />
+                      <div style={styles.buttonRow}>
+                        {memoryActorRole === 'contractor' &&
+                          CONTRACTOR_UPDATABLE_ASSIGNMENT_STATUSES.map((status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              style={styles.outlineButton}
+                              disabled={contractorAssignmentSavingId === assignment.id}
+                              onClick={() => updateContractorAssignment(assignment, { status, contractor_notes: notesDraft })}
+                            >
+                              {getLearningDisplayName(status)}
+                            </button>
+                          ))}
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={contractorAssignmentSavingId === assignment.id}
+                          onClick={() => updateContractorAssignment(assignment, { contractor_notes: notesDraft })}
+                        >
+                          Save Notes
+                        </button>
+                        {canApproveOperationalMemory(memoryActorRole) && assignment.status !== 'cancelled' && (
+                          <button
+                            type="button"
+                            style={styles.outlineButton}
+                            disabled={contractorAssignmentSavingId === assignment.id}
+                            onClick={() => updateContractorAssignment(assignment, { status: 'cancelled' })}
+                          >
+                            Cancel Assignment
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </details>
+        )}
 
         <details style={styles.moreActions}>
           <summary style={styles.moreActionsSummary}>Advanced intelligence details</summary>
@@ -6395,6 +8593,54 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     () => buildPropertyResearchPack(propertyAddress, city, stateValue || 'OR', zip),
     [propertyAddress, city, stateValue, zip]
   )
+  const selectedInspectionCount = documentFiles.filter((file) => /\.(pdf|doc|docx)$/i.test(file.name)).length
+  const selectedVideoCount = documentFiles.filter((file) => file.type.startsWith('video/') || /\.(mp4|mov)$/i.test(file.name)).length
+  const selectedOtherMediaCount = documentFiles.length - selectedInspectionCount - selectedVideoCount
+  const selectedMediaSummary = [
+    photoFiles.length ? `${photoFiles.length} photo${photoFiles.length === 1 ? '' : 's'} attached` : '',
+    selectedInspectionCount ? `${selectedInspectionCount} inspection/report file${selectedInspectionCount === 1 ? '' : 's'} attached` : '',
+    selectedVideoCount ? `${selectedVideoCount} video${selectedVideoCount === 1 ? '' : 's'} attached` : '',
+    selectedOtherMediaCount ? `${selectedOtherMediaCount} other file${selectedOtherMediaCount === 1 ? '' : 's'} attached` : '',
+  ].filter(Boolean)
+  const hasPulledPropertyFacts = Boolean(
+    propertyFacts.squareFeet ||
+      propertyFacts.bedrooms ||
+      propertyFacts.bathrooms ||
+      propertyFacts.yearBuilt ||
+      propertyType ||
+      jurisdiction ||
+      propertyFacts.propertyType ||
+      propertyFacts.jurisdiction
+  )
+  const propertyFactsSummary = [
+    propertyFacts.squareFeet ? `${propertyFacts.squareFeet} sqft` : '',
+    propertyFacts.bedrooms ? `${propertyFacts.bedrooms} beds` : '',
+    propertyFacts.bathrooms ? `${propertyFacts.bathrooms} baths` : '',
+    propertyFacts.yearBuilt ? `Built ${propertyFacts.yearBuilt}` : '',
+  ].filter(Boolean)
+  const visibleAgentLearningEvents = agentLearningEvents.filter(
+    (event) => agentLearningStatusFilter === 'all' || event.lesson_status === agentLearningStatusFilter
+  )
+  const visibleAgentLearningRules = agentLearningRules.filter(
+    (rule) => agentLearningStatusFilter === 'all' || rule.lesson_status === agentLearningStatusFilter
+  )
+  const visibleSourceLessons = sourceLessons.filter(
+    (lesson) => sourceLessonStatusFilter === 'all' || lesson.status === sourceLessonStatusFilter
+  )
+  const agentLearningRuleById = new Map(agentLearningRules.map((rule) => [rule.id, rule]))
+  const visibleAgentRuleApplications = agentRuleApplications.filter((application) => {
+    const matchesRule = ruleApplicationRuleFilter === 'all' || application.rule_id === ruleApplicationRuleFilter
+    const matchesType = ruleApplicationTypeFilter === 'all' || application.application_type === ruleApplicationTypeFilter
+    const matchesAgent = ruleApplicationAgentFilter === 'all' || application.applied_by_agent === ruleApplicationAgentFilter
+    const matchesFeedback =
+      ruleApplicationFeedbackFilter === 'all' || application.human_feedback_status === ruleApplicationFeedbackFilter
+    const taskFilter = normalizeJobScopeTokenText(ruleApplicationTaskFilter)
+    const matchesTask = !taskFilter || normalizeJobScopeTokenText(application.task_type).includes(taskFilter)
+    return matchesRule && matchesType && matchesAgent && matchesFeedback && matchesTask
+  })
+  const visibleAgentMemoryConflicts = agentMemoryConflicts.filter(
+    (conflict) => memoryConflictStatusFilter === 'all' || conflict.resolution_status === memoryConflictStatusFilter
+  )
 
   return (
     <div style={isCompact ? { ...styles.page, ...styles.mobilePage } : styles.page}>
@@ -6450,6 +8696,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               { label: 'Material Costs', tab: 'materials' },
               { label: 'Labor Rates', tab: 'labor' },
               { label: 'AI Estimator', tab: 'estimates' },
+              { label: 'Field Lesson Agent', tab: 'fieldLessons' },
+              { label: 'Agent Learning', tab: 'agentLearning' },
             ]
           : []),
       ].map((item) => (
@@ -6563,7 +8811,30 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               >
                 AI Estimator
               </button>
+
+	              <button
+	                style={activeTab === 'agentLearning' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
+                onClick={() => requireAdmin('agentLearning')}
+              >
+                Agent Learning
+              </button>
+
+	              <button
+	                style={activeTab === 'fieldLessons' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
+                onClick={() => requireAdmin('fieldLessons')}
+              >
+                Field Lesson Agent
+              </button>
             </>
+          )}
+
+          {!isAdmin && currentUserRole === 'contractor' && (
+            <button
+              style={activeTab === 'dashboard' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
+              onClick={() => setActiveTab('dashboard')}
+            >
+              Assignments
+            </button>
           )}
         </nav>
 
@@ -6597,187 +8868,257 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       <main style={isCompact ? { ...styles.main, ...styles.mobileMain } : styles.main}>
         {activeTab === 'new' && (
-          <div style={styles.twoColumn}>
+          <div style={isCompact ? styles.mobileStack : styles.twoColumn}>
             <section style={styles.card}>
-              <div style={styles.hero}>Submit a property work request</div>
+              <div style={styles.hero}>Start a property</div>
 
               <p style={styles.muted}>
-                Upload photos, documents, videos, and notes for Shelter Prep review.
+                Add the address and whatever media you have. Shelter Prep will organize the rest for review.
               </p>
 
               {successMessage && <div style={styles.success}>{successMessage}</div>}
 
-              <form onSubmit={handleSubmit}>
-                <div style={styles.grid2}>
-                  <input
-                    style={styles.input}
-                    placeholder="Your name *"
-                    value={requesterName}
-                    onChange={(e) => setRequesterName(e.target.value)}
-                  />
-
-                  <input
-                    style={styles.input}
-                    placeholder="Email *"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-
-                <div style={styles.grid2}>
-                  <input
-                    style={styles.input}
-                    placeholder="Phone"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-
-                  <select
-                    style={styles.input}
-                    value={workType}
-                    onChange={(e) => setWorkType(e.target.value)}
-                  >
-                    {WORK_TYPES.map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <input
-                  style={styles.input}
-                  placeholder="Property address *"
-                  value={propertyAddress}
-                  onChange={(e) => {
-                    setPropertyAddress(e.target.value)
-                    setPropertyLookupMessage('')
-                    setPropertyLookupStatus('idle')
-                  }}
-                />
-
-                <div style={styles.propertyInfoPanel}>
-                  <div>
-                    <strong>Property report facts</strong>
-                    <p style={{ ...styles.small, margin: '6px 0 0' }}>
-                      Pull public-record style facts into the agent report, then verify before sending.
-                    </p>
+              <form onSubmit={handleSubmit} style={styles.intakeFlow}>
+                <div style={styles.intakeStepCard}>
+                  <div style={styles.intakeStepHeader}>
+                    <span style={styles.workflowStage}>Start Property</span>
+                    <strong>Add photos, video, or an inspection report first.</strong>
                   </div>
-                  <button
-                    type="button"
-                    style={styles.outlineButton}
-                    onClick={pullPropertyInfo}
-                    disabled={propertyLookupLoading}
-                  >
-                    {propertyLookupLoading ? 'Pulling...' : 'Pull property info'}
-                  </button>
-                </div>
 
-                <div style={styles.grid5}>
-                  {[
-                    ['Sq ft', propertyFacts.squareFeet],
-                    ['Built', propertyFacts.yearBuilt],
-                    ['Beds', propertyFacts.bedrooms],
-                    ['Baths', propertyFacts.bathrooms],
-                    ['Lot', propertyFacts.lotSize],
-                  ].map(([label, value]) => (
-                    <div key={label} style={styles.factCard}>
-                      <span>{label}</span>
-                      <strong>{value || 'Not pulled'}</strong>
-                    </div>
-                  ))}
-                </div>
+                  <div style={isCompact ? styles.mobileStack : styles.intakeMediaGrid}>
+                    <label style={styles.intakeMediaButton}>
+                      <span>Take Photos</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        capture="environment"
+                        style={styles.hiddenFileInput}
+                        onChange={(e) => {
+                          setPhotoFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
+                          e.currentTarget.value = ''
+                        }}
+                      />
+                    </label>
+                    <label style={styles.intakeMediaButton}>
+                      <span>Choose Photos</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*,.heic,.heif"
+                        style={styles.hiddenFileInput}
+                        onChange={(e) => {
+                          setPhotoFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
+                          e.currentTarget.value = ''
+                        }}
+                      />
+                    </label>
+                    <label style={styles.intakeMediaButton}>
+                      <span>Upload Inspection PDF</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.heic,.heif,.mp4,.mov,image/*,video/*,application/pdf"
+                        style={styles.hiddenFileInput}
+                        onChange={(e) => {
+                          setDocumentFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
+                          e.currentTarget.value = ''
+                        }}
+                      />
+                    </label>
+                    <label style={styles.intakeMediaButton}>
+                      <span>Add Video</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="video/*,.mp4,.mov"
+                        style={styles.hiddenFileInput}
+                        onChange={(e) => {
+                          setDocumentFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
+                          e.currentTarget.value = ''
+                        }}
+                      />
+                    </label>
+                  </div>
 
-                {propertyLookupMessage && (
-                  <div style={{ ...styles.noticeBox, marginTop: 0 }}>
-                    <strong>Property lookup status: {propertyLookupStatusLabel(propertyLookupStatus)}</strong>
-                    <p style={{ margin: '6px 0 0' }}>{propertyLookupMessage}</p>
-                    {propertyLookupStatus === 'provider_not_configured' && (
-                      <p style={{ margin: '6px 0 0' }}>
-                        No property data provider connected yet. Use county/ORMAP links or enter facts manually.
-                      </p>
+                  <div style={styles.mediaSummaryBox}>
+                    {selectedMediaSummary.length ? (
+                      selectedMediaSummary.map((item) => <span key={item}>{item}</span>)
+                    ) : (
+                      <span>Add photos, video, or an inspection report to help Shelter Prep organize the repair scope.</span>
                     )}
                   </div>
-                )}
 
-                <div style={styles.reviewBox}>
-                  <h3 style={{ marginTop: 0 }}>Verified Property Profile</h3>
-                  <p style={styles.small}>
-                    Confirm or edit the facts before Shelter Prep uses them for renovation planning, permit checks, or estimates.
-                  </p>
+                  {selectedMediaSummary.length > 0 && (
+                    <details style={styles.moreActions}>
+                      <summary style={styles.moreActionsSummary}>Attached file names</summary>
+                      <ul style={styles.smallList}>
+                        {[...photoFiles, ...documentFiles].map((file, index) => (
+                          <li key={`${file.name}-${index}`}>{file.name}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
 
-                  <div style={styles.grid3}>
-                    <input
-                      style={styles.input}
-                      placeholder="Bedrooms"
-                      value={propertyFacts.bedrooms}
-                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bedrooms: e.target.value, verified: true }))}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Bathrooms"
-                      value={propertyFacts.bathrooms}
-                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bathrooms: e.target.value, verified: true }))}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Square feet"
-                      value={propertyFacts.squareFeet}
-                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, squareFeet: e.target.value, verified: true }))}
-                    />
+                <div style={styles.intakeStepCard}>
+                  <div style={styles.intakeStepHeader}>
+                    <span style={styles.workflowStage}>Property Address</span>
+                    <strong>Where is the work?</strong>
                   </div>
+                  <input
+                    style={styles.input}
+                    placeholder="Property address"
+                    value={propertyAddress}
+                    onChange={(e) => {
+                      setPropertyAddress(e.target.value)
+                      setPropertyLookupMessage('')
+                      setPropertyLookupStatus('idle')
+                    }}
+                  />
+                </div>
 
-                  <div style={styles.grid3}>
-                    <input
-                      style={styles.input}
-                      placeholder="Lot size"
-                      value={propertyFacts.lotSize}
-                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, lotSize: e.target.value, verified: true }))}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Year built"
-                      value={propertyFacts.yearBuilt}
-                      onChange={(e) => setPropertyFacts((prev) => ({ ...prev, yearBuilt: e.target.value, verified: true }))}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Property type, ex: single-family"
-                      value={propertyType}
-                      onChange={(e) => setPropertyType(e.target.value)}
-                    />
+                <div style={styles.intakeStepCard}>
+                  <div style={styles.intakeStepHeader}>
+                    <span style={styles.workflowStage}>What Needs Attention?</span>
+                    <strong>A short note is enough.</strong>
                   </div>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 110 }}
+                    placeholder="Example: kitchen cabinet removal, drywall patch, repaint wall"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </div>
 
-                  <div style={styles.grid3}>
+                <div style={styles.intakeStepCard}>
+                  <div style={styles.intakeStepHeader}>
+                    <span style={styles.workflowStage}>Property Details Review</span>
+                    <button
+                      type="button"
+                      style={styles.workflowSecondaryButton}
+                      onClick={pullPropertyInfo}
+                      disabled={propertyLookupLoading || !propertyAddress.trim()}
+                    >
+                      {propertyLookupLoading ? 'Pulling...' : 'Pull Property Facts'}
+                    </button>
+                  </div>
+                  {hasPulledPropertyFacts ? (
+                    <div style={styles.propertyFactsSummary}>
+                      {propertyFactsSummary.length ? propertyFactsSummary.join(' • ') : 'Property facts pulled.'}
+                      <span>{propertyType || propertyFacts.propertyType || 'Property type needs review'}</span>
+                      <span>{jurisdiction || propertyFacts.jurisdiction || propertyResearchPack.jurisdiction}</span>
+                    </div>
+                  ) : (
+                    <p style={styles.workflowFootnote}>Property facts not pulled yet.</p>
+                  )}
+                  {propertyLookupMessage && (
+                    <div style={{ ...styles.noticeBox, marginTop: 10 }}>
+                      <strong>{propertyLookupStatusLabel(propertyLookupStatus)}</strong>
+                      <p style={{ margin: '6px 0 0' }}>{propertyLookupMessage}</p>
+                    </div>
+                  )}
+
+                  <details style={styles.moreActions}>
+                    <summary style={styles.moreActionsSummary}>More property details</summary>
+                    <div style={styles.progressiveFieldGrid}>
+                      <input
+                        style={styles.input}
+                        placeholder="Bedrooms"
+                        value={propertyFacts.bedrooms}
+                        onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bedrooms: e.target.value, verified: true }))}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Bathrooms"
+                        value={propertyFacts.bathrooms}
+                        onChange={(e) => setPropertyFacts((prev) => ({ ...prev, bathrooms: e.target.value, verified: true }))}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Square feet"
+                        value={propertyFacts.squareFeet}
+                        onChange={(e) => setPropertyFacts((prev) => ({ ...prev, squareFeet: e.target.value, verified: true }))}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Lot size"
+                        value={propertyFacts.lotSize}
+                        onChange={(e) => setPropertyFacts((prev) => ({ ...prev, lotSize: e.target.value, verified: true }))}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Year built"
+                        value={propertyFacts.yearBuilt}
+                        onChange={(e) => setPropertyFacts((prev) => ({ ...prev, yearBuilt: e.target.value, verified: true }))}
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Property type"
+                        value={propertyType}
+                        onChange={(e) => setPropertyType(e.target.value)}
+                      />
+                    </div>
+                  </details>
+                </div>
+
+                <details style={styles.intakeDisclosure}>
+                  <summary style={styles.moreActionsSummary}>Contact details</summary>
+                  <div style={styles.progressiveFieldGrid}>
+                    <input style={styles.input} placeholder="Name" value={requesterName} onChange={(e) => setRequesterName(e.target.value)} />
+                    <input style={styles.input} placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                    <input style={styles.input} placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  </div>
+                </details>
+
+                <details style={styles.intakeDisclosure}>
+                  <summary style={styles.moreActionsSummary}>Access / occupancy / timeline</summary>
+                  <div style={styles.progressiveFieldGrid}>
+                    <select style={styles.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
+                      {WORK_TYPES.map((item) => (
+                        <option key={item}>{item}</option>
+                      ))}
+                    </select>
+                    <select style={styles.input} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
+                      <option>Standard</option>
+                      <option>Urgent</option>
+                      <option>ASAP</option>
+                    </select>
+                    <select style={styles.input} value={occupancy} onChange={(e) => setOccupancy(e.target.value)}>
+                      <option>Occupied</option>
+                      <option>Vacant</option>
+                      <option>Unknown</option>
+                    </select>
+                    <input style={styles.input} placeholder="Desired timeline" value={timeline} onChange={(e) => setTimeline(e.target.value)} />
+                  </div>
+                </details>
+
+                <details style={styles.intakeDisclosure}>
+                  <summary style={styles.moreActionsSummary}>Jurisdiction / permit notes</summary>
+                  <div style={styles.progressiveFieldGrid}>
+                    <input style={styles.input} placeholder="City" value={city} onChange={(e) => setCity(e.target.value)} />
+                    <input style={styles.input} placeholder="State" value={stateValue} onChange={(e) => setStateValue(e.target.value)} />
+                    <input style={styles.input} placeholder="ZIP" value={zip} onChange={(e) => setZip(e.target.value)} />
                     <input
                       style={styles.input}
                       placeholder="Jurisdiction"
                       value={jurisdiction || propertyResearchPack.jurisdiction}
                       onChange={(e) => setJurisdiction(e.target.value)}
                     />
-                    <input
-                      style={styles.input}
-                      placeholder="Zoning"
-                      value={zoning}
-                      onChange={(e) => setZoning(e.target.value)}
-                    />
-                    <input
-                      style={styles.input}
-                      placeholder="Parcel / account #"
-                      value={parcelNumber}
-                      onChange={(e) => setParcelNumber(e.target.value)}
-                    />
+                    <input style={styles.input} placeholder="Zoning" value={zoning} onChange={(e) => setZoning(e.target.value)} />
+                    <input style={styles.input} placeholder="Parcel / account #" value={parcelNumber} onChange={(e) => setParcelNumber(e.target.value)} />
                   </div>
-
                   <textarea
                     style={{ ...styles.input, minHeight: 90 }}
-                    placeholder="Verification notes, ex: finished basement, converted garage, addition, ADU, access constraints"
+                    placeholder="Verification notes, access constraints, additions, ADU, finished basement"
                     value={verificationNotes}
                     onChange={(e) => setVerificationNotes(e.target.value)}
                   />
+                  <p style={styles.workflowFootnote}>Permit office: {propertyResearchPack.permitOffice}</p>
+                </details>
 
-                  <div style={styles.noticeBox}>
-                    Permit office: <strong>{propertyResearchPack.permitOffice}</strong>
-                  </div>
-
+                <details style={styles.intakeDisclosure}>
+                  <summary style={styles.moreActionsSummary}>Source links</summary>
                   <div style={styles.grid2}>
                     {propertyResearchPack.links.map((link) => (
                       <button
@@ -6791,116 +9132,32 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       </button>
                     ))}
                   </div>
-
                   <ul style={styles.mutedList}>
                     {propertyResearchPack.riskFlags.map((flag) => (
                       <li key={flag}>{flag}</li>
                     ))}
                   </ul>
+                </details>
+
+                <div style={styles.intakeStatusCard}>
+                  <strong>Organize Scope</strong>
+                  <p style={styles.workflowBody}>Shelter Prep is ready to organize photos, documents, and property context.</p>
+                  <span>{propertyAddress ? 'Review Repair Scope after start.' : 'Add an address to begin.'}</span>
                 </div>
 
-                <div style={styles.grid3}>
-                  <input
-                    style={styles.input}
-                    placeholder="City *"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                  />
-
-                  <input
-                    style={styles.input}
-                    placeholder="State *"
-                    value={stateValue}
-                    onChange={(e) => setStateValue(e.target.value)}
-                  />
-
-                  <input
-                    style={styles.input}
-                    placeholder="ZIP *"
-                    value={zip}
-                    onChange={(e) => setZip(e.target.value)}
-                  />
-                </div>
-
-                <div style={styles.grid3}>
-                  <select
-                    style={styles.input}
-                    value={urgency}
-                    onChange={(e) => setUrgency(e.target.value)}
-                  >
-                    <option>Standard</option>
-                    <option>Urgent</option>
-                    <option>ASAP</option>
-                  </select>
-
-                  <select
-                    style={styles.input}
-                    value={occupancy}
-                    onChange={(e) => setOccupancy(e.target.value)}
-                  >
-                    <option>Occupied</option>
-                    <option>Vacant</option>
-                    <option>Unknown</option>
-                  </select>
-
-                  <input
-                    style={styles.input}
-                    placeholder="Desired timeline"
-                    value={timeline}
-                    onChange={(e) => setTimeline(e.target.value)}
-                  />
-                </div>
-
-                <textarea
-                  style={{ ...styles.input, minHeight: 140 }}
-                  placeholder="Describe the work needed *"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-
-                <div style={styles.grid2}>
-                  <div style={styles.uploadBox}>
-                    <strong>Photos</strong>
-                    <input
-                      type="file"
-                      multiple
-                      accept="image/*"
-                      onChange={(e) => setPhotoFiles(Array.from(e.target.files || []))}
-                    />
-                    {photoFiles.length > 0 && (
-                      <p style={styles.small}>
-                        {photoFiles.map((f) => f.name).join(', ')}
-                      </p>
-                    )}
-                  </div>
-
-                  <div style={styles.uploadBox}>
-                    <strong>Documents / Video</strong>
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.mov"
-                      onChange={(e) => setDocumentFiles(Array.from(e.target.files || []))}
-                    />
-                    {documentFiles.length > 0 && (
-                      <p style={styles.small}>
-                        {documentFiles.map((f) => f.name).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <button type="submit" style={styles.primaryButton} disabled={submitting}>
-                  {submitting ? 'Submitting...' : 'Submit Request'}
-                </button>
+                <div style={styles.intakeActionRow}>
+                  <button type="submit" style={styles.primaryButton} disabled={submitting}>
+                    {submitting ? 'Starting...' : 'Start Property'}
+                  </button>
 
                 <button
                   type="button"
-                  style={{ ...styles.outlineButton, marginLeft: 10 }}
+                  style={styles.outlineButton}
                   onClick={resetForm}
                 >
                   Clear
                 </button>
+                </div>
               </form>
             </section>
 
@@ -7242,41 +9499,119 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'dashboard' && (
+        {(isAdmin || currentUserRole === 'contractor') && activeTab === 'dashboard' && (
           <>
             <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
-              <h2>Admin Dashboard</h2>
+              <h2>{currentUserRole === 'contractor' && !isAdmin ? 'Contractor Assignments' : 'Admin Dashboard'}</h2>
 
-              <div style={isCompact ? styles.mobileStack : styles.grid2}>
-                <input
-                  style={styles.input}
-                  placeholder="Search requests"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+              {currentUserRole === 'contractor' && !isAdmin ? (
+                <p style={styles.muted}>Assigned property and work request details appear here when available.</p>
+              ) : (
+                <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                  <input
+                    style={styles.input}
+                    placeholder="Search requests"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
 
-                <select
-                  style={styles.input}
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value as 'all' | RequestStatus)}
-                >
-                  <option value="all">All Statuses</option>
-                  {columns.map((status) => (
-                    <option key={status} value={status}>
-                      {STATUS_META[status].label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  <select
+                    style={styles.input}
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value as 'all' | RequestStatus)}
+                  >
+                    <option value="all">All Statuses</option>
+                    {columns.map((status) => (
+                      <option key={status} value={status}>
+                        {STATUS_META[status].label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </section>
 
+            {currentUserRole === 'contractor' && !isAdmin && (
+              <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
+                <h3>My Assignments</h3>
+                {contractorAssignments.length === 0 ? (
+                  <p style={styles.muted}>No active assignments are available for this contractor profile.</p>
+                ) : (
+                  <div style={styles.fileGrid}>
+                    {contractorAssignments.map((assignment) => {
+                      const notesDraft = contractorNotesByAssignment[assignment.id] ?? assignment.contractor_notes ?? ''
+                      return (
+                        <div key={assignment.id} style={styles.requestCard}>
+                          <div style={styles.badgeRow}>
+                            <span style={assignment.status === 'cancelled' ? styles.badgeDanger : styles.badge}>
+                              {getLearningDisplayName(assignment.status)}
+                            </span>
+                            <span style={styles.badgeMuted}>
+                              {assignment.work_request_id || assignment.property_id || 'Assigned work'}
+                            </span>
+                          </div>
+                          {assignment.assignment_notes && <p style={styles.small}>Admin notes: {assignment.assignment_notes}</p>}
+                          <textarea
+                            style={{ ...styles.input, minHeight: 72 }}
+                            placeholder="Contractor notes"
+                            value={notesDraft}
+                            onChange={(event) =>
+                              setContractorNotesByAssignment((prev) => ({ ...prev, [assignment.id]: event.target.value }))
+                            }
+                          />
+                          <div style={styles.buttonRow}>
+                            {CONTRACTOR_UPDATABLE_ASSIGNMENT_STATUSES.map((status) => (
+                              <button
+                                key={status}
+                                type="button"
+                                style={styles.outlineButton}
+                                disabled={contractorAssignmentSavingId === assignment.id}
+                                onClick={() => updateContractorAssignment(assignment, { status, contractor_notes: notesDraft })}
+                              >
+                                {getLearningDisplayName(status)}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              style={styles.outlineButton}
+                              disabled={contractorAssignmentSavingId === assignment.id}
+                              onClick={() => updateContractorAssignment(assignment, { contractor_notes: notesDraft })}
+                            >
+                              Save Notes
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
             <section style={isCompact ? { ...styles.kanban, ...styles.mobileKanban } : styles.kanban}>
-              {filteredRequests.length === 0 && (
+              {filteredRequests.filter((request) =>
+                currentUserRole === 'contractor' && !isAdmin
+                  ? contractorAssignments.some(
+                      (assignment) =>
+                        assignment.contractor_profile_id === currentUserId &&
+                        (assignment.property_id === getRequestPropertyId(request) || assignment.work_request_id === request.id)
+                    )
+                  : true
+              ).length === 0 && (
                 <div style={styles.empty}>No requests match this search.</div>
               )}
 
               {columns.map((status) => {
-                const items = filteredRequests.filter((request) => request.status === status)
+                const items = filteredRequests.filter((request) => {
+                  const matchesStatus = request.status === status
+                  if (!matchesStatus) return false
+                  if (currentUserRole !== 'contractor' || isAdmin) return true
+                  return contractorAssignments.some(
+                    (assignment) =>
+                      assignment.contractor_profile_id === currentUserId &&
+                      (assignment.property_id === getRequestPropertyId(request) || assignment.work_request_id === request.id)
+                  )
+                })
 
                 if (items.length === 0) return null
 
@@ -7376,6 +9711,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                             >
                               Download
                             </button>
+                            <button
+                              type="button"
+                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
+                              onClick={() => savePhotoFieldMemory(request, file)}
+                            >
+                              Learn from this
+                            </button>
                           </div>
                         ))}
 
@@ -7396,6 +9738,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                               onClick={() => openRequestFile(file, true)}
                             >
                               Download
+                            </button>
+                            <button
+                              type="button"
+                              style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
+                              onClick={() => savePhotoFieldMemory(request, file)}
+                            >
+                              Learn from this
                             </button>
                           </div>
                         ))}
@@ -8251,6 +10600,958 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
+        {isAdmin && activeTab === 'fieldLessons' && (
+          <section style={styles.card}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <h2>Field Lesson Agent</h2>
+                <p style={styles.muted}>
+                  Paste a source link and field notes. Shelter Prep drafts a Lesson Summary Draft for admin review before any memory is saved.
+                </p>
+              </div>
+              <button type="button" style={styles.outlineButton} disabled={sourceLessonsLoading} onClick={loadSourceLessons}>
+                {sourceLessonsLoading ? 'Loading...' : 'Refresh Lessons'}
+              </button>
+            </div>
+
+            <div style={styles.noticeBox}>
+              Do not automatically train from YouTube. Source links and manual notes create drafts only. Human Verified memory starts after admin approval.
+            </div>
+
+            <div style={styles.requestCard}>
+              <h3 style={{ marginTop: 0 }}>Create Lesson Summary Draft</h3>
+              <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                <input
+                  style={styles.input}
+                  placeholder="Paste YouTube link showing how this repair is done."
+                  value={sourceLessonDraft.source_url}
+                  onChange={(event) =>
+                    setSourceLessonDraft((draft) => ({
+                      ...draft,
+                      source_url: event.target.value,
+                      source_type: inferSourceLessonType(event.target.value),
+                    }))
+                  }
+                />
+                <select
+                  style={styles.input}
+                  value={sourceLessonDraft.source_type}
+                  onChange={(event) =>
+                    setSourceLessonDraft((draft) => ({ ...draft, source_type: event.target.value as SourceLessonSourceType }))
+                  }
+                >
+                  {SOURCE_LESSON_SOURCE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {getLearningDisplayName(type)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                <input
+                  style={styles.input}
+                  placeholder="Source title"
+                  value={sourceLessonDraft.source_title}
+                  onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, source_title: event.target.value }))}
+                />
+                <input
+                  style={styles.input}
+                  placeholder="Work type"
+                  value={sourceLessonDraft.work_type}
+                  onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, work_type: event.target.value }))}
+                />
+              </div>
+              <textarea
+                style={{ ...styles.input, minHeight: 90 }}
+                placeholder="Problem description"
+                value={sourceLessonDraft.problem_description}
+                onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, problem_description: event.target.value }))}
+              />
+              <textarea
+                style={{ ...styles.input, minHeight: 90 }}
+                placeholder="Extract hidden labor, tools, safety risks, cleanup, missing info, and estimate impact."
+                value={sourceLessonDraft.admin_intent}
+                onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, admin_intent: event.target.value }))}
+              />
+              <textarea
+                style={{ ...styles.input, minHeight: 130 }}
+                placeholder="Paste notes/transcript manually for now. TODO: transcript extraction API integration later."
+                value={sourceLessonManualNotes}
+                onChange={(event) => setSourceLessonManualNotes(event.target.value)}
+              />
+              <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                <select
+                  style={styles.input}
+                  value={sourceLessonDraft.linked_work_request_id || ''}
+                  onChange={(event) => selectSourceLessonLinkedRequest(event.target.value)}
+                >
+                  <option value="">Optional linked request</option>
+                  {requests.map((request) => (
+                    <option key={request.id} value={request.id}>
+                      {getSourceLessonRequestLabel(request)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  style={styles.input}
+                  placeholder="Linked property ID"
+                  value={sourceLessonDraft.linked_property_id || ''}
+                  onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, linked_property_id: event.target.value }))}
+                />
+                <input
+                  style={styles.input}
+                  placeholder="Linked repair item ID"
+                  value={sourceLessonDraft.linked_repair_item_id || ''}
+                  onChange={(event) => setSourceLessonDraft((draft) => ({ ...draft, linked_repair_item_id: event.target.value }))}
+                />
+              </div>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={sourceLessonSavingId === 'new-source-lesson'}
+                onClick={generateSourceLessonDraft}
+              >
+                {sourceLessonSavingId === 'new-source-lesson' ? 'Generating...' : 'Generate Lesson Draft'}
+              </button>
+            </div>
+
+            <div
+              style={{
+                ...styles.segmentedControl,
+                gridTemplateColumns: isCompact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))',
+              }}
+            >
+              {[
+                { value: 'all', label: 'All' },
+                ...SOURCE_LESSON_STATUSES.map((status) => ({ value: status, label: getLearningDisplayName(status) })),
+              ].map((status) => (
+                <button
+                  key={status.value}
+                  type="button"
+                  style={sourceLessonStatusFilter === status.value ? styles.segmentedActive : styles.segmentedButton}
+                  onClick={() => setSourceLessonStatusFilter(status.value as 'all' | SourceLessonStatus)}
+                >
+                  {status.label}
+                </button>
+              ))}
+            </div>
+
+            <h3>Lesson Summary Drafts</h3>
+            {visibleSourceLessons.length === 0 ? (
+              <div style={styles.empty}>No Lesson Summary Drafts yet.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleSourceLessons.map((lesson) => (
+                  <div key={lesson.id} style={styles.requestCard}>
+                    <div style={styles.badgeRow}>
+                      <span style={lesson.status === 'approved' ? styles.badge : styles.badgeMuted}>
+                        {lesson.status === 'approved' ? 'Human Verified' : lesson.status === 'needs_review' ? 'Needs Admin Review' : getLearningDisplayName(lesson.status)}
+                      </span>
+                      <span style={styles.badgeMuted}>{getLearningDisplayName(lesson.source_type)}</span>
+                      <span style={styles.badgeMuted}>{getLearningDisplayName(lesson.confidence)}</span>
+                    </div>
+
+                    <label style={styles.small}>Source URL</label>
+                    <input
+                      style={styles.input}
+                      value={lesson.source_url}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, source_url: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 72 }}
+                      placeholder="Problem description"
+                      value={lesson.problem_description}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, problem_description: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 72 }}
+                      placeholder="Admin intent"
+                      value={lesson.admin_intent}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, admin_intent: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 90 }}
+                      placeholder="Lesson summary"
+                      value={lesson.lesson_summary}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, lesson_summary: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 80 }}
+                      placeholder="Observed method"
+                      value={lesson.observed_method}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, observed_method: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 80 }}
+                      placeholder="Hidden labor"
+                      value={lesson.hidden_labor}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, hidden_labor: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 110 }}
+                        placeholder="Job steps, one per line"
+                        value={getSourceLessonDisplayList(lesson.job_steps)}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, job_steps: splitSourceLessonLines(event.target.value) } : item))
+                          )
+                        }
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 110 }}
+                        placeholder="Tools/materials, one per line"
+                        value={getSourceLessonDisplayList(lesson.tools_materials)}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, tools_materials: splitSourceLessonLines(event.target.value) } : item))
+                          )
+                        }
+                      />
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Safety notes"
+                        value={lesson.safety_notes}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, safety_notes: event.target.value } : item))
+                          )
+                        }
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Access notes"
+                        value={lesson.access_notes}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, access_notes: event.target.value } : item))
+                          )
+                        }
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Cleanup notes"
+                        value={lesson.cleanup_notes}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, cleanup_notes: event.target.value } : item))
+                          )
+                        }
+                      />
+                    </div>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 72 }}
+                      placeholder="Estimate impact"
+                      value={lesson.estimate_impact}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, estimate_impact: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 86 }}
+                      placeholder="Missing info questions, one per line"
+                      value={getSourceLessonDisplayList(lesson.missing_info_questions)}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === lesson.id ? { ...item, missing_info_questions: splitSourceLessonLines(event.target.value) } : item))
+                        )
+                      }
+                    />
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Applies when"
+                        value={lesson.applies_when}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, applies_when: event.target.value } : item))
+                          )
+                        }
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Does not apply when"
+                        value={lesson.does_not_apply_when}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) => (item.id === lesson.id ? { ...item, does_not_apply_when: event.target.value } : item))
+                          )
+                        }
+                      />
+                    </div>
+
+                    <div style={styles.buttonRow}>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id}
+                        onClick={() =>
+                          updateSourceLesson(
+                            lesson,
+                            {
+                              source_type: lesson.source_type,
+                              source_url: lesson.source_url,
+                              source_title: lesson.source_title,
+                              work_type: lesson.work_type,
+                              problem_description: lesson.problem_description,
+                              admin_intent: lesson.admin_intent,
+                              lesson_summary: lesson.lesson_summary,
+                              observed_method: lesson.observed_method,
+                              hidden_labor: lesson.hidden_labor,
+                              job_steps: lesson.job_steps,
+                              tools_materials: lesson.tools_materials,
+                              safety_notes: lesson.safety_notes,
+                              access_notes: lesson.access_notes,
+                              cleanup_notes: lesson.cleanup_notes,
+                              estimate_impact: lesson.estimate_impact,
+                              missing_info_questions: lesson.missing_info_questions,
+                              applies_when: lesson.applies_when,
+                              does_not_apply_when: lesson.does_not_apply_when,
+                              confidence: lesson.confidence,
+                              admin_notes: lesson.admin_notes,
+                              linked_property_id: lesson.linked_property_id,
+                              linked_work_request_id: lesson.linked_work_request_id,
+                              linked_repair_item_id: lesson.linked_repair_item_id,
+                            },
+                            'source_lesson_edited'
+                          )
+                        }
+                      >
+                        Edit Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.primaryButton}
+                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'approved' || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => approveSourceLesson(lesson)}
+                      >
+                        Approve Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'rejected' || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => rejectSourceLesson(lesson)}
+                      >
+                        Reject Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => saveSourceLessonProjectSpecific(lesson)}
+                      >
+                        Save as Project-Specific Only
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => saveSourceLessonGlobalMemory(lesson)}
+                      >
+                        Save as Global Labor Memory
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id}
+                        onClick={() => createJobExecutionStepsFromSourceLesson(lesson)}
+                      >
+                        Create Job Execution Steps
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {isAdmin && activeTab === 'agentLearning' && (
+          <section style={styles.card}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <h2>Agent Learning</h2>
+                <p style={styles.muted}>
+                  Shared operational memory from human corrections. Agent names route the lesson, but the memory belongs to the whole Shelter Prep system.
+                </p>
+              </div>
+              <button type="button" style={styles.outlineButton} disabled={agentLearningLoading} onClick={loadAgentLearning}>
+                {agentLearningLoading ? 'Loading...' : 'Refresh Learning'}
+              </button>
+            </div>
+
+            <div style={styles.noticeBox}>
+              AI may draft, classify, estimate, organize, summarize, and suggest. It may not approve, finalize, send, purchase, or override human judgment.
+              <br />
+              Only admins can approve shared operational memory.
+            </div>
+
+            <div
+              style={{
+                ...styles.segmentedControl,
+                gridTemplateColumns: isCompact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))',
+              }}
+            >
+              {[
+                { value: 'all', label: 'All' },
+                ...LESSON_STATUSES.map((status) => ({ value: status, label: getLearningDisplayName(status) })),
+              ].map((status) => (
+                <button
+                  key={status.value}
+                  type="button"
+                  style={agentLearningStatusFilter === status.value ? styles.segmentedActive : styles.segmentedButton}
+                  onClick={() => setAgentLearningStatusFilter(status.value as 'all' | LessonStatus)}
+                >
+                  {status.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={styles.requestCard}>
+              <h3 style={{ marginTop: 0 }}>Evaluate a Human Correction</h3>
+              <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                <select
+                  style={styles.input}
+                  value={learningDraft.source_agent}
+                  onChange={(event) =>
+                    setLearningDraft((draft) => ({ ...draft, source_agent: event.target.value as AgentName }))
+                  }
+                >
+                  {AGENT_NAMES.map((agent) => (
+                    <option key={agent} value={agent}>
+                      {getLearningDisplayName(agent)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  style={styles.input}
+                  placeholder="Task type, ex: shower layout / deck estimate"
+                  value={learningDraft.task_type}
+                  onChange={(event) => setLearningDraft((draft) => ({ ...draft, task_type: event.target.value }))}
+                />
+              </div>
+              <textarea
+                style={{ ...styles.input, minHeight: 90 }}
+                placeholder="Original agent output"
+                value={learningDraft.original_agent_output}
+                onChange={(event) => setLearningDraft((draft) => ({ ...draft, original_agent_output: event.target.value }))}
+              />
+              <textarea
+                style={{ ...styles.input, minHeight: 90 }}
+                placeholder="Human correction"
+                value={learningDraft.human_correction}
+                onChange={(event) => setLearningDraft((draft) => ({ ...draft, human_correction: event.target.value }))}
+              />
+              {learningDraft.human_correction && (
+                <div style={styles.aiBox}>
+                  {(() => {
+                    const evaluation = evaluateCorrectionForLearning(learningDraft)
+                    return (
+                      <>
+                        <strong>{getLearningDisplayName(evaluation.correction_category)}</strong>
+                        <p style={styles.small}>
+                          Score {evaluation.learning_value_score}.{' '}
+                          {evaluation.reusable ? 'Reusable conditional logic detected.' : 'Apply correction only.'}
+                        </p>
+                        <p style={styles.small}>{evaluation.inferred_reason}</p>
+                        {evaluation.confirmation_question && <p style={styles.small}>{evaluation.confirmation_question}</p>}
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={agentLearningSavingId === 'new-learning-event'}
+                onClick={submitLearningDraft}
+              >
+                {agentLearningSavingId === 'new-learning-event' ? 'Saving...' : 'Save Learning Event'}
+              </button>
+            </div>
+
+            <h3>Learning Events</h3>
+            {visibleAgentLearningEvents.length === 0 ? (
+              <div style={styles.empty}>No learning events yet. Human corrections with reusable field logic will appear here.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleAgentLearningEvents.map((event) => (
+                  <div key={event.id} style={styles.requestCard}>
+                    <div style={styles.badgeRow}>
+                      <span style={styles.badgeMuted}>{getLearningDisplayName(event.source_agent)}</span>
+                      <span style={event.lesson_status === 'human_verified' ? styles.badge : styles.badgeMuted}>
+                        {getLearningDisplayName(event.lesson_status)}
+                      </span>
+                      <span style={styles.badgeMuted}>{getLearningDisplayName(event.memory_scope || 'global_operational')}</span>
+                      <span style={styles.badgeMuted}>score {event.learning_value_score}</span>
+                    </div>
+                    <strong>{getLearningDisplayName(event.correction_category)}</strong>
+                    <p style={styles.small}>Task: {event.task_type || 'General correction'}</p>
+                    <p style={styles.small}>Correction: {event.human_correction}</p>
+                    <p style={styles.small}>Reason: {event.human_confirmed_reason || event.inferred_reason}</p>
+                    <p style={styles.small}>Affected agents: {getLearningAgentList(event.affected_agents)}</p>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      disabled={
+                        !event.reusable ||
+                        event.lesson_status === 'rejected' ||
+                        event.lesson_status === 'deprecated' ||
+                        !canApproveOperationalMemory(memoryActorRole) ||
+                        agentLearningSavingId === event.id
+                      }
+                      onClick={() =>
+                        createAgentLearningRuleFromConfirmedEvent({
+                          ...event,
+                          lesson_status: 'human_verified',
+                          human_verified: true,
+                          confidence: 'human_verified',
+                        })
+                      }
+                    >
+                      Create Verified Rule
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <h3>Shared Rules</h3>
+            {visibleAgentLearningRules.length === 0 ? (
+              <div style={styles.empty}>No shared learning rules yet.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleAgentLearningRules.map((rule) => {
+                  const ruleAuditLogs = agentMemoryAuditLogs.filter(
+                    (log) => log.target_table === 'agent_learning_rules' && log.target_id === rule.id
+                  )
+                  return (
+                  <div key={rule.id} style={styles.requestCard}>
+                    <div style={styles.badgeRow}>
+                      <span style={styles.badge}>{getLearningDisplayName(rule.memory_scope || 'global_operational')}</span>
+                      <span style={rule.lesson_status === 'human_verified' ? styles.badge : styles.badgeMuted}>
+                        {getLearningDisplayName(rule.lesson_status)}
+                      </span>
+                      <span style={rule.active ? styles.badge : styles.badgeMuted}>{rule.active ? 'active' : 'inactive'}</span>
+                      <span style={styles.badgeMuted}>{rule.confidence || 'draft'}</span>
+                    </div>
+                    <input
+                      style={styles.input}
+                      value={rule.title}
+                      onChange={(event) =>
+                        setAgentLearningRules((prev) =>
+                          prev.map((item) => (item.id === rule.id ? { ...item, title: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 90 }}
+                      value={rule.rule_text}
+                      onChange={(event) =>
+                        setAgentLearningRules((prev) =>
+                          prev.map((item) => (item.id === rule.id ? { ...item, rule_text: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 76 }}
+                      placeholder="Applies when"
+                      value={rule.applies_when}
+                      onChange={(event) =>
+                        setAgentLearningRules((prev) =>
+                          prev.map((item) => (item.id === rule.id ? { ...item, applies_when: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <textarea
+                      style={{ ...styles.input, minHeight: 76 }}
+                      placeholder="Does not apply when"
+                      value={rule.does_not_apply_when}
+                      onChange={(event) =>
+                        setAgentLearningRules((prev) =>
+                          prev.map((item) => (item.id === rule.id ? { ...item, does_not_apply_when: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <p style={styles.small}>Affected agents: {getLearningAgentList(rule.affected_agents)}</p>
+                    <div style={styles.buttonRow}>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentLearningSavingId === rule.id || !canEditOperationalMemory(memoryActorRole)}
+                        onClick={() =>
+                          updateAgentLearningRule(rule, {
+                            title: rule.title,
+                            rule_text: rule.rule_text,
+                            applies_when: rule.applies_when,
+                            does_not_apply_when: rule.does_not_apply_when,
+                          })
+                        }
+                      >
+                        Save Rule
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentLearningSavingId === rule.id || rule.human_verified || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() =>
+                          updateAgentLearningRule(rule, {
+                            lesson_status: 'human_verified',
+                            human_verified: true,
+                            active: true,
+                            memory_scope: 'global_operational',
+                            confidence: 'human_verified',
+                          })
+                        }
+                      >
+                        Approve Rule
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentLearningSavingId === rule.id || !rule.active || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => updateAgentLearningRule(rule, { active: false })}
+                      >
+                        Deactivate
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentLearningSavingId === rule.id || rule.lesson_status === 'rejected' || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => updateAgentLearningRule(rule, { lesson_status: 'rejected', human_verified: false, active: false })}
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentLearningSavingId === rule.id || rule.lesson_status === 'deprecated' || !canApproveOperationalMemory(memoryActorRole)}
+                        onClick={() => updateAgentLearningRule(rule, { lesson_status: 'deprecated', active: false })}
+                      >
+                        Deprecate
+                      </button>
+                    </div>
+                    {ruleAuditLogs.length ? (
+                      <details style={styles.moreActions}>
+                        <summary style={styles.moreActionsSummary}>Audit history</summary>
+                        <ul style={styles.smallList}>
+                          {ruleAuditLogs.slice(0, 5).map((log) => (
+                            <li key={log.id}>
+                              {getLearningDisplayName(log.action_type)} by {getLearningDisplayName(log.actor_role || 'viewer')}{' '}
+                              {log.created_at ? new Date(log.created_at).toLocaleString() : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : (
+                      <p style={styles.small}>No audit history yet.</p>
+                    )}
+                  </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <h3>Memory Conflicts</h3>
+            <div
+              style={{
+                ...styles.segmentedControl,
+                gridTemplateColumns: isCompact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))',
+              }}
+            >
+              {[
+                { value: 'all', label: 'All' },
+                ...AGENT_MEMORY_CONFLICT_STATUSES.map((status) => ({ value: status, label: getLearningDisplayName(status) })),
+              ].map((status) => (
+                <button
+                  key={status.value}
+                  type="button"
+                  style={memoryConflictStatusFilter === status.value ? styles.segmentedActive : styles.segmentedButton}
+                  onClick={() => setMemoryConflictStatusFilter(status.value as 'all' | AgentMemoryConflictStatus)}
+                >
+                  {status.label}
+                </button>
+              ))}
+            </div>
+            {visibleAgentMemoryConflicts.length === 0 ? (
+              <div style={styles.empty}>No operational memory conflicts need review.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleAgentMemoryConflicts.map((conflict) => {
+                  const conflictingRules = conflict.conflicting_rule_ids
+                    .map((id) => agentLearningRuleById.get(id))
+                    .filter((rule): rule is AgentLearningRule => Boolean(rule))
+                  const firstRule = conflictingRules[0]
+                  const secondRule = conflictingRules[1]
+                  const conflictAuditLogs = agentMemoryAuditLogs.filter(
+                    (log) => log.target_table === 'agent_memory_conflicts' && log.target_id === conflict.id
+                  )
+                  return (
+                    <div key={conflict.id} style={styles.requestCard}>
+                      <div style={styles.badgeRow}>
+                        <span style={conflict.resolution_status === 'needs_review' ? styles.badgeDanger : styles.badgeMuted}>
+                          {getLearningDisplayName(conflict.resolution_status)}
+                        </span>
+                        <span style={styles.badgeMuted}>{getLearningDisplayName(conflict.detected_by_agent)}</span>
+                        <span style={styles.badgeMuted}>{conflict.task_type || 'General task'}</span>
+                      </div>
+                      <strong>{conflict.conflict_summary}</strong>
+                      {conflict.recommended_resolution && <p style={styles.small}>{conflict.recommended_resolution}</p>}
+                      <div style={styles.fileGrid}>
+                        {conflictingRules.map((rule) => (
+                          <div key={rule.id} style={styles.aiBox}>
+                            <strong>{rule.title}</strong>
+                            <p style={styles.small}>{rule.rule_text}</p>
+                            <p style={styles.small}>Applies: {rule.applies_when || 'Not specified'}</p>
+                            <p style={styles.small}>Does not apply: {rule.does_not_apply_when || 'Not specified'}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {conflict.human_resolution_notes && <p style={styles.small}>Human notes: {conflict.human_resolution_notes}</p>}
+                      <div style={styles.buttonRow}>
+                        {firstRule && (
+                          <button
+                            type="button"
+                            style={styles.outlineButton}
+                            disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                            onClick={() => resolveAgentMemoryConflict(conflict, 'resolved', firstRule.id)}
+                          >
+                            Use Rule A
+                          </button>
+                        )}
+                        {secondRule && (
+                          <button
+                            type="button"
+                            style={styles.outlineButton}
+                            disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                            onClick={() => resolveAgentMemoryConflict(conflict, 'resolved', secondRule.id)}
+                          >
+                            Use Rule B
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                          onClick={() => resolveAgentMemoryConflict(conflict, 'ask_client')}
+                        >
+                          Ask Client
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                          onClick={() => resolveAgentMemoryConflict(conflict, 'needs_site_review')}
+                        >
+                          Needs Site Review
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                          onClick={() => resolveAgentMemoryConflict(conflict, 'dismissed')}
+                        >
+                          Dismiss
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === conflict.id || !canResolveMemoryConflict(memoryActorRole)}
+                          onClick={() => resolveAgentMemoryConflict(conflict, 'resolved', firstRule?.id || null, true)}
+                        >
+                          Create Conditional Rule
+                        </button>
+                      </div>
+                      {conflictAuditLogs.length ? (
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>Audit history</summary>
+                          <ul style={styles.smallList}>
+                            {conflictAuditLogs.slice(0, 5).map((log) => (
+                              <li key={log.id}>
+                                {getLearningDisplayName(log.action_type)} by {getLearningDisplayName(log.actor_role || 'viewer')}{' '}
+                                {log.created_at ? new Date(log.created_at).toLocaleString() : ''}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : (
+                        <p style={styles.small}>No audit history yet.</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <h3>Recent Rule Applications</h3>
+            <div style={isCompact ? styles.mobileStack : styles.applicationFilterGrid}>
+              <select
+                style={styles.input}
+                value={ruleApplicationRuleFilter}
+                onChange={(event) => setRuleApplicationRuleFilter(event.target.value)}
+              >
+                <option value="all">All rules</option>
+                {agentLearningRules.map((rule) => (
+                  <option key={rule.id} value={rule.id}>
+                    {rule.title || 'Untitled rule'}
+                  </option>
+                ))}
+              </select>
+              <select
+                style={styles.input}
+                value={ruleApplicationTypeFilter}
+                onChange={(event) => setRuleApplicationTypeFilter(event.target.value as 'all' | AgentRuleApplicationType)}
+              >
+                <option value="all">All types</option>
+                {AGENT_RULE_APPLICATION_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {getLearningDisplayName(type)}
+                  </option>
+                ))}
+              </select>
+              <select
+                style={styles.input}
+                value={ruleApplicationAgentFilter}
+                onChange={(event) => setRuleApplicationAgentFilter(event.target.value as 'all' | AgentName)}
+              >
+                <option value="all">All agents</option>
+                {AGENT_NAMES.map((agent) => (
+                  <option key={agent} value={agent}>
+                    {getLearningDisplayName(agent)}
+                  </option>
+                ))}
+              </select>
+              <select
+                style={styles.input}
+                value={ruleApplicationFeedbackFilter}
+                onChange={(event) =>
+                  setRuleApplicationFeedbackFilter(event.target.value as 'all' | AgentRuleApplicationFeedbackStatus)
+                }
+              >
+                <option value="all">All feedback</option>
+                {AGENT_RULE_FEEDBACK_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {getLearningDisplayName(status)}
+                  </option>
+                ))}
+              </select>
+              <input
+                style={styles.input}
+                placeholder="Filter task type"
+                value={ruleApplicationTaskFilter}
+                onChange={(event) => setRuleApplicationTaskFilter(event.target.value)}
+              />
+            </div>
+
+            {visibleAgentRuleApplications.length === 0 ? (
+              <div style={styles.empty}>No operational memory usage has been recorded yet.</div>
+            ) : (
+              <div style={styles.fileGrid}>
+                {visibleAgentRuleApplications.map((application) => {
+                  const rule = agentLearningRuleById.get(application.rule_id)
+                  return (
+                    <div key={application.id} style={styles.requestCard}>
+                      <div style={styles.badgeRow}>
+                        <span style={application.application_type === 'applied' ? styles.badge : styles.badgeMuted}>
+                          {getLearningDisplayName(application.application_type || 'suggested')}
+                        </span>
+                        <span style={styles.badgeMuted}>{getLearningDisplayName(application.applied_by_agent)}</span>
+                        <span
+                          style={
+                            application.human_feedback_status === 'accepted'
+                              ? styles.badge
+                              : application.human_feedback_status === 'rejected'
+                                ? styles.badgeDanger
+                                : styles.badgeMuted
+                          }
+                        >
+                          {getLearningDisplayName(application.human_feedback_status)}
+                        </span>
+                        <span style={styles.badgeMuted}>{application.task_type || 'General task'}</span>
+                      </div>
+                      <strong>{rule?.title || 'Rule application'}</strong>
+                      <p style={styles.small}>
+                        Used {application.created_at ? new Date(application.created_at).toLocaleString() : 'recently'}
+                      </p>
+                      <p style={styles.small}>Context: {application.output_context || 'No context recorded.'}</p>
+                      <p style={styles.small}>
+                        Output excerpt: {application.generated_output_excerpt || 'No generated output excerpt recorded.'}
+                      </p>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 76 }}
+                        placeholder="Human feedback notes"
+                        value={application.human_feedback_notes || ''}
+                        onChange={(event) =>
+                          setAgentRuleApplications((prev) =>
+                            prev.map((item) =>
+                              item.id === application.id ? { ...item, human_feedback_notes: event.target.value } : item
+                            )
+                          )
+                        }
+                      />
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === application.id || !canProvideRuleFeedback(memoryActorRole, application, 'accepted', contractorAssignments, currentUserId)}
+                          onClick={() => updateAgentRuleApplicationFeedback(application, 'accepted')}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === application.id || !canProvideRuleFeedback(memoryActorRole, application, 'edited', contractorAssignments, currentUserId)}
+                          onClick={() => updateAgentRuleApplicationFeedback(application, 'edited')}
+                        >
+                          Mark Edited
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentLearningSavingId === application.id || !canProvideRuleFeedback(memoryActorRole, application, 'rejected', contractorAssignments, currentUserId)}
+                          onClick={() => updateAgentRuleApplicationFeedback(application, 'rejected')}
+                        >
+                          Reject Use
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
         {isAdmin && activeTab === 'estimates' && (
           <section style={styles.card}>
             <h2>AI Estimate Review</h2>
@@ -8284,6 +11585,62 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     {rejectedEstimateCount > 0 ? ` ${rejectedEstimateCount} rejected item(s) hidden by default.` : ''}
                   </div>
                 </div>
+
+                {(matchedPricingMemory.length > 0 || matchedJobStepMemory.length > 0 || matchedFieldMemory.length > 0) ? (
+                  <div style={styles.intelligencePanel}>
+                    <strong>Based on verified memory from similar jobs</strong>
+                    <p style={styles.small}>
+                      Supporting context only. Current scope, site conditions, and human approval still control the estimate.
+                    </p>
+                    {matchedPricingMemory.length > 0 && (
+                      <>
+                        <strong>Pricing memory</strong>
+                        <ul style={styles.smallList}>
+                          {matchedPricingMemory.slice(0, 4).map((memory) => (
+                            <li key={memory.id}>
+                              {memory.item_name || 'Similar item'}: {money(Number(memory.human_approved_price || 0))}{' '}
+                              {memory.unit ? `/ ${memory.unit}` : ''} •{' '}
+                              {memory.reviewed_at ? new Date(memory.reviewed_at).toLocaleDateString() : 'reviewed'} •{' '}
+                              {memory.confidence_after || 'human verified'}
+                              {memory.admin_notes ? ` • ${memory.admin_notes}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {matchedJobStepMemory.length > 0 && (
+                      <>
+                        <strong>Labor scope memory</strong>
+                        <ul style={styles.smallList}>
+                          {matchedJobStepMemory.slice(0, 4).map((memory, index) => (
+                            <li key={memory.id || `${memory.step_title}-${index}`}>
+                              {memory.status === 'rejected' ? 'Past rejected suggestion - avoid this pattern: ' : ''}
+                              {memory.step_title || 'Similar step'}: {memory.approved_hours_low ?? memory.approved_hours ?? 'review'}-
+                              {memory.approved_hours_high ?? memory.approved_hours ?? 'review'} hrs •{' '}
+                              {memory.reviewed_at ? new Date(memory.reviewed_at).toLocaleDateString() : 'reviewed'}
+                              {memory.admin_notes ? ` • ${memory.admin_notes}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {matchedFieldMemory.length > 0 && (
+                      <>
+                        <strong>Photo / field memory</strong>
+                        <ul style={styles.smallList}>
+                          {matchedFieldMemory.map((memory) => (
+                            <li key={memory.id}>
+                              {memory.photo_description || 'Verified field note'}: {memory.follow_up_lesson || memory.estimate_impact || 'review current conditions'} •{' '}
+                              {memory.reviewed_at ? new Date(memory.reviewed_at).toLocaleDateString() : 'reviewed'}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div style={styles.empty}>No verified memory matched this job yet.</div>
+                )}
 
                 {estimateIntelligence && (
                   <div style={styles.intelligencePanel}>
@@ -8543,6 +11900,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           onClick={() => rejectJobExecutionStep(step)}
                         >
                           Reject
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={jobStepSavingId === step.id || step.status === 'ai_draft'}
+                          onClick={() => recordJobStepLearning(step, step.status === 'rejected' ? 'rejected' : step.confidence === 'human_added' ? 'added' : 'edited')}
+                        >
+                          Save as verified memory
                         </button>
                         <button
                           type="button"
@@ -9153,6 +12518,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       >
                         Use this price next time
                       </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        onClick={() => recordHumanPricingMemory(item, item.confidence || 'needs_review')}
+                        disabled={!item.human_approved || isEstimateItemRejected(item)}
+                      >
+                        Save as verified memory
+                      </button>
                       {item.source_url && (
                         <button
                           style={styles.linkButton}
@@ -9506,6 +12879,112 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#fbfdf9',
     borderRadius: 18,
     padding: 18,
+  },
+  intakeFlow: {
+    display: 'grid',
+    gap: 14,
+  },
+  intakeStepCard: {
+    border: '1px solid #d7dfd3',
+    background: '#fbfcfa',
+    borderRadius: 18,
+    padding: 16,
+  },
+  intakeStepHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    marginBottom: 12,
+    color: '#173425',
+  },
+  intakeMediaGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 10,
+  },
+  intakeMediaButton: {
+    minHeight: 68,
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    color: '#173425',
+    borderRadius: 16,
+    padding: 12,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    fontWeight: 900,
+    cursor: 'pointer',
+    lineHeight: 1.25,
+  },
+  hiddenFileInput: {
+    position: 'absolute',
+    opacity: 0,
+    width: 1,
+    height: 1,
+    pointerEvents: 'none',
+  },
+  mediaSummaryBox: {
+    display: 'grid',
+    gap: 6,
+    marginTop: 12,
+    padding: 12,
+    border: '1px solid #e5ecdf',
+    background: '#ffffff',
+    borderRadius: 14,
+    color: '#5f6f63',
+    fontSize: 14,
+    lineHeight: 1.45,
+  },
+  propertyFactsSummary: {
+    display: 'grid',
+    gap: 6,
+    padding: 12,
+    border: '1px solid #dfe8da',
+    background: '#ffffff',
+    borderRadius: 14,
+    color: '#173425',
+    fontWeight: 800,
+    lineHeight: 1.45,
+  },
+  progressiveFieldGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 10,
+    paddingTop: 10,
+  },
+  grid4: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 12,
+    alignItems: 'start',
+  },
+  applicationFilterGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gap: 12,
+    alignItems: 'start',
+  },
+  intakeDisclosure: {
+    border: '1px solid #d7dfd3',
+    background: '#ffffff',
+    borderRadius: 16,
+    padding: '0 12px 8px',
+  },
+  intakeStatusCard: {
+    border: '1px solid #dfe8da',
+    background: '#f7faf5',
+    borderRadius: 18,
+    padding: 16,
+    color: '#173425',
+  },
+  intakeActionRow: {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+    alignItems: 'center',
   },
   scopeText: {
     whiteSpace: 'pre-wrap',
