@@ -436,6 +436,27 @@ function canEditOperationalMemory(role: MemoryActorRole) {
   return role === 'owner' || role === 'admin' || role === 'estimator'
 }
 
+function getEffectiveMemoryActorRole(role: MemoryActorRole, localAdminMode: boolean): MemoryActorRole {
+  if (!localAdminMode) return role
+  return role === 'owner' ? 'owner' : 'admin'
+}
+
+function canDraftSourceLessonsFor(role: MemoryActorRole, localAdminMode: boolean) {
+  return localAdminMode || canEditOperationalMemory(role)
+}
+
+function canApproveSourceLessonsFor(role: MemoryActorRole, localAdminMode: boolean) {
+  return localAdminMode || canApproveOperationalMemory(role)
+}
+
+function canSaveGlobalLaborMemoryFor(role: MemoryActorRole, localAdminMode: boolean) {
+  return canApproveSourceLessonsFor(role, localAdminMode)
+}
+
+function canCreateSourceLessonJobStepsFor(role: MemoryActorRole, localAdminMode: boolean) {
+  return canApproveSourceLessonsFor(role, localAdminMode)
+}
+
 function canProvideRuleFeedback(
   role: MemoryActorRole,
   application?: AgentRuleApplication | null,
@@ -2686,7 +2707,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     original_agent_output: '',
     human_correction: '',
   })
-  const memoryActorRole: MemoryActorRole = currentUserRole
+  const memoryActorRole: MemoryActorRole = getEffectiveMemoryActorRole(currentUserRole, isAdmin)
+  const hasAdminConsoleAccess = isAdmin || canApproveOperationalMemory(memoryActorRole)
+  const canDraftSourceLessons = canDraftSourceLessonsFor(currentUserRole, isAdmin)
+  const canApproveSourceLessons = canApproveSourceLessonsFor(currentUserRole, isAdmin)
+  const canSaveGlobalLaborMemory = canSaveGlobalLaborMemoryFor(currentUserRole, isAdmin)
+  const canCreateSourceLessonJobSteps = canCreateSourceLessonJobStepsFor(currentUserRole, isAdmin)
+  const canAccessSourceLessonAgent = canDraftSourceLessons
 
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])
   const [laborTrade, setLaborTrade] = useState('')
@@ -2802,16 +2829,16 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   // Do not save dashboard requests to browser localStorage.
 
   useEffect(() => {
-    if (isAdmin && activeTab === 'invoices') loadInvoices()
-    if (isAdmin && activeTab === 'materials') loadMaterials()
-    if (isAdmin && activeTab === 'labor') loadLaborRates()
-    if (isAdmin && activeTab === 'messages') loadMessageCenter()
-    if (isAdmin && activeTab === 'archived') loadArchivedRequestsFromSupabase()
-    if (isAdmin && activeTab === 'pricingMemory') loadPricingMemoryEntries()
-    if (isAdmin && activeTab === 'agentLearning') loadAgentLearning()
-    if (isAdmin && activeTab === 'fieldLessons') loadSourceLessons()
-    if ((isAdmin || currentUserRole === 'contractor') && activeTab === 'dashboard') loadContractorAssignments()
-  }, [isAdmin, activeTab, currentUserRole])
+    if (hasAdminConsoleAccess && activeTab === 'invoices') loadInvoices()
+    if (hasAdminConsoleAccess && activeTab === 'materials') loadMaterials()
+    if (hasAdminConsoleAccess && activeTab === 'labor') loadLaborRates()
+    if (hasAdminConsoleAccess && activeTab === 'messages') loadMessageCenter()
+    if (hasAdminConsoleAccess && activeTab === 'archived') loadArchivedRequestsFromSupabase()
+    if (hasAdminConsoleAccess && activeTab === 'pricingMemory') loadPricingMemoryEntries()
+    if (hasAdminConsoleAccess && activeTab === 'agentLearning') loadAgentLearning()
+    if (canAccessSourceLessonAgent && activeTab === 'fieldLessons') loadSourceLessons()
+    if ((hasAdminConsoleAccess || currentUserRole === 'contractor') && activeTab === 'dashboard') loadContractorAssignments()
+  }, [hasAdminConsoleAccess, canAccessSourceLessonAgent, isAdmin, activeTab, currentUserRole])
 
   useEffect(() => {
     if (!appliedLaborRate) return
@@ -2834,12 +2861,21 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   ])
 
   function requireAdmin(tab: Tab) {
-    if (!isAdmin) {
+    if (!hasAdminConsoleAccess) {
       setShowLogin(true)
       return
     }
 
     setActiveTab(tab)
+  }
+
+  function openSourceLessonAgent() {
+    if (!canAccessSourceLessonAgent) {
+      setShowLogin(true)
+      return
+    }
+
+    setActiveTab('fieldLessons')
   }
 
   function handleLogin() {
@@ -6555,7 +6591,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function generateSourceLessonDraft() {
-    if (!canEditOperationalMemory(memoryActorRole)) {
+    if (!canDraftSourceLessonsFor(currentUserRole, isAdmin)) {
       alert('You do not have permission to draft source lessons.')
       return
     }
@@ -6605,11 +6641,11 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   async function updateSourceLesson(lesson: SourceLesson, changes: Partial<SourceLesson>, actionType = 'source_lesson_edited') {
     const approving = changes.status === 'approved' || Boolean(changes.approved_at || changes.approved_by)
     const rejecting = changes.status === 'rejected' || changes.status === 'archived'
-    if ((approving || rejecting) && !canApproveOperationalMemory(memoryActorRole)) {
+    if ((approving || rejecting) && !canApproveSourceLessonsFor(currentUserRole, isAdmin)) {
       alert('Only admins can approve, reject, or archive source lessons.')
       return null
     }
-    if (!approving && !rejecting && !canEditOperationalMemory(memoryActorRole)) {
+    if (!approving && !rejecting && !canDraftSourceLessonsFor(currentUserRole, isAdmin)) {
       alert('You do not have permission to edit source lessons.')
       return null
     }
@@ -6761,7 +6797,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function saveSourceLessonGlobalMemory(lesson: SourceLesson) {
-    if (!canApproveOperationalMemory(memoryActorRole)) {
+    if (!canSaveGlobalLaborMemoryFor(currentUserRole, isAdmin)) {
       alert('Only an admin or owner can save Global Labor Memory.')
       return
     }
@@ -6807,8 +6843,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         previous_value: null,
         new_value: savedRule as unknown as Record<string, unknown>,
         reason: 'Admin approved source lesson as Global Labor Memory.',
-      property_id: asNullableUuid(approved.linked_property_id),
-      work_request_id: asNullableUuid(approved.linked_work_request_id),
+        property_id: asNullableUuid(approved.linked_property_id),
+        work_request_id: asNullableUuid(approved.linked_work_request_id),
       })
       alert('Saved as Global Labor Memory.')
       await loadAgentLearning()
@@ -6819,7 +6855,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   async function createJobExecutionStepsFromSourceLesson(lesson: SourceLesson) {
-    if (!canEditOperationalMemory(memoryActorRole)) {
+    if (!canCreateSourceLessonJobStepsFor(currentUserRole, isAdmin)) {
       alert('You do not have permission to create job execution steps.')
       return
     }
@@ -7941,7 +7977,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   function exportCsv() {
-    if (!isAdmin) {
+    if (!hasAdminConsoleAccess) {
       setShowLogin(true)
       return
     }
@@ -8027,7 +8063,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }, [requests, filter, search])
 
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'dashboard') return
+    if (!hasAdminConsoleAccess || activeTab !== 'dashboard') return
 
     filteredRequests.forEach((request) => {
       if (!request.propertyAddress.trim()) return
@@ -8042,7 +8078,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }, [
     activeTab,
     filteredRequests,
-    isAdmin,
+    hasAdminConsoleAccess,
     propertyProfileErrorsByLeadId,
     propertyProfileLoadingByLeadId,
     propertyProfilesByLeadId,
@@ -8684,7 +8720,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     >
       {[
         { label: 'Gallery', tab: 'gallery' },
-        ...(isAdmin
+        ...(hasAdminConsoleAccess
           ? [
               { label: 'AI Intake', tab: 'intake' },
               { label: 'Messages', tab: 'messages' },
@@ -8699,7 +8735,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               { label: 'Field Lesson Agent', tab: 'fieldLessons' },
               { label: 'Agent Learning', tab: 'agentLearning' },
             ]
-          : []),
+          : canAccessSourceLessonAgent
+            ? [{ label: 'Field Lesson Agent', tab: 'fieldLessons' }]
+            : []),
       ].map((item) => (
         <button
           key={item.tab}
@@ -8729,7 +8767,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 </div>
 
 
-          {isAdmin && (
+          {hasAdminConsoleAccess && (
             <>
 	              <button
 	                style={activeTab === 'intake' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
@@ -8747,7 +8785,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             </>
           )}
 
-          {isAdmin && (
+          {hasAdminConsoleAccess && (
             <>
 	              <button
 	                style={activeTab === 'dashboard' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
@@ -8819,16 +8857,28 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 Agent Learning
               </button>
 
-	              <button
-	                style={activeTab === 'fieldLessons' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
-                onClick={() => requireAdmin('fieldLessons')}
-              >
-                Field Lesson Agent
-              </button>
             </>
           )}
 
-          {!isAdmin && currentUserRole === 'contractor' && (
+          {canAccessSourceLessonAgent && !hasAdminConsoleAccess && (
+            <button
+              style={activeTab === 'fieldLessons' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
+              onClick={openSourceLessonAgent}
+            >
+              Field Lesson Agent
+            </button>
+          )}
+
+          {canAccessSourceLessonAgent && hasAdminConsoleAccess && (
+            <button
+              style={activeTab === 'fieldLessons' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
+              onClick={openSourceLessonAgent}
+            >
+              Field Lesson Agent
+            </button>
+          )}
+
+          {!hasAdminConsoleAccess && currentUserRole === 'contractor' && (
             <button
               style={activeTab === 'dashboard' ? { ...styles.navActive, ...(isCompact ? styles.mobileNavPill : {}) } : { ...styles.navButton, ...(isCompact ? styles.mobileNavPill : {}) }}
               onClick={() => setActiveTab('dashboard')}
@@ -8839,7 +8889,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         </nav>
 
         <div style={isCompact ? { ...styles.headerActions, ...styles.mobileHeaderActions } : styles.headerActions}>
-          {isAdmin && (
+          {hasAdminConsoleAccess && (
             <button style={styles.outlineButton} onClick={exportCsv}>
               Export CSV
             </button>
@@ -8848,6 +8898,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           {isAdmin ? (
             <button style={styles.primaryButton} onClick={handleLogout}>
               Log Out
+            </button>
+          ) : hasAdminConsoleAccess ? (
+            <button style={styles.outlineButton} disabled>
+              Admin Access
             </button>
           ) : (
             <button style={styles.primaryButton} onClick={() => setShowLogin(true)}>
@@ -9161,7 +9215,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </form>
             </section>
 
-            {isAdmin && (
+            {hasAdminConsoleAccess && (
               <aside style={styles.sideCard}>
                 <h2>Service Health</h2>
                 <div style={styles.healthGrid}>
@@ -9214,7 +9268,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </Suspense>
         )}
 
-        {isAdmin && activeTab === 'intake' && (
+        {hasAdminConsoleAccess && activeTab === 'intake' && (
           <section style={styles.card}>
             <h2>AI Text Message / Screenshot Intake</h2>
             <p style={styles.muted}>
@@ -9349,7 +9403,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'messages' && (
+        {hasAdminConsoleAccess && activeTab === 'messages' && (
           <section style={styles.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <div>
@@ -9499,12 +9553,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {(isAdmin || currentUserRole === 'contractor') && activeTab === 'dashboard' && (
+        {(hasAdminConsoleAccess || currentUserRole === 'contractor') && activeTab === 'dashboard' && (
           <>
             <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
-              <h2>{currentUserRole === 'contractor' && !isAdmin ? 'Contractor Assignments' : 'Admin Dashboard'}</h2>
+              <h2>{currentUserRole === 'contractor' && !hasAdminConsoleAccess ? 'Contractor Assignments' : 'Admin Dashboard'}</h2>
 
-              {currentUserRole === 'contractor' && !isAdmin ? (
+              {currentUserRole === 'contractor' && !hasAdminConsoleAccess ? (
                 <p style={styles.muted}>Assigned property and work request details appear here when available.</p>
               ) : (
                 <div style={isCompact ? styles.mobileStack : styles.grid2}>
@@ -9531,7 +9585,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               )}
             </section>
 
-            {currentUserRole === 'contractor' && !isAdmin && (
+            {currentUserRole === 'contractor' && !hasAdminConsoleAccess && (
               <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
                 <h3>My Assignments</h3>
                 {contractorAssignments.length === 0 ? (
@@ -9590,7 +9644,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
             <section style={isCompact ? { ...styles.kanban, ...styles.mobileKanban } : styles.kanban}>
               {filteredRequests.filter((request) =>
-                currentUserRole === 'contractor' && !isAdmin
+                currentUserRole === 'contractor' && !hasAdminConsoleAccess
                   ? contractorAssignments.some(
                       (assignment) =>
                         assignment.contractor_profile_id === currentUserId &&
@@ -9605,7 +9659,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 const items = filteredRequests.filter((request) => {
                   const matchesStatus = request.status === status
                   if (!matchesStatus) return false
-                  if (currentUserRole !== 'contractor' || isAdmin) return true
+                  if (currentUserRole !== 'contractor' || hasAdminConsoleAccess) return true
                   return contractorAssignments.some(
                     (assignment) =>
                       assignment.contractor_profile_id === currentUserId &&
@@ -9799,7 +9853,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         )}
 
 
-        {isAdmin && activeTab === 'archived' && (
+        {hasAdminConsoleAccess && activeTab === 'archived' && (
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
@@ -9872,7 +9926,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'invoices' && (
+        {hasAdminConsoleAccess && activeTab === 'invoices' && (
           <section style={styles.card}>
             <h2>Invoice Upload + AI Extraction</h2>
 
@@ -9983,13 +10037,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'history' && (
+        {hasAdminConsoleAccess && activeTab === 'history' && (
           <Suspense fallback={<div style={styles.empty}>Loading history...</div>}>
             <HistoricalUpload />
           </Suspense>
         )}
 
-        {isAdmin && activeTab === 'sellerPrep' && (
+        {hasAdminConsoleAccess && activeTab === 'sellerPrep' && (
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
@@ -10168,7 +10222,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'pricingMemory' && (
+        {hasAdminConsoleAccess && activeTab === 'pricingMemory' && (
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
@@ -10206,7 +10260,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'materials' && (
+        {hasAdminConsoleAccess && activeTab === 'materials' && (
           <section style={styles.card}>
             <h2>Material Cost Review</h2>
             <p style={styles.muted}>
@@ -10391,7 +10445,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'labor' && (
+        {hasAdminConsoleAccess && activeTab === 'labor' && (
           <section style={styles.card}>
             <h2>Labor Rate Review</h2>
             <p style={styles.muted}>
@@ -10600,7 +10654,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'fieldLessons' && (
+        {canAccessSourceLessonAgent && activeTab === 'fieldLessons' && (
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
@@ -10708,7 +10762,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               <button
                 type="button"
                 style={styles.primaryButton}
-                disabled={sourceLessonSavingId === 'new-source-lesson'}
+                disabled={sourceLessonSavingId === 'new-source-lesson' || !canDraftSourceLessons}
                 onClick={generateSourceLessonDraft}
               >
                 {sourceLessonSavingId === 'new-source-lesson' ? 'Generating...' : 'Generate Lesson Draft'}
@@ -10912,7 +10966,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={sourceLessonSavingId === lesson.id}
+                        disabled={sourceLessonSavingId === lesson.id || !canDraftSourceLessons}
                         onClick={() =>
                           updateSourceLesson(
                             lesson,
@@ -10950,7 +11004,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.primaryButton}
-                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'approved' || !canApproveOperationalMemory(memoryActorRole)}
+                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'approved' || !canApproveSourceLessons}
                         onClick={() => approveSourceLesson(lesson)}
                       >
                         Approve Lesson
@@ -10958,7 +11012,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'rejected' || !canApproveOperationalMemory(memoryActorRole)}
+                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'rejected' || !canApproveSourceLessons}
                         onClick={() => rejectSourceLesson(lesson)}
                       >
                         Reject Lesson
@@ -10966,7 +11020,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={sourceLessonSavingId === lesson.id || !canApproveOperationalMemory(memoryActorRole)}
+                        disabled={sourceLessonSavingId === lesson.id || !canApproveSourceLessons}
                         onClick={() => saveSourceLessonProjectSpecific(lesson)}
                       >
                         Save as Project-Specific Only
@@ -10974,7 +11028,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={sourceLessonSavingId === lesson.id || !canApproveOperationalMemory(memoryActorRole)}
+                        disabled={sourceLessonSavingId === lesson.id || !canSaveGlobalLaborMemory}
                         onClick={() => saveSourceLessonGlobalMemory(lesson)}
                       >
                         Save as Global Labor Memory
@@ -10982,10 +11036,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={sourceLessonSavingId === lesson.id}
+                        disabled={sourceLessonSavingId === lesson.id || !canCreateSourceLessonJobSteps}
                         onClick={() => createJobExecutionStepsFromSourceLesson(lesson)}
                       >
                         Create Job Execution Steps
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === lesson.id || lesson.status === 'archived' || !canApproveSourceLessons}
+                        onClick={() => updateSourceLesson(lesson, { status: 'archived' }, 'source_lesson_archived')}
+                      >
+                        Archive
                       </button>
                     </div>
                   </div>
@@ -10995,7 +11057,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'agentLearning' && (
+        {hasAdminConsoleAccess && activeTab === 'agentLearning' && (
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
@@ -11552,7 +11614,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </section>
         )}
 
-        {isAdmin && activeTab === 'estimates' && (
+        {hasAdminConsoleAccess && activeTab === 'estimates' && (
           <section style={styles.card}>
             <h2>AI Estimate Review</h2>
             <p style={styles.muted}>
