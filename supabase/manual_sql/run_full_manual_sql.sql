@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS properties (
   updated_at          timestamptz NOT NULL DEFAULT NOW(),
   created_by          text,
 
+  address             text NOT NULL DEFAULT 'Unknown address',
   canonical_address   text NOT NULL,
   street_line_1       text NOT NULL,
   street_line_2       text,
@@ -67,6 +68,22 @@ CREATE TABLE IF NOT EXISTS properties (
 
 CREATE INDEX IF NOT EXISTS idx_properties_zip         ON properties (zip);
 CREATE INDEX IF NOT EXISTS idx_properties_needs_review ON properties (needs_review) WHERE needs_review = true;
+
+ALTER TABLE properties
+  ADD COLUMN IF NOT EXISTS address text;
+
+UPDATE properties
+SET address = COALESCE(
+  NULLIF(TRIM(address), ''),
+  NULLIF(TRIM(canonical_address), ''),
+  NULLIF(TRIM(street_line_1), ''),
+  'Unknown address'
+)
+WHERE address IS NULL OR TRIM(address) = '';
+
+ALTER TABLE properties
+  ALTER COLUMN address SET DEFAULT 'Unknown address',
+  ALTER COLUMN address SET NOT NULL;
 
 -- ── 2. FK on leads (the actual app table) ─────────────────────────────────────
 
@@ -453,15 +470,30 @@ DECLARE
   v_canonical text;
   v_prop_id   bigint;
   v_state     char(2);
+  v_safe_address text;
+  v_safe_city text;
+  v_safe_zip char(5);
 BEGIN
+  UPDATE properties
+  SET address = COALESCE(
+    NULLIF(TRIM(address), ''),
+    NULLIF(TRIM(canonical_address), ''),
+    NULLIF(TRIM(street_line_1), ''),
+    'Unknown address'
+  )
+  WHERE address IS NULL OR TRIM(address) = '';
+
   FOR r IN
     SELECT id, address, city, state, zip, property_facts
     FROM leads
     WHERE property_id IS NULL
       AND COALESCE(TRIM(address), '') <> ''
   LOOP
-    v_state := UPPER(LEFT(TRIM(COALESCE(r.state, 'XX')), 2));
+    v_state := UPPER(LEFT(COALESCE(NULLIF(TRIM(r.state), ''), 'XX'), 2));
     v_canonical := normalize_address_for_backfill(r.address, r.city, v_state, r.zip);
+    v_safe_address := COALESCE(NULLIF(TRIM(r.address), ''), NULLIF(TRIM(v_canonical), ''), 'Unknown address');
+    v_safe_city := COALESCE(NULLIF(TRIM(r.city), ''), 'Unknown city');
+    v_safe_zip := LEFT(COALESCE(NULLIF(TRIM(r.zip), ''), '00000'), 5);
 
     SELECT id INTO v_prop_id
     FROM properties
@@ -470,16 +502,17 @@ BEGIN
 
     IF v_prop_id IS NULL THEN
       INSERT INTO properties (
-        canonical_address, street_line_1, city, state, zip,
+        address, canonical_address, street_line_1, city, state, zip,
         property_type, year_built, square_feet,
         bedrooms, bathrooms, lot_size, parcel_number,
         match_confidence, needs_review
       ) VALUES (
+        v_safe_address,
         v_canonical,
-        COALESCE(r.address, ''),
-        COALESCE(r.city, ''),
+        v_safe_address,
+        v_safe_city,
         v_state,
-        LEFT(COALESCE(r.zip, ''), 5),
+        v_safe_zip,
         r.property_facts->>'propertyType',
         r.property_facts->>'yearBuilt',
         r.property_facts->>'squareFeet',
@@ -998,15 +1031,11 @@ declare
   v_state text;
   v_zip text;
 BEGIN
-  v_address := trim(coalesce(p_address, ''));
-  v_city := trim(coalesce(p_city, ''));
-  v_state := upper(left(trim(coalesce(p_state, '')), 2));
-  v_zip := left(regexp_replace(coalesce(p_zip, ''), '[^0-9]', '', 'g'), 5);
+  v_address := coalesce(nullif(trim(p_address), ''), 'Unknown address');
+  v_city := coalesce(nullif(trim(p_city), ''), 'Unknown city');
+  v_state := upper(left(coalesce(nullif(trim(p_state), ''), 'XX'), 2));
+  v_zip := left(coalesce(nullif(regexp_replace(coalesce(p_zip, ''), '[^0-9]', '', 'g'), ''), '00000'), 5);
   v_key := public.normalize_property_key(v_address, v_city, v_state, v_zip);
-
-  if v_address = '' then
-    return null;
-  end if;
 
   select id
   into v_property_id
