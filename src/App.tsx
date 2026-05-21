@@ -203,7 +203,7 @@ type SourceLessonStatus = 'draft' | 'needs_review' | 'approved' | 'rejected' | '
 type SourceLessonConfidence = 'low' | 'medium' | 'high'
 type SourceLessonComprehensionGrade = '' | 'A' | 'B' | 'C' | 'D' | 'F'
 type SourceLessonHumanReviewStatus = 'ai_draft' | 'needs_review' | 'edited' | 'approved' | 'rejected' | 'human_verified'
-type SourceLessonMemoryDestination = 'none' | 'project_specific' | 'global_operational' | 'contractor_scope' | 'job_execution_context'
+type SourceLessonMemoryDestination = 'none' | 'project_specific' | 'global_operational' | 'material_pricing' | 'contractor_scope' | 'job_execution_context'
 
 type SourceLessonLink = {
   url: string
@@ -392,6 +392,13 @@ type CorrectionLearningInput = {
   human_correction: string
 }
 
+type CuratedLessonIntakeDraft = {
+  sourceLinksText: string
+  learningGoal: string
+  tradeCategory: string
+  memoryDestination: SourceLessonMemoryDestination
+}
+
 const AGENT_NAMES: AgentName[] = [
   'design_agent',
   'estimator_agent',
@@ -459,6 +466,33 @@ const SOURCE_LESSON_COMPREHENSION_GRADES: { value: SourceLessonComprehensionGrad
   { value: 'F', label: 'F: Reject / do not save' },
 ]
 const SOURCE_LESSON_MEMORY_ALLOWED_GRADES: SourceLessonComprehensionGrade[] = ['A', 'B']
+const CURATED_LESSON_TRADE_CATEGORIES = [
+  'General Repair',
+  'Carpentry',
+  'Drywall',
+  'Painting',
+  'Roofing',
+  'Flooring',
+  'Tile',
+  'Plumbing',
+  'Electrical',
+  'HVAC',
+  'Landscaping',
+  'Cleaning',
+]
+const CURATED_LESSON_MEMORY_DESTINATIONS: { value: SourceLessonMemoryDestination; label: string }[] = [
+  { value: 'project_specific', label: 'Project-specific' },
+  { value: 'global_operational', label: 'Global labor memory' },
+  { value: 'material_pricing', label: 'Material/pricing memory' },
+  { value: 'none', label: 'Do not save yet' },
+]
+
+const EMPTY_CURATED_LESSON_INTAKE: CuratedLessonIntakeDraft = {
+  sourceLinksText: '',
+  learningGoal: '',
+  tradeCategory: 'General Repair',
+  memoryDestination: 'none',
+}
 
 const EMPTY_SOURCE_LESSON_DRAFT: SourceLessonDraft = {
   source_type: 'youtube',
@@ -2165,6 +2199,95 @@ function canPromoteSourceLessonToMemory(lesson: SourceLesson) {
   return SOURCE_LESSON_MEMORY_ALLOWED_GRADES.includes((lesson.comprehension_grade || '') as SourceLessonComprehensionGrade)
 }
 
+function getConciseLessonText(value: string, fallback: string) {
+  const clean = value.replace(/\s+/g, ' ').trim() || fallback
+  return clean.length > 520 ? `${clean.slice(0, 517).trim()}...` : clean
+}
+
+function getCuratedLessonDestinationNote(destination: SourceLessonMemoryDestination) {
+  if (destination === 'project_specific') return 'Draft destination: project-specific memory after approval.'
+  if (destination === 'global_operational') return 'Draft destination: global labor memory after approval.'
+  if (destination === 'material_pricing') return 'Draft destination: material/pricing memory after approval.'
+  return 'Draft only. Do not save to memory yet.'
+}
+
+function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft): SourceLessonDraft {
+  const links = splitSourceLessonLines(input.sourceLinksText).map((url) => ({
+    url,
+    title: 'Curated video source',
+    source_type: inferSourceLessonType(url),
+    date_checked: new Date().toISOString(),
+  }))
+  const primaryLink = links[0]
+  const learningGoal = getConciseLessonText(input.learningGoal, 'Extract estimating and operational lessons from the curated source links.')
+  const tradeCategory = input.tradeCategory || 'General Repair'
+  const sourceCount = links.length
+  const lessonSummary = getConciseLessonText(
+    `For ${tradeCategory}, review ${sourceCount} curated video source${sourceCount === 1 ? '' : 's'} to learn: ${learningGoal}. Keep the lesson estimating-focused: scope steps, hidden labor, materials/tools/equipment, cleanup, and conditions that change price or schedule.`,
+    `Curated ${tradeCategory} lesson draft for estimating review.`
+  )
+
+  const draft: SourceLessonDraft = {
+    ...EMPTY_SOURCE_LESSON_DRAFT,
+    source_type: primaryLink?.source_type || 'youtube',
+    source_url: primaryLink?.url || '',
+    source_title: `${tradeCategory} curated video lesson`,
+    work_type: tradeCategory,
+    problem_description: learningGoal,
+    admin_intent: 'Generate a concise, estimating-focused lesson summary. AI may summarize and suggest, but may not auto-update memory.',
+    lesson_summary: lessonSummary,
+    observed_method: getConciseLessonText(
+      `Review the source sequence for how the work is prepared, performed, checked, and cleaned up. Treat the source as a draft reference until a human confirms field fit.`,
+      'Review the source method before reuse.'
+    ),
+    operational_meaning: getConciseLessonText(
+      `Translate the video into field decisions: what must be verified, staged, protected, measured, sequenced, and documented before estimate approval.`,
+      'Translate the video into field decisions before estimating.'
+    ),
+    estimate_impact: getConciseLessonText(
+      `Estimate impact should consider labor hours, setup/protection, access, material handling, specialty tools, return trips, disposal, and contingency. Do not use the draft as pricing memory until approved.`,
+      'Estimate impact requires human review.'
+    ),
+    hidden_labor: 'Look for prep, protection, masking, staging, material pickup, setup/cleanup, dry time, haul-off, rework risk, and final verification.',
+    job_steps: [
+      'Review source links and extract only estimating-relevant steps.',
+      'Confirm site conditions, measurements, access, safety, and finish expectations.',
+      'Admin grades the summary before any memory save.',
+    ],
+    tools_materials: ['Capture materials/tools/equipment shown in source.', 'Verify brand, size, quantity, and alternatives before pricing.'],
+    materials_tools_equipment: ['Materials/tools/equipment require admin verification from the source before estimate reuse.'],
+    cleanup_notes: 'Include protection removal, dust/debris handling, haul-off responsibility, and final cleanup.',
+    cleanup_disposal: 'Confirm cleanup/disposal scope, dump/haul-off needs, and whether cleanup is included in labor.',
+    safety_notes: 'Human review required for PPE, ladder/fall risk, dust, utilities, moisture, structural risk, and code/licensed trade limits.',
+    access_notes: 'Verify access, parking, staging, occupied-area constraints, work hours, and material path.',
+    missing_info_questions: [
+      'Does the source show enough detail to estimate quantities and labor?',
+      'What field conditions would make this lesson invalid?',
+      'What cleanup, protection, disposal, or return trip labor is easy to miss?',
+    ],
+    applies_when: `Use only for ${tradeCategory} scopes with matching site conditions, materials, access, and quality expectations.`,
+    does_not_apply_when: 'Do not apply when substrate, code, moisture/structural risk, access, material system, or finish expectations differ.',
+    confidence: sourceCount > 1 ? 'medium' : 'low',
+    source_links: links,
+    comprehension_grade: '',
+    admin_feedback: '',
+    human_review_status: 'needs_review',
+    memory_destination: input.memoryDestination,
+    status: 'needs_review',
+    admin_notes: [
+      'Curated Lesson Intake draft. Summary must stay under one page and remain concise/estimating-focused.',
+      'AI may summarize and suggest. AI may not auto-update memory. Only approved lessons can become memory.',
+      getCuratedLessonDestinationNote(input.memoryDestination),
+    ].join('\n'),
+  }
+
+  return {
+    ...draft,
+    original_draft: getSourceLessonSnapshot(draft),
+    edited_lesson: null,
+  }
+}
+
 function buildSourceLessonDraftFromNotes(input: SourceLessonDraft, notes: string, promptFeedbackContext = ''): SourceLessonDraft {
   const allText = normalizeJobScopeTokenText([input.work_type, input.problem_description, input.admin_intent, notes].join(' '))
   const lines = splitSourceLessonLines(notes)
@@ -3279,6 +3402,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [sourceLessonStatusFilter, setSourceLessonStatusFilter] = useState<'all' | SourceLessonStatus>('needs_review')
   const [sourceLessonDraft, setSourceLessonDraft] = useState<SourceLessonDraft>(EMPTY_SOURCE_LESSON_DRAFT)
   const [sourceLessonManualNotes, setSourceLessonManualNotes] = useState('')
+  const [curatedLessonIntake, setCuratedLessonIntake] = useState<CuratedLessonIntakeDraft>(EMPTY_CURATED_LESSON_INTAKE)
+  const [curatedLessonDraftId, setCuratedLessonDraftId] = useState<string | null>(null)
   const [ruleApplicationRuleFilter, setRuleApplicationRuleFilter] = useState('all')
   const [ruleApplicationTypeFilter, setRuleApplicationTypeFilter] = useState<'all' | AgentRuleApplicationType>('all')
   const [ruleApplicationAgentFilter, setRuleApplicationAgentFilter] = useState<'all' | AgentName>('all')
@@ -3435,7 +3560,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (hasAdminConsoleAccess && activeTab === 'messages') loadMessageCenter()
     if (hasAdminConsoleAccess && activeTab === 'archived') loadArchivedRequestsFromSupabase()
     if (hasAdminConsoleAccess && activeTab === 'pricingMemory') loadPricingMemoryEntries()
-    if (hasAdminConsoleAccess && activeTab === 'agentLearning') loadAgentLearning()
+    if (hasAdminConsoleAccess && activeTab === 'agentLearning') {
+      loadAgentLearning()
+      loadSourceLessons()
+    }
     if (canAccessSourceLessonAgent && activeTab === 'fieldLessons') loadSourceLessons()
     if ((hasAdminConsoleAccess || currentUserRole === 'contractor') && (activeTab === 'dashboard' || activeTab === 'properties')) loadContractorAssignments()
   }, [hasAdminConsoleAccess, canAccessSourceLessonAgent, isAdmin, activeTab, currentUserRole])
@@ -7681,6 +7809,63 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }))
   }
 
+  async function generateCuratedLessonSummary() {
+    if (!hasSupabaseSession) {
+      alert('Please sign in with your Supabase admin account first.')
+      setShowLogin(true)
+      return
+    }
+    if (!canDraftSourceLessonsWithSession(currentUserRole, hasSupabaseSession)) {
+      alert('You do not have permission to draft curated lessons.')
+      return
+    }
+    if (!splitSourceLessonLines(curatedLessonIntake.sourceLinksText).length) {
+      alert('Paste at least one YouTube/video link first.')
+      return
+    }
+    if (!curatedLessonIntake.learningGoal.trim()) {
+      alert('Add the learning goal first.')
+      return
+    }
+
+    const draft = buildCuratedLessonDraft(curatedLessonIntake)
+    setSourceLessonSavingId('curated-lesson-intake')
+    try {
+      const insert = {
+        ...draft,
+        created_by: currentUserId,
+        linked_property_id: null,
+        linked_work_request_id: null,
+        linked_repair_item_id: null,
+      }
+      const { data, error } = await supabase.from('source_lessons').insert(insert).select().single()
+      if (error) throw error
+      const saved = normalizeSourceLessonRow(data as SourceLesson)
+      setSourceLessons((prev) => [saved, ...prev])
+      setCuratedLessonDraftId(saved.id)
+      await logAgentMemoryAudit({
+        action_type: 'curated_lesson_summary_generated',
+        target_table: 'source_lessons',
+        target_id: saved.id,
+        previous_value: null,
+        new_value: saved as unknown as Record<string, unknown>,
+        reason: 'Curated Lesson Intake generated a concise estimating-focused draft. Not saved to memory.',
+        property_id: null,
+        work_request_id: null,
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save Curated Lesson Intake draft. Apply the source lessons migration first.')
+    } finally {
+      setSourceLessonSavingId(null)
+    }
+  }
+
+  function clearCuratedLessonIntake() {
+    setCuratedLessonIntake(EMPTY_CURATED_LESSON_INTAKE)
+    setCuratedLessonDraftId(null)
+  }
+
   async function generateSourceLessonDraft() {
     if (!hasSupabaseSession) {
       alert('Please sign in with your Supabase admin account first.')
@@ -7885,7 +8070,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       alert(gateMessage)
       return
     }
-    if (!window.confirm(`Approve this Grade ${lesson.comprehension_grade} lesson into Shelter Prep memory? Admin confirmation is required.`)) return
+    if (!window.confirm(`Approve this Grade ${lesson.comprehension_grade} lesson for memory eligibility? This will not save it into memory yet.`)) return
     const saved = await updateSourceLesson(
       lesson,
       {
@@ -7893,20 +8078,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         approved_by: currentUserId,
         approved_at: new Date().toISOString(),
         human_review_status: 'human_verified',
-        memory_destination: lesson.linked_work_request_id ? 'project_specific' : 'global_operational',
+        memory_destination: lesson.memory_destination || 'none',
         confidence: lesson.confidence === 'low' ? 'medium' : lesson.confidence,
       },
       'source_lesson_approved'
     )
     if (!saved) return
-    try {
-      await createLearningEventFromSourceLesson(saved, saved.linked_work_request_id ? 'project_specific' : 'global_operational')
-      await loadAgentLearning()
-      alert('Lesson approved and saved as Human Verified learning event.')
-    } catch (error: any) {
-      console.error(error)
-      alert(error?.message || 'Lesson was approved, but the learning event could not be created.')
-    }
+    alert('Lesson approved. Use Save as Project-Specific or Save as Global Labor Memory when you are ready to create memory.')
   }
 
   async function rejectSourceLesson(lesson: SourceLesson) {
@@ -7926,10 +8104,6 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
     if (!canApproveSourceLessonsWithSession(currentUserRole, hasSupabaseSession)) {
       alert('Only an admin or owner can save project-specific memory.')
-      return
-    }
-    if (!lesson.linked_work_request_id && !lesson.linked_property_id && !lesson.linked_repair_item_id) {
-      alert('Link this lesson to a property, request, or repair item before saving it as project-specific memory.')
       return
     }
     const gateMessage = getSourceLessonMemoryGateMessage(lesson)
@@ -10483,6 +10657,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const visibleSourceLessons = sourceLessons.filter(
     (lesson) => sourceLessonStatusFilter === 'all' || lesson.status === sourceLessonStatusFilter
   )
+  const curatedLessonSummaryDraft = curatedLessonDraftId
+    ? sourceLessons.find((lesson) => lesson.id === curatedLessonDraftId) || null
+    : sourceLessons.find((lesson) => lesson.admin_notes?.includes('Curated Lesson Intake draft')) || null
   const agentLearningRuleById = new Map(agentLearningRules.map((rule) => [rule.id, rule]))
   const visibleAgentRuleApplications = agentRuleApplications.filter((application) => {
     const matchesRule = ruleApplicationRuleFilter === 'all' || application.rule_id === ruleApplicationRuleFilter
@@ -12956,6 +13133,375 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               <br />
               Only admins can approve shared operational memory.
             </div>
+
+            <details style={styles.revealCard} open>
+              <summary style={styles.revealSummary}>
+                <div>
+                  <strong>Curated Lesson Intake</strong>
+                  <p style={styles.small}>Paste curated video sources and create a concise, estimating-focused draft for human review.</p>
+                </div>
+                <span style={styles.revealChevron}>Review</span>
+              </summary>
+              <div style={styles.revealBody}>
+                {!hasSupabaseSession && (
+                  <div style={styles.warningBox}>
+                    Sign in with Supabase before generating or saving lesson drafts. Local PIN mode can view admin screens, but protected writes require Supabase Auth.
+                  </div>
+                )}
+                <textarea
+                  style={{ ...styles.input, minHeight: 110 }}
+                  placeholder="Paste YouTube/video links (one per line)"
+                  value={curatedLessonIntake.sourceLinksText}
+                  onChange={(event) => setCuratedLessonIntake((draft) => ({ ...draft, sourceLinksText: event.target.value }))}
+                />
+                <input
+                  style={styles.input}
+                  placeholder="Learning goal / what should the agent learn?"
+                  value={curatedLessonIntake.learningGoal}
+                  onChange={(event) => setCuratedLessonIntake((draft) => ({ ...draft, learningGoal: event.target.value }))}
+                />
+                <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                  <select
+                    style={styles.input}
+                    value={curatedLessonIntake.tradeCategory}
+                    onChange={(event) => setCuratedLessonIntake((draft) => ({ ...draft, tradeCategory: event.target.value }))}
+                  >
+                    {CURATED_LESSON_TRADE_CATEGORIES.map((trade) => (
+                      <option key={trade} value={trade}>
+                        {trade}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    style={styles.input}
+                    value={curatedLessonIntake.memoryDestination}
+                    onChange={(event) =>
+                      setCuratedLessonIntake((draft) => ({
+                        ...draft,
+                        memoryDestination: event.target.value as SourceLessonMemoryDestination,
+                      }))
+                    }
+                  >
+                    {CURATED_LESSON_MEMORY_DESTINATIONS.map((destination) => (
+                      <option key={destination.value} value={destination.value}>
+                        {destination.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={styles.buttonRow}>
+                  <button
+                    type="button"
+                    style={styles.primaryButton}
+                    disabled={sourceLessonSavingId === 'curated-lesson-intake' || !canDraftSourceLessons}
+                    onClick={generateCuratedLessonSummary}
+                  >
+                    {sourceLessonSavingId === 'curated-lesson-intake' ? 'Generating...' : 'Generate Lesson Summary'}
+                  </button>
+                  <button type="button" style={styles.outlineButton} onClick={clearCuratedLessonIntake}>
+                    Clear
+                  </button>
+                </div>
+
+                {curatedLessonSummaryDraft && (
+                  <div style={{ ...styles.requestCard, marginTop: 14 }}>
+                    <div style={styles.badgeRow}>
+                      <span style={curatedLessonSummaryDraft.status === 'approved' ? styles.badge : styles.badgeMuted}>
+                        {curatedLessonSummaryDraft.status === 'approved' ? 'Approved' : 'Draft'}
+                      </span>
+                      <span style={styles.badgeMuted}>{curatedLessonSummaryDraft.work_type || 'General Repair'}</span>
+                      <span style={styles.badgeMuted}>
+                        {CURATED_LESSON_MEMORY_DESTINATIONS.find((item) => item.value === curatedLessonSummaryDraft.memory_destination)?.label ||
+                          getLearningDisplayName(curatedLessonSummaryDraft.memory_destination || 'none')}
+                      </span>
+                      <span
+                        style={
+                          canPromoteSourceLessonToMemory(curatedLessonSummaryDraft)
+                            ? styles.badge
+                            : curatedLessonSummaryDraft.comprehension_grade
+                              ? styles.badgeDanger
+                              : styles.badgeMuted
+                        }
+                      >
+                        {curatedLessonSummaryDraft.comprehension_grade ? `Grade ${curatedLessonSummaryDraft.comprehension_grade}` : 'Ungraded'}
+                      </span>
+                    </div>
+                    <h3 style={{ marginTop: 0 }}>Lesson Summary Draft</h3>
+                    <div style={styles.noticeBox}>
+                      Summary must stay under one page. AI may summarize and suggest, but it may not auto-update memory. Only approved lessons can become memory.
+                    </div>
+
+                    <label style={styles.small}>Sources</label>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 78 }}
+                      value={(curatedLessonSummaryDraft.source_links || []).map((link) => link.url).join('\n')}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) =>
+                            item.id === curatedLessonSummaryDraft.id
+                              ? {
+                                  ...item,
+                                  source_links: splitSourceLessonLines(event.target.value).map((url) => ({
+                                    url,
+                                    title: item.source_title,
+                                    source_type: inferSourceLessonType(url),
+                                    date_checked: new Date().toISOString(),
+                                  })),
+                                  source_url: splitSourceLessonLines(event.target.value)[0] || '',
+                                }
+                              : item
+                          )
+                        )
+                      }
+                    />
+                    <label style={styles.small}>Learning goal</label>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 70 }}
+                      value={curatedLessonSummaryDraft.problem_description}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, problem_description: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <label style={styles.small}>Key lesson</label>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 86 }}
+                      value={curatedLessonSummaryDraft.lesson_summary}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, lesson_summary: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <label style={styles.small}>Operational meaning</label>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 78 }}
+                      value={curatedLessonSummaryDraft.operational_meaning || ''}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, operational_meaning: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <div>
+                        <label style={styles.small}>Estimate impact</label>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 86 }}
+                          value={curatedLessonSummaryDraft.estimate_impact}
+                          onChange={(event) =>
+                            setSourceLessons((prev) =>
+                              prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, estimate_impact: event.target.value } : item))
+                            )
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label style={styles.small}>Hidden labor</label>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 86 }}
+                          value={curatedLessonSummaryDraft.hidden_labor}
+                          onChange={(event) =>
+                            setSourceLessons((prev) =>
+                              prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, hidden_labor: event.target.value } : item))
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                      <div>
+                        <label style={styles.small}>Materials/tools/equipment</label>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 86 }}
+                          value={getSourceLessonDisplayList(curatedLessonSummaryDraft.materials_tools_equipment)}
+                          onChange={(event) =>
+                            setSourceLessons((prev) =>
+                              prev.map((item) =>
+                                item.id === curatedLessonSummaryDraft.id
+                                  ? { ...item, materials_tools_equipment: splitSourceLessonLines(event.target.value) }
+                                  : item
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label style={styles.small}>Cleanup/disposal</label>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 86 }}
+                          value={curatedLessonSummaryDraft.cleanup_disposal || ''}
+                          onChange={(event) =>
+                            setSourceLessons((prev) =>
+                              prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, cleanup_disposal: event.target.value } : item))
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div style={isCompact ? styles.mobileStack : styles.grid3}>
+                      <select
+                        style={styles.input}
+                        value={curatedLessonSummaryDraft.confidence}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) =>
+                              item.id === curatedLessonSummaryDraft.id ? { ...item, confidence: event.target.value as SourceLessonConfidence } : item
+                            )
+                          )
+                        }
+                      >
+                        {['low', 'medium', 'high'].map((confidence) => (
+                          <option key={confidence} value={confidence}>
+                            Confidence: {getLearningDisplayName(confidence)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        style={styles.input}
+                        value={curatedLessonSummaryDraft.human_review_status || 'needs_review'}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) =>
+                              item.id === curatedLessonSummaryDraft.id
+                                ? { ...item, human_review_status: event.target.value as SourceLessonHumanReviewStatus }
+                                : item
+                            )
+                          )
+                        }
+                      >
+                        {['ai_draft', 'needs_review', 'edited', 'approved', 'rejected', 'human_verified'].map((status) => (
+                          <option key={status} value={status}>
+                            Human review: {getLearningDisplayName(status)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        style={styles.input}
+                        value={curatedLessonSummaryDraft.comprehension_grade || ''}
+                        onChange={(event) =>
+                          setSourceLessons((prev) =>
+                            prev.map((item) =>
+                              item.id === curatedLessonSummaryDraft.id
+                                ? {
+                                    ...item,
+                                    comprehension_grade: event.target.value as SourceLessonComprehensionGrade,
+                                    human_review_status: event.target.value === 'C' ? 'needs_review' : item.human_review_status,
+                                  }
+                                : item
+                            )
+                          )
+                        }
+                      >
+                        {SOURCE_LESSON_COMPREHENSION_GRADES.map((grade) => (
+                          <option key={grade.value || 'blank'} value={grade.value}>
+                            {grade.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <textarea
+                      style={{ ...styles.input, minHeight: 82 }}
+                      placeholder="What did the agent miss or misunderstand?"
+                      value={curatedLessonSummaryDraft.admin_feedback || ''}
+                      onChange={(event) =>
+                        setSourceLessons((prev) =>
+                          prev.map((item) => (item.id === curatedLessonSummaryDraft.id ? { ...item, admin_feedback: event.target.value } : item))
+                        )
+                      }
+                    />
+                    {getSourceLessonMemoryGateMessage(curatedLessonSummaryDraft) && (
+                      <div style={styles.warningBox}>{getSourceLessonMemoryGateMessage(curatedLessonSummaryDraft)}</div>
+                    )}
+                    <div style={styles.buttonRow}>
+                      <button
+                        type="button"
+                        style={styles.primaryButton}
+                        disabled={
+                          sourceLessonSavingId === curatedLessonSummaryDraft.id ||
+                          curatedLessonSummaryDraft.status === 'approved' ||
+                          !canApproveSourceLessons ||
+                          !canPromoteSourceLessonToMemory(curatedLessonSummaryDraft)
+                        }
+                        onClick={() => approveSourceLesson(curatedLessonSummaryDraft)}
+                      >
+                        Approve Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === curatedLessonSummaryDraft.id || !canDraftSourceLessons}
+                        onClick={() =>
+                          updateSourceLesson(
+                            curatedLessonSummaryDraft,
+                            {
+                              source_links: curatedLessonSummaryDraft.source_links,
+                              source_url: curatedLessonSummaryDraft.source_url,
+                              source_title: curatedLessonSummaryDraft.source_title,
+                              work_type: curatedLessonSummaryDraft.work_type,
+                              problem_description: curatedLessonSummaryDraft.problem_description,
+                              admin_intent: curatedLessonSummaryDraft.admin_intent,
+                              lesson_summary: curatedLessonSummaryDraft.lesson_summary,
+                              operational_meaning: curatedLessonSummaryDraft.operational_meaning,
+                              estimate_impact: curatedLessonSummaryDraft.estimate_impact,
+                              hidden_labor: curatedLessonSummaryDraft.hidden_labor,
+                              materials_tools_equipment: curatedLessonSummaryDraft.materials_tools_equipment,
+                              cleanup_disposal: curatedLessonSummaryDraft.cleanup_disposal,
+                              confidence: curatedLessonSummaryDraft.confidence,
+                              comprehension_grade: curatedLessonSummaryDraft.comprehension_grade,
+                              admin_feedback: curatedLessonSummaryDraft.admin_feedback,
+                              human_review_status:
+                                curatedLessonSummaryDraft.comprehension_grade === 'C'
+                                  ? 'needs_review'
+                                  : curatedLessonSummaryDraft.human_review_status,
+                              memory_destination: curatedLessonSummaryDraft.memory_destination,
+                            },
+                            'curated_lesson_edited'
+                          )
+                        }
+                      >
+                        Edit Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={sourceLessonSavingId === curatedLessonSummaryDraft.id || curatedLessonSummaryDraft.status === 'rejected' || !canApproveSourceLessons}
+                        onClick={() => rejectSourceLesson(curatedLessonSummaryDraft)}
+                      >
+                        Reject Lesson
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={
+                          sourceLessonSavingId === curatedLessonSummaryDraft.id ||
+                          !canApproveSourceLessons ||
+                          curatedLessonSummaryDraft.status !== 'approved' ||
+                          !canPromoteSourceLessonToMemory(curatedLessonSummaryDraft)
+                        }
+                        onClick={() => saveSourceLessonProjectSpecific(curatedLessonSummaryDraft)}
+                      >
+                        Save as Project-Specific
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={
+                          sourceLessonSavingId === curatedLessonSummaryDraft.id ||
+                          !canSaveGlobalLaborMemory ||
+                          curatedLessonSummaryDraft.status !== 'approved' ||
+                          !canPromoteSourceLessonToMemory(curatedLessonSummaryDraft)
+                        }
+                        onClick={() => saveSourceLessonGlobalMemory(curatedLessonSummaryDraft)}
+                      >
+                        Save as Global Labor Memory
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
 
             <div
               style={{

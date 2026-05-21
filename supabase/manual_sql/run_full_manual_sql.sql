@@ -1559,7 +1559,7 @@ begin
   ) then
     alter table public.source_lessons
       add constraint source_lessons_memory_destination_check
-      check (memory_destination in ('none', 'project_specific', 'global_operational', 'contractor_scope', 'job_execution_context'));
+      check (memory_destination in ('none', 'project_specific', 'global_operational', 'material_pricing', 'contractor_scope', 'job_execution_context'));
   end if;
 
   if not exists (
