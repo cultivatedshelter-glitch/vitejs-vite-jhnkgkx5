@@ -394,9 +394,34 @@ type CorrectionLearningInput = {
 
 type CuratedLessonIntakeDraft = {
   sourceLinksText: string
+  transcriptOrNotes: string
   learningGoal: string
   tradeCategory: string
   memoryDestination: SourceLessonMemoryDestination
+}
+
+type LessonExtractionResult = {
+  status?: string
+  error?: string
+  transcriptSource?: 'pasted' | 'youtube' | 'unavailable'
+  draft?: {
+    lesson_summary?: string
+    operational_meaning?: string
+    estimate_impact?: string
+    hidden_labor?: string
+    materials_tools_equipment?: string[]
+    cleanup_disposal?: string
+    confidence?: SourceLessonConfidence
+    observed_method?: string
+    job_steps?: string[]
+    tools_materials?: string[]
+    safety_notes?: string
+    access_notes?: string
+    cleanup_notes?: string
+    missing_info_questions?: string[]
+    applies_when?: string
+    does_not_apply_when?: string
+  }
 }
 
 const AGENT_NAMES: AgentName[] = [
@@ -489,6 +514,7 @@ const CURATED_LESSON_MEMORY_DESTINATIONS: { value: SourceLessonMemoryDestination
 
 const EMPTY_CURATED_LESSON_INTAKE: CuratedLessonIntakeDraft = {
   sourceLinksText: '',
+  transcriptOrNotes: '',
   learningGoal: '',
   tradeCategory: 'General Repair',
   memoryDestination: 'none',
@@ -2211,7 +2237,7 @@ function getCuratedLessonDestinationNote(destination: SourceLessonMemoryDestinat
   return 'Draft only. Do not save to memory yet.'
 }
 
-function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft): SourceLessonDraft {
+function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft, extraction?: LessonExtractionResult['draft']): SourceLessonDraft {
   const links = splitSourceLessonLines(input.sourceLinksText).map((url) => ({
     url,
     title: 'Curated video source',
@@ -2223,7 +2249,8 @@ function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft): SourceLessonD
   const tradeCategory = input.tradeCategory || 'General Repair'
   const sourceCount = links.length
   const lessonSummary = getConciseLessonText(
-    `For ${tradeCategory}, review ${sourceCount} curated video source${sourceCount === 1 ? '' : 's'} to learn: ${learningGoal}. Keep the lesson estimating-focused: scope steps, hidden labor, materials/tools/equipment, cleanup, and conditions that change price or schedule.`,
+    extraction?.lesson_summary ||
+      `For ${tradeCategory}, review ${sourceCount} curated video source${sourceCount === 1 ? '' : 's'} to learn: ${learningGoal}. Keep the lesson estimating-focused: scope steps, hidden labor, materials/tools/equipment, cleanup, and conditions that change price or schedule.`,
     `Curated ${tradeCategory} lesson draft for estimating review.`
   )
 
@@ -2237,37 +2264,40 @@ function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft): SourceLessonD
     admin_intent: 'Generate a concise, estimating-focused lesson summary. AI may summarize and suggest, but may not auto-update memory.',
     lesson_summary: lessonSummary,
     observed_method: getConciseLessonText(
-      `Review the source sequence for how the work is prepared, performed, checked, and cleaned up. Treat the source as a draft reference until a human confirms field fit.`,
+      extraction?.observed_method ||
+        `Review the source sequence for how the work is prepared, performed, checked, and cleaned up. Treat the source as a draft reference until a human confirms field fit.`,
       'Review the source method before reuse.'
     ),
     operational_meaning: getConciseLessonText(
-      `Translate the video into field decisions: what must be verified, staged, protected, measured, sequenced, and documented before estimate approval.`,
+      extraction?.operational_meaning ||
+        `Translate the video into field decisions: what must be verified, staged, protected, measured, sequenced, and documented before estimate approval.`,
       'Translate the video into field decisions before estimating.'
     ),
     estimate_impact: getConciseLessonText(
-      `Estimate impact should consider labor hours, setup/protection, access, material handling, specialty tools, return trips, disposal, and contingency. Do not use the draft as pricing memory until approved.`,
+      extraction?.estimate_impact ||
+        `Estimate impact should consider labor hours, setup/protection, access, material handling, specialty tools, return trips, disposal, and contingency. Do not use the draft as pricing memory until approved.`,
       'Estimate impact requires human review.'
     ),
-    hidden_labor: 'Look for prep, protection, masking, staging, material pickup, setup/cleanup, dry time, haul-off, rework risk, and final verification.',
-    job_steps: [
+    hidden_labor: extraction?.hidden_labor || 'Look for prep, protection, masking, staging, material pickup, setup/cleanup, dry time, haul-off, rework risk, and final verification.',
+    job_steps: extraction?.job_steps?.length ? extraction.job_steps : [
       'Review source links and extract only estimating-relevant steps.',
       'Confirm site conditions, measurements, access, safety, and finish expectations.',
       'Admin grades the summary before any memory save.',
     ],
-    tools_materials: ['Capture materials/tools/equipment shown in source.', 'Verify brand, size, quantity, and alternatives before pricing.'],
-    materials_tools_equipment: ['Materials/tools/equipment require admin verification from the source before estimate reuse.'],
-    cleanup_notes: 'Include protection removal, dust/debris handling, haul-off responsibility, and final cleanup.',
-    cleanup_disposal: 'Confirm cleanup/disposal scope, dump/haul-off needs, and whether cleanup is included in labor.',
-    safety_notes: 'Human review required for PPE, ladder/fall risk, dust, utilities, moisture, structural risk, and code/licensed trade limits.',
-    access_notes: 'Verify access, parking, staging, occupied-area constraints, work hours, and material path.',
-    missing_info_questions: [
+    tools_materials: extraction?.tools_materials?.length ? extraction.tools_materials : ['Capture materials/tools/equipment shown in source.', 'Verify brand, size, quantity, and alternatives before pricing.'],
+    materials_tools_equipment: extraction?.materials_tools_equipment?.length ? extraction.materials_tools_equipment : ['Materials/tools/equipment require admin verification from the source before estimate reuse.'],
+    cleanup_notes: extraction?.cleanup_notes || 'Include protection removal, dust/debris handling, haul-off responsibility, and final cleanup.',
+    cleanup_disposal: extraction?.cleanup_disposal || 'Confirm cleanup/disposal scope, dump/haul-off needs, and whether cleanup is included in labor.',
+    safety_notes: extraction?.safety_notes || 'Human review required for PPE, ladder/fall risk, dust, utilities, moisture, structural risk, and code/licensed trade limits.',
+    access_notes: extraction?.access_notes || 'Verify access, parking, staging, occupied-area constraints, work hours, and material path.',
+    missing_info_questions: extraction?.missing_info_questions?.length ? extraction.missing_info_questions : [
       'Does the source show enough detail to estimate quantities and labor?',
       'What field conditions would make this lesson invalid?',
       'What cleanup, protection, disposal, or return trip labor is easy to miss?',
     ],
-    applies_when: `Use only for ${tradeCategory} scopes with matching site conditions, materials, access, and quality expectations.`,
-    does_not_apply_when: 'Do not apply when substrate, code, moisture/structural risk, access, material system, or finish expectations differ.',
-    confidence: sourceCount > 1 ? 'medium' : 'low',
+    applies_when: extraction?.applies_when || `Use only for ${tradeCategory} scopes with matching site conditions, materials, access, and quality expectations.`,
+    does_not_apply_when: extraction?.does_not_apply_when || 'Do not apply when substrate, code, moisture/structural risk, access, material system, or finish expectations differ.',
+    confidence: extraction?.confidence || (sourceCount > 1 ? 'medium' : 'low'),
     source_links: links,
     comprehension_grade: '',
     admin_feedback: '',
@@ -2277,6 +2307,7 @@ function buildCuratedLessonDraft(input: CuratedLessonIntakeDraft): SourceLessonD
     admin_notes: [
       'Curated Lesson Intake draft. Summary must stay under one page and remain concise/estimating-focused.',
       'AI may summarize and suggest. AI may not auto-update memory. Only approved lessons can become memory.',
+      input.transcriptOrNotes ? 'Transcript/notes were provided by admin fallback input.' : 'Transcript was requested from the lesson extraction function.',
       getCuratedLessonDestinationNote(input.memoryDestination),
     ].join('\n'),
   }
@@ -3404,6 +3435,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [sourceLessonManualNotes, setSourceLessonManualNotes] = useState('')
   const [curatedLessonIntake, setCuratedLessonIntake] = useState<CuratedLessonIntakeDraft>(EMPTY_CURATED_LESSON_INTAKE)
   const [curatedLessonDraftId, setCuratedLessonDraftId] = useState<string | null>(null)
+  const [curatedLessonError, setCuratedLessonError] = useState('')
   const [ruleApplicationRuleFilter, setRuleApplicationRuleFilter] = useState('all')
   const [ruleApplicationTypeFilter, setRuleApplicationTypeFilter] = useState<'all' | AgentRuleApplicationType>('all')
   const [ruleApplicationAgentFilter, setRuleApplicationAgentFilter] = useState<'all' | AgentName>('all')
@@ -7828,9 +7860,27 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       return
     }
 
-    const draft = buildCuratedLessonDraft(curatedLessonIntake)
+    setCuratedLessonError('')
     setSourceLessonSavingId('curated-lesson-intake')
     try {
+      const { data: extraction, error: extractionError } = await supabase.functions.invoke<LessonExtractionResult>('lesson-extract', {
+        body: {
+          sourceLinks: splitSourceLessonLines(curatedLessonIntake.sourceLinksText),
+          transcriptText: curatedLessonIntake.transcriptOrNotes,
+          learningGoal: curatedLessonIntake.learningGoal,
+          tradeCategory: curatedLessonIntake.tradeCategory,
+          memoryDestination: curatedLessonIntake.memoryDestination,
+        },
+      })
+
+      if (extractionError || extraction?.error || !extraction?.draft) {
+        const message = extraction?.error || extractionError?.message || 'Transcript unavailable. Paste transcript or notes manually.'
+        setCuratedLessonError(message)
+        alert(message)
+        return
+      }
+
+      const draft = buildCuratedLessonDraft(curatedLessonIntake, extraction.draft)
       const insert = {
         ...draft,
         created_by: currentUserId,
@@ -7849,13 +7899,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         target_id: saved.id,
         previous_value: null,
         new_value: saved as unknown as Record<string, unknown>,
-        reason: 'Curated Lesson Intake generated a concise estimating-focused draft. Not saved to memory.',
+        reason: `Curated Lesson Intake generated a concise estimating-focused draft from ${extraction.transcriptSource || 'transcript'} text. Not saved to memory.`,
         property_id: null,
         work_request_id: null,
       })
     } catch (error: any) {
       console.error(error)
-      alert(error?.message || 'Could not save Curated Lesson Intake draft. Apply the source lessons migration first.')
+      const message = error?.message || 'Could not generate or save Curated Lesson Intake draft.'
+      setCuratedLessonError(message)
+      alert(message)
     } finally {
       setSourceLessonSavingId(null)
     }
@@ -7864,6 +7916,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   function clearCuratedLessonIntake() {
     setCuratedLessonIntake(EMPTY_CURATED_LESSON_INTAKE)
     setCuratedLessonDraftId(null)
+    setCuratedLessonError('')
   }
 
   async function generateSourceLessonDraft() {
@@ -13154,6 +13207,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   value={curatedLessonIntake.sourceLinksText}
                   onChange={(event) => setCuratedLessonIntake((draft) => ({ ...draft, sourceLinksText: event.target.value }))}
                 />
+                <textarea
+                  style={{ ...styles.input, minHeight: 130 }}
+                  placeholder="Paste transcript or notes if video transcript is unavailable"
+                  value={curatedLessonIntake.transcriptOrNotes}
+                  onChange={(event) => setCuratedLessonIntake((draft) => ({ ...draft, transcriptOrNotes: event.target.value }))}
+                />
                 <input
                   style={styles.input}
                   placeholder="Learning goal / what should the agent learn?"
@@ -13202,6 +13261,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     Clear
                   </button>
                 </div>
+                {curatedLessonError && <div style={styles.warningBox}>{curatedLessonError}</div>}
 
                 {curatedLessonSummaryDraft && (
                   <div style={{ ...styles.requestCard, marginTop: 14 }}>
