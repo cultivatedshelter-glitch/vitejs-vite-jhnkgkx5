@@ -64,8 +64,8 @@ alter table public.source_lessons
   add column if not exists linked_work_request_id text,
   add column if not exists linked_repair_item_id text;
 
-do $$
-begin
+DO $$
+BEGIN
   if not exists (
     select 1 from pg_constraint where conname = 'source_lessons_source_type_check'
   ) then
@@ -89,7 +89,7 @@ begin
       add constraint source_lessons_status_check
       check (status in ('draft', 'needs_review', 'approved', 'rejected', 'archived'));
   end if;
-end $$;
+END $$;
 
 create index if not exists source_lessons_created_at_idx on public.source_lessons(created_at desc);
 create index if not exists source_lessons_status_idx on public.source_lessons(status);

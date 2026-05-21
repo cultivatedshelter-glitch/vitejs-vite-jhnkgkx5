@@ -997,7 +997,7 @@ declare
   v_city text;
   v_state text;
   v_zip text;
-begin
+BEGIN
   v_address := trim(coalesce(p_address, ''));
   v_city := trim(coalesce(p_city, ''));
   v_state := upper(left(trim(coalesce(p_state, '')), 2));
@@ -1045,10 +1045,10 @@ $$;
 
 grant execute on function public.upsert_property_for_lead(uuid, text, text, text, text) to anon, authenticated;
 
-do $$
+DO $$
 declare
   r record;
-begin
+BEGIN
   for r in
     select id, address, city, state, zip
     from public.leads
@@ -1057,7 +1057,7 @@ begin
   loop
     perform public.upsert_property_for_lead(r.id, r.address, r.city, r.state, r.zip);
   end loop;
-end $$;
+END $$;
 
 
 
@@ -1131,8 +1131,8 @@ create table if not exists public.property_media_findings (
   admin_notes text not null default ''
 );
 
-do $$
-begin
+DO $$
+BEGIN
   if exists (
     select 1
     from information_schema.columns
@@ -1184,7 +1184,7 @@ begin
         foreign key (source_file_id) references public.files(id) on delete set null;
     end if;
   end if;
-end $$;
+END $$;
 
 create index if not exists property_media_analysis_lead_idx on public.property_media_analysis(lead_id);
 create index if not exists property_media_analysis_property_idx on public.property_media_analysis(property_id);
@@ -1201,7 +1201,7 @@ create or replace function public.touch_property_media_updated_at()
 returns trigger
 language plpgsql
 as $$
-begin
+BEGIN
   new.updated_at = now();
   return new;
 end;
@@ -1432,8 +1432,8 @@ alter table public.source_lessons
   add column if not exists linked_work_request_id text,
   add column if not exists linked_repair_item_id text;
 
-do $
-begin
+DO $$
+BEGIN
   if not exists (
     select 1 from pg_constraint where conname = 'source_lessons_source_type_check'
   ) then
@@ -1457,7 +1457,7 @@ begin
       add constraint source_lessons_status_check
       check (status in ('draft', 'needs_review', 'approved', 'rejected', 'archived'));
   end if;
-end $;
+END $$;
 
 create index if not exists source_lessons_created_at_idx on public.source_lessons(created_at desc);
 create index if not exists source_lessons_status_idx on public.source_lessons(status);
@@ -1536,8 +1536,8 @@ alter table public.source_lessons
   add column if not exists reviewed_by uuid references auth.users(id) on delete set null,
   add column if not exists reviewed_at timestamptz;
 
-do $
-begin
+DO $$
+BEGIN
   if not exists (
     select 1 from pg_constraint where conname = 'source_lessons_comprehension_grade_check'
   ) then
@@ -1577,7 +1577,7 @@ begin
       add constraint source_lessons_materials_tools_equipment_is_array_check
       check (jsonb_typeof(materials_tools_equipment) = 'array');
   end if;
-end $;
+END $$;
 
 update public.source_lessons
 set source_links = jsonb_build_array(
