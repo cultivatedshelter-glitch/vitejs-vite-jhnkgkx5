@@ -1,14 +1,22 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-const missingSupabaseEnv = !supabaseUrl || !supabaseKey
+export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
+export const supabaseAnonKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  ''
+
+const missingSupabaseEnv = !supabaseUrl || !supabaseAnonKey
+
+console.info('[supabase-env]', {
+  hasSupabaseUrl: Boolean(supabaseUrl),
+  hasSupabaseAnonKey: Boolean(supabaseAnonKey),
+})
 
 const setupError = {
   message:
-    'Supabase is not configured in this preview. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable saved leads, files, reports, and app data.',
+    'Supabase is not configured in this preview. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY to enable saved leads, files, reports, and app data.',
 }
-
 function createMissingSupabaseClient() {
   function createQueryBuilder() {
     let mode: 'read' | 'write' = 'read'
@@ -79,6 +87,6 @@ function createMissingSupabaseClient() {
 
 export const isSupabaseConfigured = !missingSupabaseEnv
 
-export const supabase = missingSupabaseEnv
-  ? (createMissingSupabaseClient() as ReturnType<typeof createClient>)
-  : createClient(supabaseUrl, supabaseKey)
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : (createMissingSupabaseClient() as unknown as ReturnType<typeof createClient>)
