@@ -26,6 +26,9 @@ type StoredFile = {
   source?: 'files' | 'property_files' | 'local'
 }
 
+type UploadEvidenceStatus = 'selected' | 'uploading' | 'uploaded' | 'failed'
+type UploadEvidenceCategory = 'photo' | 'video' | 'inspection report' | 'document'
+
 type AiEstimate = {
   projectSummary?: string
   lowPrice?: number
@@ -755,6 +758,21 @@ type InspectionTaskIntelligence = {
   recommended_next_action: string
   human_review_status: string
   source_label: string
+}
+
+type InspectionReportDraft = {
+  fileName: string
+  frontPagePayloadBytes: number
+  propertyAddress: string
+  city: string
+  state: string
+  clientName: string
+  inspectorName: string
+  inspectorCompany: string
+  reportType: string
+  summaryItems: string[]
+  missingInfo: string[]
+  status: 'AI Draft' | 'Needs Review'
 }
 
 type PricingMemoryEntry = {
@@ -2472,6 +2490,7 @@ const STORAGE_KEY = 'shelter-prep-requests-v1'
 const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || ''
 const REQUEST_FILES_BUCKET = 'job-files'
 const INVOICE_BUCKET = 'invoices'
+const INSPECTION_FRONT_PAGE_MAX_BYTES = 240 * 1024
 
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || 'https://shelter-prep-agent-production.up.railway.app'
@@ -2551,6 +2570,165 @@ function formatUploadedAt(value?: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Upload time not recorded'
   return date.toLocaleString()
+}
+
+function getEvidenceCategory(name = '', mimeType = '', storedType?: 'photo' | 'document'): UploadEvidenceCategory {
+  const lowerName = name.toLowerCase()
+  const lowerMime = mimeType.toLowerCase()
+
+  if (storedType === 'photo' || lowerMime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i.test(lowerName)) return 'photo'
+  if (lowerMime.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/i.test(lowerName)) return 'video'
+  if (/\binspection\b|\breport\b/.test(lowerName) || /\.(pdf|doc|docx)$/i.test(lowerName)) return 'inspection report'
+  return 'document'
+}
+
+function getEvidenceTypeLabel(category: UploadEvidenceCategory, mimeType = '') {
+  if (mimeType) return mimeType
+  if (category === 'photo') return 'Image'
+  if (category === 'video') return 'Video'
+  if (category === 'inspection report') return 'Inspection / report file'
+  return 'Document'
+}
+
+function getLocalEvidenceKey(file: File, index: number, group: 'photo' | 'document') {
+  return `${group}-${index}-${file.name}-${file.size}-${file.lastModified}`
+}
+
+function isInspectionPdf(file: File) {
+  const lowerName = file.name.toLowerCase()
+  return lowerName.endsWith('.pdf') || file.type === 'application/pdf'
+}
+
+function normalizeInspectionReportText(value = '') {
+  return value
+    .replace(/\u0000/g, ' ')
+    .replace(/\\r|\\n|\\t|\r|\n|\t/g, ' ')
+    .replace(/\\([()\\])/g, '$1')
+    .replace(/[<>[\]{}]/g, ' ')
+    .replace(/Tj|TJ|ET|BT|Td|Tm/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function readInspectionPdfText(file: File) {
+  const frontPageSlice = file.slice(0, Math.min(file.size, INSPECTION_FRONT_PAGE_MAX_BYTES))
+  const raw = await frontPageSlice.text()
+  const literalStrings = Array.from(raw.matchAll(/\(([^()]{3,})\)/g))
+    .map((match) => match[1])
+    .join(' ')
+  const arrayStrings = Array.from(raw.matchAll(/\[((?:\s*\([^()]{2,}\)\s*){2,})\]/g))
+    .map((match) => Array.from(match[1].matchAll(/\(([^()]{2,})\)/g)).map((item) => item[1]).join(' '))
+    .join(' ')
+  const text = normalizeInspectionReportText(`${literalStrings} ${arrayStrings} ${raw.slice(0, 12000)}`)
+  return {
+    text: text.slice(0, 24000),
+    payloadBytes: frontPageSlice.size,
+  }
+}
+
+function firstMatch(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match?.[1]) return match[1].trim().replace(/\s{2,}/g, ' ')
+  }
+  return ''
+}
+
+function extractInspectionAddress(text: string) {
+  const addressPattern = /\b(\d{1,6}\s+(?:N|S|E|W|NE|NW|SE|SW)?\s*[A-Za-z0-9.'#\-\s]+?\s(?:Ave|Avenue|St|Street|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Pl|Place|Ter|Terrace|Loop|Cir|Circle))\s*,?\s*([A-Za-z .'-]+),?\s+(OR|WA|CA|ID)\b(?:\s+(\d{5}(?:-\d{4})?))?/i
+  const match = text.match(addressPattern)
+  if (!match) return { propertyAddress: '', city: '', state: '', zip: '' }
+  return {
+    propertyAddress: match[1].trim(),
+    city: match[2].trim().replace(/\s{2,}/g, ' '),
+    state: match[3].trim().toUpperCase(),
+    zip: match[4]?.trim() || '',
+  }
+}
+
+function extractInspectionSummaryItems(text: string) {
+  const chunks = text
+    .split(/(?:\.\s+|\n|•|- )/)
+    .map((item) => item.trim().replace(/\s{2,}/g, ' '))
+    .filter((item) => item.length >= 24 && item.length <= 220)
+  const findingWords = /(repair|replace|recommend|defect|safety|hazard|damage|leak|moisture|further evaluation|service|not functional|missing|crack|rot|sprinkler|electrical|plumbing|roof|water heater|foundation|deck|stair)/i
+  const seen = new Set<string>()
+  return chunks
+    .filter((item) => findingWords.test(item))
+    .filter((item) => {
+      const key = item.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 6)
+}
+
+function getInspectionTaskBasics(finding: string) {
+  const text = finding.toLowerCase()
+  if (text.includes('sprinkler') || text.includes('fire')) {
+    return {
+      title: 'Fire suppression sprinkler issue',
+      system: 'Fire suppression / life safety',
+      trade: 'Fire suppression specialist / Fire Marshal',
+      risk: 'Life safety / fire hazard',
+      urgency: 'Immediate review before pricing or seller guidance',
+    }
+  }
+  if (text.includes('roof') || text.includes('leak') || text.includes('moisture')) {
+    return {
+      title: 'Roof or water-intrusion concern',
+      system: 'Roof / water intrusion',
+      trade: 'Roofer / exterior contractor',
+      risk: 'Water intrusion risk',
+      urgency: 'Needs review before estimating',
+    }
+  }
+  if (text.includes('electrical') || text.includes('breaker') || text.includes('outlet') || text.includes('panel')) {
+    return {
+      title: 'Electrical inspection concern',
+      system: 'Electrical',
+      trade: 'Licensed electrician',
+      risk: 'Safety / code risk',
+      urgency: 'Needs licensed trade review',
+    }
+  }
+  if (text.includes('plumb') || text.includes('water heater') || text.includes('drain') || text.includes('fixture')) {
+    return {
+      title: 'Plumbing inspection concern',
+      system: 'Plumbing',
+      trade: 'Licensed plumber',
+      risk: 'Leak / fixture performance risk',
+      urgency: 'Needs trade review before estimating',
+    }
+  }
+  return {
+    title: 'Inspection repair concern',
+    system: 'Building system needs review',
+    trade: 'Trade needs review',
+    risk: 'Needs review',
+    urgency: 'Needs review before estimating',
+  }
+}
+
+function buildInspectionTasksFromFindings(findings: string[], fileName: string) {
+  return findings.map((finding, index): InspectionTaskIntelligence => {
+    const basics = getInspectionTaskBasics(finding)
+    return {
+      id: `inspection-pdf-${index}-${safeFileName(fileName)}`,
+      task_title: basics.title,
+      defect_concern: finding,
+      building_system: basics.system,
+      risk_level: basics.risk,
+      trade_needed: basics.trade,
+      urgency: basics.urgency,
+      missing_information_needed: ['Confirm exact location, quantity/count, severity, and whether the report includes related photos.'],
+      photo_requests: ['Upload report page photos plus close-up and wide photos of the affected area.'],
+      recommended_next_action: 'Review extracted finding, confirm missing evidence, then route to the appropriate trade before pricing.',
+      human_review_status: 'AI Draft',
+      source_label: `AI Draft from ${fileName}`,
+    }
+  })
 }
 
 function inferStoredFileType(row: any): 'photo' | 'document' {
@@ -3470,6 +3648,11 @@ export default function App() {
   const [description, setDescription] = useState('')
   const [photoFiles, setPhotoFiles] = useState<File[]>([])
   const [documentFiles, setDocumentFiles] = useState<File[]>([])
+  const [localEvidenceStatus, setLocalEvidenceStatus] = useState<UploadEvidenceStatus>('selected')
+  const [localEvidencePreviews, setLocalEvidencePreviews] = useState<Record<string, string>>({})
+  const [inspectionReading, setInspectionReading] = useState(false)
+  const [inspectionReportDraft, setInspectionReportDraft] = useState<InspectionReportDraft | null>(null)
+  const [inspectionDraftTasks, setInspectionDraftTasks] = useState<InspectionTaskIntelligence[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
@@ -3613,6 +3796,26 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [siteMediaFindingsByRequest, setSiteMediaFindingsByRequest] = useState<Record<string, PropertyMediaFinding[]>>({})
   const [siteMediaLoadingByRequest, setSiteMediaLoadingByRequest] = useState<Record<string, boolean>>({})
   const [siteMediaSavingId, setSiteMediaSavingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const previewUrls: Record<string, string> = {}
+    const selectedFiles = [
+      ...photoFiles.map((file, index) => ({ file, index, group: 'photo' as const })),
+      ...documentFiles.map((file, index) => ({ file, index, group: 'document' as const })),
+    ]
+
+    selectedFiles.forEach(({ file, index, group }) => {
+      if (file.type.startsWith('image/')) {
+        previewUrls[getLocalEvidenceKey(file, index, group)] = URL.createObjectURL(file)
+      }
+    })
+
+    setLocalEvidencePreviews(previewUrls)
+
+    return () => {
+      Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [photoFiles, documentFiles])
 
   useEffect(() => {
     loadRequestsFromSupabase()
@@ -3821,6 +4024,118 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     setDescription('')
     setPhotoFiles([])
     setDocumentFiles([])
+    setLocalEvidenceStatus('selected')
+    setInspectionReportDraft(null)
+    setInspectionDraftTasks([])
+    setInspectionReading(false)
+  }
+
+  async function readInspectionFiles(files: File[]) {
+    const inspectionFiles = files.filter(isInspectionPdf)
+    if (!inspectionFiles.length) return
+
+    setInspectionReading(true)
+    setInspectionReportDraft(null)
+    setInspectionDraftTasks([])
+
+    try {
+      const file = inspectionFiles[0]
+      const { text, payloadBytes } = await readInspectionPdfText(file)
+      const address = extractInspectionAddress(text)
+      const clientName = firstMatch(text, [
+        /(?:Client|Customer|Prepared\s+For|Report\s+Prepared\s+For)\s*:?\s*([A-Z][A-Za-z .'-]{2,80})/i,
+      ])
+      const inspectorCombined = firstMatch(text, [
+        /(?:Inspector|Inspected\s+By)\s*:?\s*([A-Z][A-Za-z .'-]{2,80}(?:\s*\/\s*[A-Z][A-Za-z0-9 .,&'-]{2,100})?)/i,
+      ])
+      const companyFromInspector = inspectorCombined.includes('/')
+        ? inspectorCombined.split('/').slice(1).join('/').trim()
+        : ''
+      const inspectorName = inspectorCombined.includes('/')
+        ? inspectorCombined.split('/')[0].trim()
+        : inspectorCombined
+      const inspectorCompany = companyFromInspector || firstMatch(text, [
+        /(?:Company|Inspection\s+Company)\s*:?\s*([A-Z][A-Za-z0-9 .,&'-]{2,100})/i,
+        /\b([A-Z][A-Za-z0-9 .,&'-]{2,80}\s+(?:Home\s+Inspections|Inspections|Inspection\s+Services|Inspection\s+LLC|Inspections\s+LLC))\b/,
+      ])
+      const reportType = firstMatch(text, [
+        /\b(Home\s+Inspection\s+Report|Property\s+Inspection\s+Report|Inspection\s+Report|Pre[-\s]?Listing\s+Inspection|Buyer\s+Inspection)\b/i,
+      ]) || 'Inspection report'
+      const summaryItems = extractInspectionSummaryItems(text)
+      const missingInfo = [
+        !address.propertyAddress ? 'Confirm property address.' : '',
+        !clientName ? 'client/customer name' : '',
+        !inspectorName && !inspectorCompany ? 'inspector name/company' : '',
+        !summaryItems.length ? 'inspection summary findings' : '',
+      ].filter(Boolean)
+
+      if (address.propertyAddress) setPropertyAddress(address.propertyAddress)
+      if (address.city) setCity(address.city)
+      if (address.state) setStateValue(address.state)
+      if (address.zip) setZip(address.zip)
+      if (clientName) setRequesterName((current) => current || clientName)
+      setWorkType('Inspection Repairs')
+      setPropertyFacts((prev) => ({
+        ...prev,
+        verified: true,
+        source: 'fallback',
+        confidence: 'low',
+        notes: 'AI Draft from uploaded inspection report. Human review required.',
+        verificationNotes: [
+          `AI Draft from ${file.name}.`,
+          `Front-page extraction payload: ${payloadBytes} bytes.`,
+          inspectorName || inspectorCompany ? `Inspector/company: ${[inspectorName, inspectorCompany].filter(Boolean).join(' / ')}.` : '',
+          reportType ? `Report/source: ${reportType}.` : '',
+          missingInfo.length ? `Missing info to confirm: ${missingInfo.join(', ')}.` : 'Extracted fields need human review before save.',
+        ].filter(Boolean).join(' '),
+      }))
+      setPropertyLookupStatus(missingInfo.length ? 'no_records_found' : 'data_found')
+      setPropertyLookupMessage(
+        missingInfo.length
+          ? `AI Draft from inspection report. Missing Info: ${missingInfo.join(', ')}`
+          : 'AI Draft from inspection report. Review detected property details before saving.'
+      )
+
+      if (summaryItems.length && !description.trim()) {
+        setDescription(`Inspection report uploaded. Draft findings for review:\n- ${summaryItems.slice(0, 4).join('\n- ')}`)
+      }
+
+      setInspectionReportDraft({
+        fileName: file.name,
+        frontPagePayloadBytes: payloadBytes,
+        propertyAddress: address.propertyAddress,
+        city: address.city,
+        state: address.state,
+        clientName,
+        inspectorName,
+        inspectorCompany,
+        reportType,
+        summaryItems,
+        missingInfo,
+        status: missingInfo.length ? 'Needs Review' : 'AI Draft',
+      })
+      setInspectionDraftTasks(buildInspectionTasksFromFindings(summaryItems, file.name))
+    } catch (error) {
+      console.warn('Inspection PDF extraction failed.', error)
+      setInspectionReportDraft({
+        fileName: inspectionFiles[0].name,
+        frontPagePayloadBytes: Math.min(inspectionFiles[0].size, INSPECTION_FRONT_PAGE_MAX_BYTES),
+        propertyAddress: '',
+        city: '',
+        state: '',
+        clientName: '',
+        inspectorName: '',
+        inspectorCompany: '',
+        reportType: 'Inspection report',
+        summaryItems: [],
+        missingInfo: ['Confirm property address.', 'client/customer name', 'inspector name/company', 'inspection summary findings'],
+        status: 'Needs Review',
+      })
+      setPropertyLookupStatus('error')
+      setPropertyLookupMessage('Could not read enough text from the inspection PDF. Missing Info: Confirm property address.')
+    } finally {
+      setInspectionReading(false)
+    }
   }
 
 
@@ -4804,6 +5119,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
 
     setSubmitting(true)
+    setLocalEvidenceStatus('uploading')
 
     try {
       const { data: leadRow, error: leadError } = await supabase
@@ -4892,6 +5208,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       resetForm()
     } catch (error: any) {
       console.error(error)
+      setLocalEvidenceStatus('failed')
       alert(error?.message || 'Upload failed. Check Supabase storage bucket/policies.')
     } finally {
       setSubmitting(false)
@@ -9867,18 +10184,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
-  function renderPhotosAndDocuments(request: WorkRequest) {
+  function renderUploadedEvidence(request: WorkRequest) {
     const uploadedFiles = [...request.photos, ...request.documents]
 
     return (
       <section style={styles.mediaPanel}>
         <div style={styles.mediaPanelHeader}>
           <div>
-            <strong>Photos &amp; Documents</strong>
+            <strong>Uploaded Evidence</strong>
             <p style={styles.small}>
               {uploadedFiles.length
-                ? `${request.photos.length} photo${request.photos.length === 1 ? '' : 's'} and ${request.documents.length} document${request.documents.length === 1 ? '' : 's'} attached`
-                : 'No uploaded files are attached to this lead yet.'}
+                ? `${uploadedFiles.length} evidence file${uploadedFiles.length === 1 ? '' : 's'} attached to request ${request.id}`
+                : 'No uploaded evidence is attached to this lead yet.'}
             </p>
           </div>
           <button
@@ -9891,12 +10208,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         </div>
 
         {uploadedFiles.length === 0 ? (
-          <div style={styles.empty}>Uploaded photos and documents will appear here after submission.</div>
+          <div style={styles.empty}>Uploaded photos, videos, documents, and inspection reports will appear here after submission.</div>
         ) : (
           <div style={styles.mediaGrid}>
             {uploadedFiles.map((file) => {
-              const isPhoto = file.type === 'photo'
+              const category = getEvidenceCategory(file.name, '', file.type)
+              const isPhoto = category === 'photo'
               const previewUrl = file.previewUrl || file.url || ''
+              const status: UploadEvidenceStatus = file.url || file.path ? 'uploaded' : 'selected'
 
               return (
                 <div key={file.id || file.path || file.name} style={styles.mediaItem}>
@@ -9914,30 +10233,42 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <div style={styles.mediaThumbnailFallback}>Photo</div>
                     )
                   ) : (
-                    <div style={styles.documentIcon}>DOC</div>
+                    <div style={styles.documentIcon}>{category === 'video' ? 'VIDEO' : category === 'inspection report' ? 'REPORT' : 'DOC'}</div>
                   )}
 
                   <div style={styles.mediaMeta}>
                     <span style={styles.fileName}>{file.name}</span>
-                    <span style={styles.small}>{formatUploadedAt(file.createdAt)}</span>
-                    <span style={styles.badgeMuted}>{isPhoto ? 'Photo' : 'Document'}</span>
+                    <span style={styles.small}>File type: {getEvidenceTypeLabel(category)}</span>
+                    <span style={styles.small}>Upload category: {category}</span>
+                    <span style={styles.small}>Upload status: {status}</span>
+                    <span style={styles.small}>Attached request: {request.id}</span>
+                    <span style={styles.small}>Attached property: {request.propertyId || getRequestPropertyId(request) || 'Not linked yet'}</span>
+                    <span style={styles.small}>Uploaded: {formatUploadedAt(file.createdAt)}</span>
+                    <span style={status === 'uploaded' ? styles.badge : styles.badgeMuted}>{status}</span>
+                    <span style={styles.badgeMuted}>{category}</span>
                   </div>
 
                   <div style={styles.mediaActions}>
-                    <button
-                      type="button"
-                      style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-                      onClick={() => openRequestFile(file)}
-                    >
-                      {isPhoto ? 'Open' : 'Open file'}
-                    </button>
-                    <button
-                      type="button"
-                      style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-                      onClick={() => openRequestFile(file, true)}
-                    >
-                      Download
-                    </button>
+                    {(file.url || file.path) ? (
+                      <>
+                        <button
+                          type="button"
+                          style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
+                          onClick={() => openRequestFile(file)}
+                        >
+                          {isPhoto ? 'Open preview' : 'Open file'}
+                        </button>
+                        <button
+                          type="button"
+                          style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
+                          onClick={() => openRequestFile(file, true)}
+                        >
+                          Download
+                        </button>
+                      </>
+                    ) : (
+                      <span style={styles.small}>Open/download available after upload.</span>
+                    )}
                     <button
                       type="button"
                       style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
@@ -9952,6 +10283,156 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </div>
         )}
       </section>
+    )
+  }
+
+  function renderSelectedEvidence() {
+    const selectedFiles = [
+      ...photoFiles.map((file, index) => ({ file, index, group: 'photo' as const })),
+      ...documentFiles.map((file, index) => ({ file, index, group: 'document' as const })),
+    ]
+
+    if (selectedFiles.length === 0) return null
+
+    return (
+      <section style={styles.mediaPanel}>
+        <div style={styles.mediaPanelHeader}>
+          <div>
+            <strong>Uploaded Evidence</strong>
+            <p style={styles.small}>
+              These files are selected locally for this request. They remain visible here as selected, uploading, or failed until the request saves.
+            </p>
+            {inspectionReading && <p style={styles.small}>Reading inspection report...</p>}
+          </div>
+          <span style={localEvidenceStatus === 'failed' ? styles.badgeDanger : localEvidenceStatus === 'uploading' ? styles.badgeMuted : styles.badge}>
+            {localEvidenceStatus}
+          </span>
+        </div>
+
+        <div style={styles.mediaGrid}>
+          {selectedFiles.map(({ file, index, group }) => {
+            const category = getEvidenceCategory(file.name, file.type, group === 'photo' ? 'photo' : 'document')
+            const previewUrl = localEvidencePreviews[getLocalEvidenceKey(file, index, group)] || ''
+            const isPhoto = category === 'photo'
+
+            return (
+              <div key={getLocalEvidenceKey(file, index, group)} style={styles.mediaItem}>
+                {isPhoto && previewUrl ? (
+                  <img src={previewUrl} alt={file.name} style={styles.mediaThumbnail} loading="lazy" />
+                ) : (
+                  <div style={styles.documentIcon}>{category === 'video' ? 'VIDEO' : category === 'inspection report' ? 'REPORT' : 'DOC'}</div>
+                )}
+
+                <div style={styles.mediaMeta}>
+                  <span style={styles.fileName}>{file.name}</span>
+                  <span style={styles.small}>File type: {getEvidenceTypeLabel(category, file.type)}</span>
+                  <span style={styles.small}>Upload category: {category}</span>
+                  <span style={styles.small}>Upload status: {submitting ? 'uploading' : localEvidenceStatus}</span>
+                  <span style={styles.small}>Attached request: pending</span>
+                  <span style={styles.small}>Attached property: pending</span>
+                  <span style={styles.small}>Uploaded: selected locally / upload pending</span>
+                  <span style={localEvidenceStatus === 'failed' ? styles.badgeDanger : styles.badgeMuted}>
+                    {submitting ? 'uploading' : localEvidenceStatus}
+                  </span>
+                </div>
+
+                <div style={styles.mediaActions}>
+                  <span style={styles.small}>Open/download link available after upload.</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
+
+  function renderInspectionReportDraft() {
+    if (!inspectionReading && !inspectionReportDraft) return null
+
+    return (
+      <div style={styles.inspectionTaskPanel}>
+        <div style={styles.buttonRow}>
+          <div style={{ flex: 1 }}>
+            <strong>Inspection Report Reading</strong>
+            <p style={styles.small}>
+              {inspectionReading
+                ? 'Reading inspection report...'
+                : `AI Draft from ${inspectionReportDraft?.fileName || 'uploaded inspection report'}. Human review required before save.`}
+            </p>
+          </div>
+          <span style={inspectionReportDraft?.status === 'Needs Review' ? styles.badgeMuted : styles.badge}>
+            {inspectionReading ? 'AI Draft' : inspectionReportDraft?.status || 'AI Draft'}
+          </span>
+        </div>
+
+        {inspectionReportDraft && (
+          <>
+            <div style={styles.grid3}>
+              <div style={styles.factCard}>
+                <small>Property address</small>
+                <strong>{inspectionReportDraft.propertyAddress || 'Needs review'}</strong>
+                <span style={styles.small}>{[inspectionReportDraft.city, inspectionReportDraft.state].filter(Boolean).join(', ') || 'City/state needs review'}</span>
+              </div>
+              <div style={styles.factCard}>
+                <small>Client/customer</small>
+                <strong>{inspectionReportDraft.clientName || 'Needs review'}</strong>
+              </div>
+              <div style={styles.factCard}>
+                <small>Inspector/company</small>
+                <strong>{[inspectionReportDraft.inspectorName, inspectionReportDraft.inspectorCompany].filter(Boolean).join(' / ') || 'Needs review'}</strong>
+              </div>
+            </div>
+
+            <div style={styles.noticeBox}>
+              <strong>Report type/source:</strong> {inspectionReportDraft.reportType || 'Inspection report'}
+              <br />
+              <strong>Front-page payload:</strong> {Math.round(inspectionReportDraft.frontPagePayloadBytes / 1024)} KB of {Math.round(INSPECTION_FRONT_PAGE_MAX_BYTES / 1024)} KB max
+              <br />
+              <strong>Extraction status:</strong>{' '}
+              {inspectionReportDraft.missingInfo.length
+                ? `Needs missing info: ${inspectionReportDraft.missingInfo.join(', ')}.`
+                : 'Draft fields detected. Review before saving.'}
+            </div>
+
+            {inspectionReportDraft.summaryItems.length > 0 && (
+              <>
+                <strong>Inspection summary items</strong>
+                <ul style={styles.smallList}>
+                  {inspectionReportDraft.summaryItems.map((item, index) => (
+                    <li key={`${inspectionReportDraft.fileName}-summary-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {inspectionDraftTasks.length > 0 && (
+              <>
+                <strong>Draft Inspection Task Intelligence</strong>
+                <div style={styles.inspectionTaskGrid}>
+                  {inspectionDraftTasks.map((task) => (
+                    <div key={task.id} style={styles.inspectionTaskCard}>
+                      <div style={styles.buttonRow}>
+                        <div style={{ flex: 1 }}>
+                          <strong>{task.task_title}</strong>
+                          <p style={styles.small}>{task.defect_concern}</p>
+                        </div>
+                        <span style={styles.badgeMuted}>{task.human_review_status}</span>
+                      </div>
+                      <p style={styles.small}>
+                        {task.building_system} • {task.risk_level} • {task.trade_needed}
+                      </p>
+                      <div style={styles.noticeBox}>
+                        <strong>Recommended next action:</strong> {task.recommended_next_action}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
     )
   }
 
@@ -11007,6 +11488,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         capture="environment"
                         style={styles.hiddenFileInput}
                         onChange={(e) => {
+                          setLocalEvidenceStatus('selected')
                           setPhotoFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
                           e.currentTarget.value = ''
                         }}
@@ -11020,6 +11502,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         accept="image/*,.heic,.heif"
                         style={styles.hiddenFileInput}
                         onChange={(e) => {
+                          setLocalEvidenceStatus('selected')
                           setPhotoFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
                           e.currentTarget.value = ''
                         }}
@@ -11033,7 +11516,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.heic,.heif,.mp4,.mov,image/*,video/*,application/pdf"
                         style={styles.hiddenFileInput}
                         onChange={(e) => {
-                          setDocumentFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
+                          const files = Array.from(e.target.files || [])
+                          setLocalEvidenceStatus('selected')
+                          setDocumentFiles((prev) => [...prev, ...files])
+                          void readInspectionFiles(files)
                           e.currentTarget.value = ''
                         }}
                       />
@@ -11046,6 +11532,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         accept="video/*,.mp4,.mov"
                         style={styles.hiddenFileInput}
                         onChange={(e) => {
+                          setLocalEvidenceStatus('selected')
                           setDocumentFiles((prev) => [...prev, ...Array.from(e.target.files || [])])
                           e.currentTarget.value = ''
                         }}
@@ -11061,16 +11548,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     )}
                   </div>
 
-                  {selectedMediaSummary.length > 0 && (
-                    <details style={styles.moreActions}>
-                      <summary style={styles.moreActionsSummary}>Attached file names</summary>
-                      <ul style={styles.smallList}>
-                        {[...photoFiles, ...documentFiles].map((file, index) => (
-                          <li key={`${file.name}-${index}`}>{file.name}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
+                  {renderSelectedEvidence()}
                 </div>
 
                 <div style={styles.intakeStepCard}>
@@ -11130,6 +11608,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <p style={{ margin: '6px 0 0' }}>{propertyLookupMessage}</p>
                     </div>
                   )}
+
+                  {renderInspectionReportDraft()}
 
                   <details style={styles.moreActions}>
                     <summary style={styles.moreActionsSummary}>More property details</summary>
@@ -11836,7 +12316,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           </div>
                         )}
 
-                        {renderPhotosAndDocuments(request)}
+                        {renderUploadedEvidence(request)}
 	
 	                        {renderSiteMediaIntelligence(request)}
 
