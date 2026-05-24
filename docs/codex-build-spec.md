@@ -61,23 +61,32 @@ Keep the surface quiet. The user should see the property, the source report, the
 
 Inspection Intelligence must interpret reports into structured operational intelligence, not plain summaries.
 
-Extract these fields from inspection sources when present:
+Extract report-level context from inspection sources when present:
 
 - Property address.
 - Inspection date.
 - Inspector and inspection company.
-- All defects and recommendations.
-- Safety hazards.
-- Maintenance items.
-- Trade category.
-- Severity.
-- Urgency.
-- Likely hidden damage.
-- Buyer/seller concern level.
-- Repair-vs-credit recommendation.
-- Missing information questions.
 
-Model outputs as reviewable AI Draft records tied to the Property and source file. Store enough structured data for later review, correction, report generation, and estimating. Preserve source references where available so a reviewer can trace findings back to report language or page context.
+For each inspection finding, model a reviewable AI Draft task record tied to the Property and source file. Store enough structured data for later review, correction, report generation, and estimating. Preserve source references where available so a reviewer can trace findings back to report language or page context.
+
+Required per-finding task fields:
+
+- Task title.
+- Defect / concern.
+- Building system.
+- Risk level.
+- Trade needed.
+- Urgency.
+- Missing information needed.
+- Photo requests.
+- Recommended next action.
+- Human review status.
+
+Core transformation rule:
+
+```text
+inspection item -> risk -> trade -> missing evidence -> next task
+```
 
 Required output groups:
 
@@ -85,6 +94,9 @@ Required output groups:
 - Priority repair roadmap.
 - Trade scopes.
 - Repair bundles.
+- Finding-level task intelligence records.
+- Missing-evidence request list.
+- Photo request list.
 - Immediate safety/water-intrusion items.
 - Deferred maintenance items.
 - Budget-to-replace items.
@@ -100,10 +112,12 @@ Bundling rules:
 - Group findings into operational bundles before producing scopes or seller reports.
 - Prefer building-system bundles over isolated defect lists.
 - Connect each defect to building system, root risk, likely hidden damage, trade, priority, sequence, and estimate impact.
+- Each finding must still preserve its own task title, risk level, trade, urgency, missing information, photo requests, recommended next action, and human review status after bundling.
 - Example roof / water intrusion inputs include moss, exposed nail heads, damaged shingles, cracked roof vents, active roof leak, and rotted fascia. Output: "Roof system aging with active water intrusion. Roofer evaluation required. Repair vs replacement economics should be reviewed."
 - Example exterior envelope / moisture inputs include cracked siding, CertainTeed siding concern, rotted trim, thin paint, missing flashing, cracked caulk, vegetation against siding, and negative grading. Output: "Exterior moisture-management system risk. Coordinate siding, trim, paint, flashing, grading, and vegetation work."
 - Example plumbing risk inputs include leaking water heater connectors, black iron fittings, high water pressure, leaking fixtures, and broken waste-line straps.
 - Example safety inputs include missing smoke detector, stair tread/riser inconsistency, active moisture or mold concern, and dryer vent or bird activity when it creates fire or moisture risk.
+- Example fire suppression input: painted-over, obstructed, or sealed sprinkler heads. Output task title: "Fire suppression sprinkler issue." Risk level: "Life safety / fire hazard." Trade needed: "Fire suppression specialist / Fire Marshal." Missing information and photo requests must ask for close-up photos of every sprinkler head, wide room/ceiling photos, better angled photos where condition is unclear, sprinkler head count, fire system inspection tags, and fire panel photos. Recommended next action: request evidence, then route to the proper fire suppression reviewer before pricing or seller/buyer guidance.
 
 AI authority rules:
 

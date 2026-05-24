@@ -42,26 +42,35 @@ Core workflow:
 3. Review repair bundles.
 4. Generate seller prep report.
 
-Inspection Intelligence should extract and normalize, at minimum:
+Inspection Intelligence should extract and normalize report-level context, at minimum:
 
 - Property address.
 - Inspection date.
 - Inspector and inspection company.
-- All defects and recommendations.
-- Safety hazards.
-- Maintenance items.
-- Trade category.
-- Severity.
+
+For each inspection finding, the system must create a reviewable task intelligence record with:
+
+- Task title.
+- Defect / concern.
+- Building system.
+- Risk level.
+- Trade needed.
 - Urgency.
-- Likely hidden damage.
-- Buyer/seller concern level.
-- Repair-vs-credit recommendation.
-- Missing information questions.
+- Missing information needed.
+- Photo requests.
+- Recommended next action.
+- Human review status.
 
 The most important product behavior is bundling. Findings must be grouped into operational repair bundles, not treated as isolated line items. Agents should reason through this chain for every meaningful defect:
 
 ```text
 defect -> building system -> root risk -> hidden damage -> trade -> priority -> sequence -> estimate impact
+```
+
+The core operating rule is:
+
+```text
+inspection item -> risk -> trade -> missing evidence -> next task
 ```
 
 This means the system should recognize how several small findings combine into a larger operational risk, repair sequence, and contractor-ready scope.
@@ -73,12 +82,29 @@ Example bundles:
 - Plumbing risk bundle: leaking water heater connectors, black iron fittings, high water pressure, leaking fixtures, broken waste-line straps.
 - Safety bundle: missing smoke detector, stair tread/riser inconsistency, active moisture or mold concern, and dryer vent or bird activity when it creates fire or moisture risk.
 
+Example task intelligence:
+
+- Finding: Fire sprinklers are painted over, obstructed, or sealed shut.
+- Task title: Fire suppression sprinkler issue.
+- Defect / concern: Sprinkler heads may be impaired by paint, sealant, obstruction, or visible tampering.
+- Building system: Fire suppression / life safety.
+- Risk level: Life safety / fire hazard.
+- Trade needed: Fire suppression specialist / Fire Marshal.
+- Urgency: Immediate review before occupancy, sale closeout, or any representation that the system is functional.
+- Missing information needed: Sprinkler head count, affected locations, whether the system is active, recent inspection status, visible tags, and any fire panel status.
+- Photo requests: Close-up photos of every sprinkler head, wide photos of the rooms and ceilings, better angled photos where obstruction or paint is unclear, count documentation, fire system inspection tags, and fire panel photos.
+- Recommended next action: Request missing evidence, then route to a licensed fire suppression specialist or Fire Marshal for review before pricing or seller/buyer guidance.
+- Human review status: AI Draft until a qualified human reviewer confirms evidence, trade route, and next action.
+
 Inspection output should produce:
 
 - Executive summary.
 - Priority repair roadmap.
 - Trade scopes.
 - Repair bundles.
+- Finding-level task intelligence records.
+- Missing-evidence request list.
+- Photo request list.
 - Immediate safety and water-intrusion items.
 - Deferred maintenance items.
 - Budget-to-replace items.

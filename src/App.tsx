@@ -742,6 +742,21 @@ type SellerPrepItemV1 = {
   created_at?: string | null
 }
 
+type InspectionTaskIntelligence = {
+  id: string
+  task_title: string
+  defect_concern: string
+  building_system: string
+  risk_level: string
+  trade_needed: string
+  urgency: string
+  missing_information_needed: string[]
+  photo_requests: string[]
+  recommended_next_action: string
+  human_review_status: string
+  source_label: string
+}
+
 type PricingMemoryEntry = {
   id: string
   created_at?: string | null
@@ -3209,6 +3224,98 @@ function getBestWorkType(value = '', description = '') {
 
   const found = matchers.find(([_, words]) => words.some((word) => text.includes(word)))
   return found?.[0] || WORK_TYPES[0]
+}
+
+const FIRE_SUPPRESSION_INSPECTION_TASK: InspectionTaskIntelligence = {
+  id: 'mock-fire-suppression-sprinkler-issue',
+  task_title: 'Fire suppression sprinkler issue',
+  defect_concern: 'Inspection context may indicate painted-over, obstructed, or sealed sprinkler heads. Real extraction is not wired yet, so this is sample task intelligence for admin review.',
+  building_system: 'Fire suppression / life safety',
+  risk_level: 'Life safety / fire hazard',
+  trade_needed: 'Fire suppression specialist / Fire Marshal',
+  urgency: 'Immediate review before seller guidance, pricing, closeout, or any representation that the system is functional.',
+  missing_information_needed: [
+    'Count of sprinkler heads.',
+    'Locations of every sprinkler head and affected room.',
+    'Any fire system inspection tags.',
+    'Any fire panel photos or visible system status.',
+  ],
+  photo_requests: [
+    'Close-up photos of every sprinkler head.',
+    'Wide photos of rooms and ceilings.',
+    'Better angled photos where paint, sealant, or obstruction is unclear.',
+    'Photos of inspection tags and fire panel if present.',
+  ],
+  recommended_next_action: 'Contact Fire Marshal or licensed fire suppression specialist for review.',
+  human_review_status: 'needs_review',
+  source_label: 'Sample AI Draft',
+}
+
+function splitInspectionInfo(value?: string | null) {
+  return String(value || '')
+    .split(/[,;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function requestHasInspectionContext(request: WorkRequest) {
+  const documentNames = request.documents.map((file) => file.name).join(' ')
+  const text = [
+    request.workType,
+    request.description,
+    request.timeline,
+    request.urgency,
+    documentNames,
+  ].join(' ').toLowerCase()
+  const hasInspectionWord = ['inspection', 'inspector', 'report', 'seller', 'buyer', 'sprinkler', 'fire suppression', 'fire marshal'].some((word) => text.includes(word))
+  const hasReportLikeDocument = request.documents.some((file) => /\.(pdf|doc|docx)$/i.test(file.name))
+  return hasInspectionWord || hasReportLikeDocument
+}
+
+function inferInspectionBuildingSystem(item: SellerPrepItemV1) {
+  const text = [item.repair_item, item.trade_category, item.ai_notes].join(' ').toLowerCase()
+  if (text.includes('roof') || text.includes('gutter') || text.includes('flashing')) return 'Roof / water intrusion'
+  if (text.includes('paint') || text.includes('siding') || text.includes('trim') || text.includes('caulk')) return 'Exterior envelope / finishes'
+  if (text.includes('plumb') || text.includes('water') || text.includes('drain') || text.includes('fixture')) return 'Plumbing'
+  if (text.includes('electrical') || text.includes('breaker') || text.includes('outlet') || text.includes('panel')) return 'Electrical'
+  if (text.includes('fire') || text.includes('sprinkler') || text.includes('smoke')) return 'Life safety'
+  return item.trade_category || 'General repair'
+}
+
+function getInspectionRiskLabel(score?: number | null) {
+  const value = Number(score || 0)
+  if (value >= 8) return 'High inspection risk'
+  if (value >= 6) return 'Medium inspection risk'
+  if (value > 0) return 'Low inspection risk'
+  return 'Needs review'
+}
+
+function buildInspectionTaskIntelligence(request: WorkRequest | null, items: SellerPrepItemV1[]) {
+  if (!request || !requestHasInspectionContext(request)) return []
+
+  const itemTasks: InspectionTaskIntelligence[] = items.map((item) => {
+    const missingInfo = splitInspectionInfo(item.missing_info)
+    const reviewStatus = item.human_review_status === 'approved' ? 'needs_review' : item.human_review_status || 'needs_review'
+
+    return {
+      id: `seller-prep-${item.id}`,
+      task_title: item.repair_item || 'Inspection repair task',
+      defect_concern: item.ai_notes || item.repair_item || 'Inspection concern needs human review.',
+      building_system: inferInspectionBuildingSystem(item),
+      risk_level: getInspectionRiskLabel(item.inspection_risk_score),
+      trade_needed: item.trade_category || 'Trade needs review',
+      urgency: item.recommendation === 'must_fix' ? 'High priority / review before seller report' : 'Needs review before estimating or routing',
+      missing_information_needed: missingInfo.length ? missingInfo : ['Confirm exact inspection finding, affected location, quantity, and access constraints.'],
+      photo_requests: ['Upload clear close-up photos, wide context photos, and any inspection report pages or tags that show this condition.'],
+      recommended_next_action: item.recommendation
+        ? `Review ${String(item.recommendation).replace(/_/g, ' ')} recommendation with the appropriate trade before pricing or sending.`
+        : 'Review defect, risk, trade, missing evidence, and next task before pricing or sending.',
+      human_review_status: reviewStatus,
+      source_label: 'Seller Prep AI Draft',
+    }
+  })
+
+  return [...itemTasks, { ...FIRE_SUPPRESSION_INSPECTION_TASK }]
 }
 
 function localIntakeFallback(text = ''): IntakeDraft {
@@ -8159,6 +8266,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       alert('Only an admin or owner can save project-specific memory.')
       return
     }
+    if (!lesson.linked_work_request_id && !lesson.linked_property_id && !lesson.linked_repair_item_id) {
+      alert('Link this lesson to a property, request, or repair item before saving it as project-specific memory.')
+      return
+    }
     const gateMessage = getSourceLessonMemoryGateMessage(lesson)
     if (gateMessage) {
       alert(gateMessage)
@@ -9628,6 +9739,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const sellerPrepSelectedRequest = useMemo(() => {
     return requests.find((request) => request.id === sellerPrepSelectedId) || requests[0] || null
   }, [requests, sellerPrepSelectedId])
+  const inspectionTaskIntelligence = useMemo(() => {
+    return buildInspectionTaskIntelligence(sellerPrepSelectedRequest, sellerPrepItemsV1)
+  }, [sellerPrepSelectedRequest, sellerPrepItemsV1])
 
   const columns: RequestStatus[] = [
     'new',
@@ -12109,6 +12223,80 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     </div>
                   </div>
                 )}
+
+                <div style={styles.inspectionTaskPanel}>
+                  <div style={styles.buttonRow}>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ marginTop: 0 }}>Inspection Task Intelligence</h3>
+                      <p style={styles.small}>
+                        Doctrine path: inspection item -&gt; risk -&gt; trade -&gt; missing evidence -&gt; next task.
+                        All records are AI Draft or Needs Review until a human approves them elsewhere.
+                      </p>
+                    </div>
+                    <span style={styles.badgeMuted}>Admin review</span>
+                  </div>
+
+                  {inspectionTaskIntelligence.length === 0 ? (
+                    <div style={styles.empty}>
+                      No inspection report or inspection-related file detected for this selected lead yet.
+                    </div>
+                  ) : (
+                    <div style={styles.inspectionTaskGrid}>
+                      {inspectionTaskIntelligence.map((task) => (
+                        <div key={task.id} style={styles.inspectionTaskCard}>
+                          <div style={styles.buttonRow}>
+                            <div style={{ flex: 1 }}>
+                              <strong>{task.task_title}</strong>
+                              <p style={styles.small}>{task.defect_concern}</p>
+                            </div>
+                            <span style={styles.badgeDanger}>{task.risk_level}</span>
+                            <span style={styles.badgeMuted}>{task.human_review_status || 'needs_review'}</span>
+                          </div>
+
+                          <div style={styles.grid3}>
+                            <div style={styles.factCard}>
+                              <small>Building system</small>
+                              <strong>{task.building_system}</strong>
+                            </div>
+                            <div style={styles.factCard}>
+                              <small>Trade needed</small>
+                              <strong>{task.trade_needed}</strong>
+                            </div>
+                            <div style={styles.factCard}>
+                              <small>Urgency</small>
+                              <strong>{task.urgency}</strong>
+                            </div>
+                          </div>
+
+                          <div style={styles.grid2}>
+                            <div>
+                              <strong>Missing information needed</strong>
+                              <ul style={styles.smallList}>
+                                {task.missing_information_needed.map((item, index) => (
+                                  <li key={`${task.id}-missing-${index}`}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <strong>Photo requests</strong>
+                              <ul style={styles.smallList}>
+                                {task.photo_requests.map((item, index) => (
+                                  <li key={`${task.id}-photo-${index}`}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          <div style={styles.noticeBox}>
+                            <strong>Recommended next action:</strong> {task.recommended_next_action}
+                            <br />
+                            <strong>Source:</strong> {task.source_label}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {sellerPrepItemsV1.length === 0 ? (
                   <div style={styles.empty}>No Seller Prep draft loaded yet.</div>
@@ -16745,6 +16933,26 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 14,
     padding: 12,
     marginTop: 12,
+  },
+  inspectionTaskPanel: {
+    background: '#fbfcfa',
+    border: '1px solid #d7dfd3',
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 14,
+    marginBottom: 14,
+  },
+  inspectionTaskGrid: {
+    display: 'grid',
+    gap: 12,
+  },
+  inspectionTaskCard: {
+    background: '#ffffff',
+    border: '1px solid #d7dfd3',
+    borderRadius: 14,
+    padding: 14,
+    display: 'grid',
+    gap: 12,
   },
   siteMediaPanel: {
     background: '#fbfcfa',
