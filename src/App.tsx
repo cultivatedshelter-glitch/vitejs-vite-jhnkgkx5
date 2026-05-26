@@ -6,6 +6,13 @@ import {
   buildEstimateIntelligence,
   type EstimateIntelligenceResult,
 } from './estimateIntelligence'
+import {
+  buildInspectionIntelligenceDraft,
+  extractInspectionDate,
+  extractInspectionFindings,
+  type InspectionIntelligenceDraft,
+} from './inspectionIntelligence'
+import { InspectionIntelligencePanel } from './components/InspectionIntelligencePanel'
 
 const Gallery = React.lazy(() => import('./components/Gallery'))
 const HistoricalUpload = React.lazy(() => import('./components/historical/HistoricalUpload'))
@@ -61,6 +68,7 @@ type WorkRequest = {
   archivedAt?: string
   archiveReason?: string
   aiEstimate?: AiEstimate
+  inspectionIntelligence?: InspectionIntelligenceDraft | null
 }
 
 type PropertyAgentName =
@@ -592,9 +600,8 @@ function canEditOperationalMemory(role: MemoryActorRole) {
   return role === 'owner' || role === 'admin' || role === 'estimator'
 }
 
-function getEffectiveMemoryActorRole(role: MemoryActorRole, localAdminMode: boolean): MemoryActorRole {
-  if (!localAdminMode) return role
-  return role === 'owner' ? 'owner' : 'admin'
+function getEffectiveMemoryActorRole(role: MemoryActorRole) {
+  return role
 }
 
 function canDraftSourceLessonsWithSession(role: MemoryActorRole, hasSession: boolean) {
@@ -648,7 +655,8 @@ type Invoice = {
   id: string
   created_at: string
   file_name: string
-  file_url: string
+  file_url: string | null
+  storage_bucket?: string | null
   storage_path: string
   vendor_name: string | null
   invoice_number?: string | null
@@ -766,12 +774,14 @@ type InspectionReportDraft = {
   propertyAddress: string
   city: string
   state: string
+  inspectionDate: string
   clientName: string
   inspectorName: string
   inspectorCompany: string
   reportType: string
   summaryItems: string[]
   missingInfo: string[]
+  intelligence: InspectionIntelligenceDraft
   status: 'AI Draft' | 'Needs Review'
 }
 
@@ -1263,7 +1273,7 @@ type MaterialComplexityClassification = {
   tradePackages: string[]
 }
 
-type JobExecutionStepStatus = 'ai_draft' | 'needs_review' | 'approved' | 'rejected'
+type JobExecutionStepStatus = 'ai_draft' | 'needs_review' | 'human_verified' | 'rejected' | 'deprecated'
 
 type JobExecutionStep = {
   id: string
@@ -1351,7 +1361,7 @@ type JobPacketMetadata = {
   review_status: string
 }
 
-type AiResearchDraftStatus = 'ai_draft' | 'needs_review' | 'approved' | 'rejected'
+type AiResearchDraftStatus = 'ai_draft' | 'needs_review' | 'human_verified' | 'rejected' | 'deprecated'
 
 type AiResearchDraft = {
   id: string
@@ -1389,7 +1399,7 @@ type ManualMaterialDraft = {
   totalCost: string
   sourceUrl: string
   notes: string
-  reviewStatus: 'approved' | 'needs_review'
+  reviewStatus: 'human_verified' | 'needs_review'
   repairItemId: string
 }
 
@@ -1415,8 +1425,8 @@ const EMPTY_MANUAL_MATERIAL_DRAFT: ManualMaterialDraft = {
   repairItemId: '',
 }
 
-const JOB_STEP_STATUSES: JobExecutionStepStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
-const AI_RESEARCH_DRAFT_STATUSES: AiResearchDraftStatus[] = ['ai_draft', 'needs_review', 'approved', 'rejected']
+const JOB_STEP_STATUSES: JobExecutionStepStatus[] = ['ai_draft', 'needs_review', 'human_verified', 'rejected', 'deprecated']
+const AI_RESEARCH_DRAFT_STATUSES: AiResearchDraftStatus[] = ['ai_draft', 'needs_review', 'human_verified', 'rejected', 'deprecated']
 
 const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
 const JOB_PACKET_METADATA_LOCAL_STORAGE_KEY = 'shelter-prep-job-packets-v1'
@@ -2115,9 +2125,29 @@ function getAgentDisplayName(agentName: PropertyAgentName) {
 }
 
 function getLearningDisplayName(value?: string | null) {
+  const operationalStatusLabels: Record<string, string> = {
+    ai_draft: 'AI Draft',
+    needs_review: 'Needs Review',
+    needs_confirmation: 'Needs Review',
+    approved: 'Human Verified',
+    human_approved: 'Human Verified',
+    human_reviewed: 'Human Verified',
+    human_verified: 'Human Verified',
+    deprecated: 'Deprecated',
+    rejected: 'Rejected',
+  }
+  const normalized = String(value || '').trim().toLowerCase()
+  if (operationalStatusLabels[normalized]) return operationalStatusLabels[normalized]
+
   return (value || 'Not set')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function isHumanVerifiedStatus(value?: string | null) {
+  return ['human_verified', 'approved', 'human_approved', 'human_reviewed'].includes(
+    String(value || '').trim().toLowerCase()
+  )
 }
 
 function getLearningAgentList(agents?: AgentName[] | null) {
@@ -2644,24 +2674,6 @@ function extractInspectionAddress(text: string) {
     state: match[3].trim().toUpperCase(),
     zip: match[4]?.trim() || '',
   }
-}
-
-function extractInspectionSummaryItems(text: string) {
-  const chunks = text
-    .split(/(?:\.\s+|\n|•|- )/)
-    .map((item) => item.trim().replace(/\s{2,}/g, ' '))
-    .filter((item) => item.length >= 24 && item.length <= 220)
-  const findingWords = /(repair|replace|recommend|defect|safety|hazard|damage|leak|moisture|further evaluation|service|not functional|missing|crack|rot|sprinkler|electrical|plumbing|roof|water heater|foundation|deck|stair)/i
-  const seen = new Set<string>()
-  return chunks
-    .filter((item) => findingWords.test(item))
-    .filter((item) => {
-      const key = item.toLowerCase()
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    .slice(0, 6)
 }
 
 function getInspectionTaskBasics(finding: string) {
@@ -3473,7 +3485,9 @@ function buildInspectionTaskIntelligence(request: WorkRequest | null, items: Sel
 
   const itemTasks: InspectionTaskIntelligence[] = items.map((item) => {
     const missingInfo = splitInspectionInfo(item.missing_info)
-    const reviewStatus = item.human_review_status === 'approved' ? 'needs_review' : item.human_review_status || 'needs_review'
+    const reviewStatus = isHumanVerifiedStatus(item.human_review_status)
+      ? 'human_verified'
+      : item.human_review_status || 'needs_review'
 
     return {
       id: `seller-prep-${item.id}`,
@@ -3594,6 +3608,7 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     archived: Boolean(row.archived),
     archivedAt: row.archived_at || '',
     archiveReason: row.archive_reason || '',
+    inspectionIntelligence: rowPropertyFacts.inspectionIntelligence || null,
   }
 }
 
@@ -3679,6 +3694,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [invoiceVendor, setInvoiceVendor] = useState('')
   const [invoiceAddress, setInvoiceAddress] = useState('')
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [invoiceFileUrls, setInvoiceFileUrls] = useState<Record<string, string>>({})
   const [invoiceAnalyses, setInvoiceAnalyses] = useState<Record<string, InvoiceCostAnalysis>>({})
   const [invoiceUploading, setInvoiceUploading] = useState(false)
   const [invoiceLoading, setInvoiceLoading] = useState(false)
@@ -3738,10 +3754,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     original_agent_output: '',
     human_correction: '',
   })
-  const memoryActorRole: MemoryActorRole = getEffectiveMemoryActorRole(currentUserRole, isAdmin)
-  const hasAdminConsoleAccess = isAdmin || canApproveOperationalMemory(memoryActorRole)
-  const galleryCanManage = isAdmin || currentUserRole === 'admin' || currentUserRole === 'owner'
-  const canViewSourceLessonAgent = canEditOperationalMemory(memoryActorRole) && (hasSupabaseSession || isAdmin)
+  const memoryActorRole: MemoryActorRole = getEffectiveMemoryActorRole(currentUserRole)
+  const hasAuthenticatedAdminAccess = hasSupabaseSession && canApproveOperationalMemory(memoryActorRole)
+  const hasAdminConsoleAccess = hasAuthenticatedAdminAccess
+  const galleryCanManage = hasAuthenticatedAdminAccess
+  const canViewSourceLessonAgent = hasSupabaseSession && canEditOperationalMemory(memoryActorRole)
   const canDraftSourceLessons = canDraftSourceLessonsWithSession(currentUserRole, hasSupabaseSession)
   const canApproveSourceLessons = canApproveSourceLessonsWithSession(currentUserRole, hasSupabaseSession)
   const canSaveGlobalLaborMemory = canApproveSourceLessons
@@ -3976,7 +3993,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function handleLogin() {
     if (!ADMIN_PIN) {
-      alert('Admin PIN is not configured. Add VITE_ADMIN_PIN to your environment variables.')
+      alert('Demo PIN is not configured. Add VITE_ADMIN_PIN only for local read-only demos.')
       return
     }
 
@@ -3984,10 +4001,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       setIsAdmin(true)
       setShowLogin(false)
       setAdminPinInput('')
-      setAuthMessage('Local PIN mode can view admin screens. Sign in with Supabase before saving protected records.')
-      setActiveTab('dashboard')
+      setAuthMessage('Demo PIN accepted. This is not real admin security and does not unlock protected Supabase writes. Sign in with an admin/owner account for operations.')
+      setActiveTab('new')
     } else {
-      alert('Wrong admin PIN')
+      alert('Wrong demo PIN')
     }
   }
 
@@ -4061,13 +4078,27 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       const reportType = firstMatch(text, [
         /\b(Home\s+Inspection\s+Report|Property\s+Inspection\s+Report|Inspection\s+Report|Pre[-\s]?Listing\s+Inspection|Buyer\s+Inspection)\b/i,
       ]) || 'Inspection report'
-      const summaryItems = extractInspectionSummaryItems(text)
+      const inspectionDate = extractInspectionDate(text)
+      const summaryItems = extractInspectionFindings(text)
       const missingInfo = [
         !address.propertyAddress ? 'Confirm property address.' : '',
+        !inspectionDate ? 'inspection date' : '',
         !clientName ? 'client/customer name' : '',
         !inspectorName && !inspectorCompany ? 'inspector name/company' : '',
         !summaryItems.length ? 'inspection summary findings' : '',
       ].filter(Boolean)
+      const intelligence = buildInspectionIntelligenceDraft({
+        fileName: file.name,
+        reportType,
+        propertyAddress: address.propertyAddress,
+        city: address.city,
+        state: address.state,
+        inspectionDate,
+        inspectorName,
+        inspectorCompany,
+        findings: summaryItems,
+        missingInfo,
+      })
 
       if (address.propertyAddress) setPropertyAddress(address.propertyAddress)
       if (address.city) setCity(address.city)
@@ -4084,6 +4115,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verificationNotes: [
           `AI Draft from ${file.name}.`,
           `Front-page extraction payload: ${payloadBytes} bytes.`,
+          inspectionDate ? `Inspection date: ${inspectionDate}.` : '',
           inspectorName || inspectorCompany ? `Inspector/company: ${[inspectorName, inspectorCompany].filter(Boolean).join(' / ')}.` : '',
           reportType ? `Report/source: ${reportType}.` : '',
           missingInfo.length ? `Missing info to confirm: ${missingInfo.join(', ')}.` : 'Extracted fields need human review before save.',
@@ -4106,12 +4138,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         propertyAddress: address.propertyAddress,
         city: address.city,
         state: address.state,
+        inspectionDate,
         clientName,
         inspectorName,
         inspectorCompany,
         reportType,
         summaryItems,
         missingInfo,
+        intelligence,
         status: missingInfo.length ? 'Needs Review' : 'AI Draft',
       })
       setInspectionDraftTasks(buildInspectionTasksFromFindings(summaryItems, file.name))
@@ -4123,12 +4157,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         propertyAddress: '',
         city: '',
         state: '',
+        inspectionDate: '',
         clientName: '',
         inspectorName: '',
         inspectorCompany: '',
         reportType: 'Inspection report',
         summaryItems: [],
         missingInfo: ['Confirm property address.', 'client/customer name', 'inspector name/company', 'inspection summary findings'],
+        intelligence: buildInspectionIntelligenceDraft({
+          fileName: inspectionFiles[0].name,
+          reportType: 'Inspection report',
+          propertyAddress: '',
+          city: '',
+          state: '',
+          inspectionDate: '',
+          inspectorName: '',
+          inspectorCompany: '',
+          findings: [],
+          missingInfo: ['Confirm property address.', 'client/customer name', 'inspector name/company', 'inspection summary findings'],
+        }),
         status: 'Needs Review',
       })
       setPropertyLookupStatus('error')
@@ -4839,7 +4886,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   function getApprovedSiteMediaFindings(request: WorkRequest | null | undefined) {
     if (!request) return []
     return (siteMediaFindingsByRequest[request.id] || []).filter((finding) =>
-      finding.review_status === 'approved' || finding.review_status === 'human_verified'
+      isHumanVerifiedStatus(finding.review_status)
     )
   }
 
@@ -4940,8 +4987,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       const analysis = await ensureSiteMediaAnalysis(request, file)
       const record = {
         property_media_analysis_id: analysis.id,
-        property_id: getLinkedPropertyId(request),
-        lead_id: asNullableUuid(request.id),
+        property_id: analysis.property_id ?? getLinkedPropertyId(request),
+        lead_id: analysis.lead_id ?? asNullableUuid(request.id),
         finding_type: 'access',
         observation: file
           ? `Review uploaded media: ${file.name}. Needs human verification.`
@@ -4951,7 +4998,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         access_notes: '',
         safety_notes: '',
         confidence: 'low' as PropertyMediaConfidence,
-        source_file_id: asNullableUuid(file?.id || ''),
+        source_file_id: analysis.source_file_id ?? asNullableUuid(file?.id || ''),
         review_status: 'needs_review' as PropertyMediaReviewStatus,
         admin_notes: 'Draft finding created from existing uploaded media only.',
       }
@@ -4979,7 +5026,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   async function saveSiteMediaFinding(finding: PropertyMediaFinding, changes: Partial<PropertyMediaFinding> = {}) {
     const next = { ...finding, ...changes }
     const statusChanged = Boolean(changes.review_status)
-    const approving = next.review_status === 'approved' || next.review_status === 'rejected' || next.review_status === 'human_verified'
+    const approving = isHumanVerifiedStatus(next.review_status) || next.review_status === 'rejected'
 
     if (approving && !canApproveOperationalMemory(memoryActorRole)) {
       alert('Only admin or owner can approve, reject, or verify site media findings.')
@@ -5148,6 +5195,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         parcelNumber,
         verified: true,
         verificationNotes,
+        inspectionIntelligence: inspectionReportDraft?.intelligence || null,
       }
 
       const propertyRecordId = await ensureRequestProperty(
@@ -5200,6 +5248,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         photos,
         documents,
         status: 'new',
+        inspectionIntelligence: inspectionReportDraft?.intelligence || null,
       }
 
       setRequests((prev) => [newRequest, ...prev])
@@ -5729,16 +5778,16 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
   async function markSellerPrepAnalysisApproved() {
     if (!sellerPrepAnalysisV1) return
-    const unapproved = sellerPrepItemsV1.some((item) => item.human_review_status !== 'approved')
+    const unapproved = sellerPrepItemsV1.some((item) => !isHumanVerifiedStatus(item.human_review_status))
 
     if (unapproved) {
-      alert('Approve or reject each Seller Prep item before marking the analysis human approved.')
+      alert('Human verify or reject each Seller Prep item before marking the analysis human verified.')
       return
     }
 
     const { data, error } = await supabase
       .from('seller_prep_analyses')
-      .update({ human_review_status: 'human_approved', updated_at: new Date().toISOString() })
+      .update({ human_review_status: 'human_verified', updated_at: new Date().toISOString() })
       .eq('id', sellerPrepAnalysisV1.id)
       .select()
       .single()
@@ -5754,7 +5803,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   async function saveSellerPrepItemAsPricingMemory(item: SellerPrepItemV1) {
     const selected = requests.find((request) => request.id === sellerPrepSelectedId)
 
-    if (item.human_review_status !== 'approved') {
+    if (!isHumanVerifiedStatus(item.human_review_status)) {
       alert('Approve the Seller Prep item before saving it as pricing memory.')
       return
     }
@@ -5779,10 +5828,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       verified_price: verifiedPrice,
       unit_cost: verifiedPrice,
       total_cost: verifiedPrice,
-      source: 'seller_prep_human_approved',
+      source: 'seller_prep_human_verified',
       confidence_level: 'medium',
       human_verified: true,
-      notes: `Saved from Seller Prep item ${item.id}. Human approved before pricing memory.`,
+      notes: `Saved from Seller Prep item ${item.id}. Human verified before pricing memory.`,
       last_checked: new Date().toISOString(),
     })
 
@@ -6519,7 +6568,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   function refreshJobScopeLaborTotals(steps: JobExecutionStep[]) {
-    const approvedSteps = steps.filter((step) => step.status === 'approved')
+    const approvedSteps = steps.filter((step) => isHumanVerifiedStatus(step.status))
     const activeSteps = steps.filter((step) => step.status !== 'rejected')
     const sourceSteps = approvedSteps.length ? approvedSteps : activeSteps
     const highHours = sourceSteps.reduce((sum, step) => sum + Number(step.estimated_hours_high || 0), 0)
@@ -6739,7 +6788,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   async function approveJobExecutionStep(step: JobExecutionStep) {
     const updated: JobExecutionStep = {
       ...step,
-      status: 'approved',
+      status: 'human_verified',
       confidence: 'human_approved',
     }
     updateLocalJobExecutionStep(step.id, updated)
@@ -6880,7 +6929,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       repair_item_id: draft.repair_item_id || getDefaultRepairItemId(selectedEstimateRequest, draft.item_material_name || draft.research_topic),
       observed_price: draft.observed_price === null ? null : Number(draft.observed_price || 0),
       reviewed_at:
-        draft.human_review_status === 'approved' || draft.human_review_status === 'rejected'
+        isHumanVerifiedStatus(draft.human_review_status) || draft.human_review_status === 'rejected'
           ? draft.reviewed_at || new Date().toISOString()
           : draft.reviewed_at,
     }
@@ -6921,8 +6970,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const updated: AiResearchDraft = {
       ...draft,
       human_review_status: status,
-      confidence: status === 'approved' ? 'human_approved' : status === 'rejected' ? 'human_rejected' : draft.confidence,
-      reviewed_at: status === 'approved' || status === 'rejected' ? new Date().toISOString() : draft.reviewed_at,
+      confidence: isHumanVerifiedStatus(status) ? 'human_verified' : status === 'rejected' ? 'human_rejected' : draft.confidence,
+      reviewed_at: isHumanVerifiedStatus(status) || status === 'rejected' ? new Date().toISOString() : draft.reviewed_at,
     }
 
     updateLocalAiResearchDraft(draft.id, updated)
@@ -6932,7 +6981,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   async function attachApprovedResearchToEstimate(draft: AiResearchDraft) {
     if (!selectedEstimateRequest) return
 
-    if (draft.human_review_status !== 'approved') {
+    if (!isHumanVerifiedStatus(draft.human_review_status)) {
       alert('Approve this research draft before attaching its price to the estimate.')
       return
     }
@@ -7111,7 +7160,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
   async function exportJobPacket(request: WorkRequest) {
     const { packetEstimateItems, packetJobSteps, packetResearchDrafts, packetSiteMediaFindings } = await getJobPacketRows(request)
-    const packetApprovedSteps = packetJobSteps.filter((step) => step.status === 'approved')
+    const packetApprovedSteps = packetJobSteps.filter((step) => isHumanVerifiedStatus(step.status))
     const packetActiveSteps = packetJobSteps.filter((step) => step.status !== 'rejected')
     const approvedLaborLow = packetApprovedSteps.reduce((sum, step) => sum + Number(step.estimated_hours_low || 0), 0)
     const approvedLaborHigh = packetApprovedSteps.reduce((sum, step) => sum + Number(step.estimated_hours_high || 0), 0)
@@ -7128,8 +7177,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const fileName = `shelter-prep-${slugForFileName(request.propertyAddress)}-${todayFileStamp()}.pdf`
     const humanReviewStatus =
       packetEstimateItems.every((item) => item.human_approved || isEstimateItemRejected(item)) &&
-      packetActiveSteps.every((step) => step.status === 'approved')
-        ? 'human_reviewed'
+      packetActiveSteps.every((step) => isHumanVerifiedStatus(step.status))
+        ? 'human_verified'
         : 'needs_review'
 
     const fileLines = [...request.photos, ...request.documents].map((file) =>
@@ -7535,7 +7584,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           scope_source: item.scope_source || 'current_request_scope',
           relevance_reason: item.relevance_reason || getEstimateInclusionReason(item),
           source_status: item.source_status || 'needs_source_review',
-          review_status: item.review_status === 'rejected' ? 'rejected' : item.human_approved ? 'approved' : item.review_status || 'needs_review',
+          review_status: item.review_status === 'rejected' ? 'rejected' : item.human_approved ? 'human_verified' : item.review_status || 'needs_review',
           material_complexity: item.material_complexity || null,
           quantity_low: item.quantity_low ?? item.required_quantity ?? quantity,
           quantity_high: item.quantity_high ?? quantity,
@@ -7615,10 +7664,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           quantity_reason: manualMaterialDraft.notes.trim() || 'Human-added material for current job scope.',
           scope_source: 'human_added_current_scope',
           relevance_reason: `${selectedEstimateRequest.workType || 'Current'} scope: human-added material`,
-          source_status: manualMaterialDraft.reviewStatus === 'approved' ? 'human_added' : 'needs_source_review',
+          source_status: isHumanVerifiedStatus(manualMaterialDraft.reviewStatus) ? 'human_added' : 'needs_source_review',
           review_status: manualMaterialDraft.reviewStatus,
           confidence: 'human_added',
-          human_approved: manualMaterialDraft.reviewStatus === 'approved',
+          human_approved: isHumanVerifiedStatus(manualMaterialDraft.reviewStatus),
           admin_notes: manualMaterialDraft.notes.trim() || null,
         })
         .select()
@@ -7646,7 +7695,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     const updated = {
       ...item,
       human_approved: nextApproved,
-      review_status: nextApproved ? 'approved' : 'needs_review',
+      review_status: nextApproved ? 'human_verified' : 'needs_review',
       rejection_reason: nextApproved ? null : item.rejection_reason,
       confidence: nextApproved ? 'human_approved' : item.confidence,
     }
@@ -7690,7 +7739,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       const updates = approvableItems.map((item) =>
         supabase
           .from('estimate_items')
-          .update({ human_approved: true, confidence: 'human_approved', review_status: 'approved', rejection_reason: null })
+          .update({ human_approved: true, confidence: 'human_approved', review_status: 'human_verified', rejection_reason: null })
           .eq('id', item.id)
       )
 
@@ -7705,7 +7754,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             ? {
                 human_approved: true,
                 confidence: 'human_approved',
-                review_status: 'approved',
+                review_status: 'human_verified',
                 rejection_reason: null,
               }
             : {}),
@@ -7714,7 +7763,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       await Promise.all(
         approvableItems.map((item) =>
           recordMaterialReviewLearning(
-            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'approved' },
+            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'human_verified' },
             'approved'
           )
         )
@@ -7722,7 +7771,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       await Promise.all(
         approvableItems.map((item) =>
           recordHumanPricingMemory(
-            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'approved' },
+            { ...item, human_approved: true, confidence: 'human_approved', review_status: 'human_verified' },
             item.confidence || 'needs_review'
           )
         )
@@ -8028,13 +8077,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       if (uploadError) throw uploadError
 
-      const { data: publicUrlData } = supabase.storage
-        .from(INVOICE_BUCKET)
-        .getPublicUrl(path)
-
       const { error: insertError } = await supabase.from('invoices').insert({
         file_name: invoiceFile.name,
-        file_url: publicUrlData.publicUrl,
+        file_url: null,
+        storage_bucket: INVOICE_BUCKET,
         storage_path: path,
         vendor_name: invoiceVendor,
         property_address: invoiceAddress,
@@ -8096,6 +8142,20 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
       const rows = (data || []) as Invoice[]
       setInvoices(rows)
+      const signedUrls: Record<string, string> = {}
+      await Promise.all(
+        rows.map(async (invoice) => {
+          const path =
+            invoice.storage_path ||
+            storagePathFromPublicUrl(invoice.file_url || '', invoice.storage_bucket || INVOICE_BUCKET)
+          if (!path) return
+          const { data: signed } = await supabase.storage
+            .from(invoice.storage_bucket || INVOICE_BUCKET)
+            .createSignedUrl(path, 60 * 10)
+          if (signed?.signedUrl) signedUrls[invoice.id] = signed.signedUrl
+        })
+      )
+      setInvoiceFileUrls(signedUrls)
       await loadInvoiceAnalyses(rows.map((invoice) => invoice.id))
     } catch (error: any) {
       console.error(error)
@@ -10406,6 +10466,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               </>
             )}
 
+            {renderInspectionIntelligence(inspectionReportDraft.intelligence)}
+
             {inspectionDraftTasks.length > 0 && (
               <>
                 <strong>Draft Inspection Task Intelligence</strong>
@@ -10436,12 +10498,23 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     )
   }
 
+  function renderInspectionIntelligence(intelligence?: InspectionIntelligenceDraft | null) {
+    return (
+      <InspectionIntelligencePanel
+        intelligence={intelligence}
+        styles={styles}
+        money={money}
+        getStatusLabel={getLearningDisplayName}
+      />
+    )
+  }
+
   function renderSiteMediaIntelligence(request: WorkRequest) {
     const findings = siteMediaFindingsByRequest[request.id] || []
     const approvedFindings = getApprovedSiteMediaFindings(request)
     const uploadedFiles = [...request.photos, ...request.documents]
-    const canEditSiteMedia = canEditOperationalMemory(memoryActorRole)
-    const canApproveSiteMedia = canApproveOperationalMemory(memoryActorRole)
+    const canEditSiteMedia = hasSupabaseSession && canEditOperationalMemory(currentUserRole)
+    const canApproveSiteMedia = hasSupabaseSession && canApproveOperationalMemory(currentUserRole)
     const loading = Boolean(siteMediaLoadingByRequest[request.id])
 
     return (
@@ -10531,7 +10604,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
               <div key={finding.id} style={styles.siteMediaFindingCard}>
                 <div style={styles.badgeRow}>
                   <span style={finding.review_status === 'rejected' ? styles.badgeDanger : styles.badge}>
-                    {finding.review_status.replace(/_/g, ' ')}
+                    {getLearningDisplayName(finding.review_status)}
                   </span>
                   <span style={styles.badgeMuted}>{finding.confidence} confidence</span>
                   <span style={styles.badgeMuted}>{getSiteMediaSourceFileLabel(request, finding.source_file_id)}</span>
@@ -10644,10 +10717,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
-                        disabled={siteMediaSavingId === finding.id || finding.review_status === 'approved'}
-                        onClick={() => saveSiteMediaFinding(finding, { review_status: 'approved' })}
+                        disabled={siteMediaSavingId === finding.id || isHumanVerifiedStatus(finding.review_status)}
+                        onClick={() => saveSiteMediaFinding(finding, { review_status: 'human_verified' })}
                       >
-                        Approve
+                        Human Verify
                       </button>
                       <button
                         type="button"
@@ -10743,7 +10816,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         ? coordinationJson.recommended_next_step
         : workflow.buttonLabel
     const missingInfoCount = agentOutputs.reduce((sum, output) => sum + output.missing_info.length, 0)
-    const needsReviewCount = agentOutputs.filter((output) => output.status !== 'approved').length
+    const needsReviewCount = agentOutputs.filter((output) => !isHumanVerifiedStatus(output.status)).length
     const logisticsSummary = getJsonString(
       logisticsJson.logistics_summary,
       'Site logistics are being audited against access, staging, handling, disposal, and safety.'
@@ -11137,7 +11210,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   <div style={styles.badgeRow}>
                     <span style={styles.badgeMuted}>{getAgentDisplayName(output.agent_name)}</span>
                     <span style={output.status === 'rejected' ? styles.badgeDanger : styles.badge}>
-                      {output.status.replace(/_/g, ' ')}
+                      {getLearningDisplayName(output.status)}
                     </span>
                   </div>
                   <p style={styles.small}>Confidence: {output.confidence}</p>
@@ -11220,7 +11293,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   )
 
   const activeJobScopeSteps = currentJobScopeSteps.filter((step) => step.status !== 'rejected')
-  const approvedJobScopeSteps = currentJobScopeSteps.filter((step) => step.status === 'approved')
+  const approvedJobScopeSteps = currentJobScopeSteps.filter((step) => isHumanVerifiedStatus(step.status))
   const jobScopeApprovedLowHours = approvedJobScopeSteps.reduce(
     (sum, step) => sum + Number(step.estimated_hours_low || 0),
     0
@@ -11436,7 +11509,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         <div style={isCompact ? { ...styles.headerActions, ...styles.mobileHeaderActions } : styles.headerActions}>
           {isAdmin ? (
             <button style={styles.primaryButton} onClick={handleLogout}>
-              Log Out
+              Exit Demo PIN
             </button>
           ) : hasAdminConsoleAccess ? (
             <button style={styles.outlineButton} disabled>
@@ -11456,6 +11529,12 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> or{' '}
           <strong>VITE_SUPABASE_PUBLISHABLE_KEY</strong>.
           Preview/manual entry still works, but saving, uploads, dashboards, and signed file links need Supabase.
+        </div>
+      )}
+
+      {isAdmin && !hasSupabaseSession && (
+        <div style={styles.previewBanner}>
+          <strong>Demo PIN active:</strong> This is read-only and is not a security boundary. Sign in with a Supabase admin/owner account before opening protected admin operations or saving operational records.
         </div>
       )}
 
@@ -11792,9 +11871,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             <Gallery
               currentUserId={currentUserId}
               currentUserRole={currentUserRole}
-              isAdmin={isAdmin}
+              isAdmin={hasAuthenticatedAdminAccess}
               canManageGallery={galleryCanManage}
-              localAdminMode={isAdmin}
+              localAdminMode={false}
             />
           </Suspense>
         )}
@@ -12318,6 +12397,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                         {renderUploadedEvidence(request)}
 	
+	                        {renderInspectionIntelligence(request.inspectionIntelligence)}
+
 	                        {renderSiteMediaIntelligence(request)}
 
 	                        {renderPropertyWorkflowCard(request)}
@@ -12551,9 +12632,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       </p>
                     )}
 
-                    <a href={invoice.file_url} target="_blank" rel="noreferrer">
-                      Open / Download PDF
-                    </a>
+                    {invoiceFileUrls[invoice.id] ? (
+                      <a href={invoiceFileUrls[invoice.id]} target="_blank" rel="noreferrer">
+                        Open / Download PDF
+                      </a>
+                    ) : (
+                      <p style={styles.small}>File unavailable until a signed URL can be generated.</p>
+                    )}
 
                     <button
                       style={styles.wideButton}
@@ -12687,18 +12772,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         type="button"
                         style={styles.primaryButton}
                         onClick={markSellerPrepAnalysisApproved}
-                        disabled={sellerPrepAnalysisV1.human_review_status === 'human_approved'}
+                        disabled={isHumanVerifiedStatus(sellerPrepAnalysisV1.human_review_status)}
                       >
-                        Mark Analysis Human Approved
+                        Mark Analysis Human Verified
                       </button>
                     </div>
 
                     <div style={styles.noticeBox}>
                       Final Report / Send buttons:{' '}
                       <strong>
-                        {sellerPrepAnalysisV1.human_review_status === 'human_approved'
+                        {isHumanVerifiedStatus(sellerPrepAnalysisV1.human_review_status)
                           ? 'Enabled for future report workflow'
-                          : 'Disabled until human approved'}
+                          : 'Disabled until human verified'}
                       </strong>
                     </div>
                   </div>
@@ -12817,8 +12902,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           onChange={(event) => updateSellerPrepItemLocal(item.id, { human_review_status: event.target.value })}
                         >
                           <option value="needs_review">needs_review</option>
-                          <option value="approved">approved</option>
-                          <option value="revise">revise</option>
+                          <option value="human_verified">human_verified</option>
+                          <option value="deprecated">deprecated</option>
                           <option value="rejected">rejected</option>
                         </select>
                       </div>
@@ -12846,7 +12931,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           type="button"
                           style={styles.outlineButton}
                           onClick={() => saveSellerPrepItemAsPricingMemory(item)}
-                          disabled={item.human_review_status !== 'approved'}
+                          disabled={!isHumanVerifiedStatus(item.human_review_status)}
                         >
                           Approve as Pricing Memory
                         </button>
@@ -13667,7 +13752,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           )
                         }
                       >
-                        {['ai_draft', 'needs_review', 'edited', 'approved', 'rejected', 'human_verified'].map((status) => (
+                        {['ai_draft', 'needs_review', 'human_verified', 'rejected', 'deprecated'].map((status) => (
                           <option key={status} value={status}>
                             {getLearningDisplayName(status)}
                           </option>
@@ -14099,7 +14184,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           )
                         }
                       >
-                        {['ai_draft', 'needs_review', 'edited', 'approved', 'rejected', 'human_verified'].map((status) => (
+                        {['ai_draft', 'needs_review', 'human_verified', 'rejected', 'deprecated'].map((status) => (
                           <option key={status} value={status}>
                             Human review: {getLearningDisplayName(status)}
                           </option>
@@ -14983,9 +15068,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     >
                       <div style={styles.badgeRow}>
                         <span style={step.status === 'rejected' ? styles.badgeDanger : styles.badge}>
-                          Step {step.step_number}: {step.status.replace(/_/g, ' ')}
+                          Step {step.step_number}: {getLearningDisplayName(step.status)}
                         </span>
-                        <span style={styles.badgeMuted}>{step.confidence || 'needs_review'}</span>
+                        <span style={styles.badgeMuted}>{getLearningDisplayName(step.confidence || 'needs_review')}</span>
                         {step.disposal_needed && <span style={styles.badgeMuted}>Disposal needed</span>}
                       </div>
 
@@ -15120,7 +15205,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         <button
                           type="button"
                           style={styles.outlineButton}
-                          disabled={jobStepSavingId === step.id || step.status === 'approved'}
+                          disabled={jobStepSavingId === step.id || isHumanVerifiedStatus(step.status)}
                           onClick={() => approveJobExecutionStep(step)}
                         >
                           Approve
@@ -15192,9 +15277,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     >
                       <div style={styles.badgeRow}>
                         <span style={draft.human_review_status === 'rejected' ? styles.badgeDanger : styles.badge}>
-                          {draft.human_review_status.replace(/_/g, ' ')}
+                          {getLearningDisplayName(draft.human_review_status)}
                         </span>
-                        <span style={styles.badgeMuted}>{draft.confidence || 'needs_review'}</span>
+                        <span style={styles.badgeMuted}>{getLearningDisplayName(draft.confidence || 'needs_review')}</span>
                         {draft.reviewed_at && <span style={styles.badgeMuted}>Reviewed {new Date(draft.reviewed_at).toLocaleDateString()}</span>}
                       </div>
 
@@ -15297,8 +15382,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         <button
                           type="button"
                           style={styles.outlineButton}
-                          disabled={aiResearchSavingId === draft.id || draft.human_review_status === 'approved'}
-                          onClick={() => setAiResearchDraftStatus(draft, 'approved')}
+                          disabled={aiResearchSavingId === draft.id || isHumanVerifiedStatus(draft.human_review_status)}
+                          onClick={() => setAiResearchDraftStatus(draft, 'human_verified')}
                         >
                           Approve
                         </button>
@@ -15313,7 +15398,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         <button
                           type="button"
                           style={styles.outlineButton}
-                          disabled={draft.human_review_status !== 'approved'}
+                          disabled={!isHumanVerifiedStatus(draft.human_review_status)}
                           onClick={() => attachApprovedResearchToEstimate(draft)}
                         >
                           Attach Price to Estimate
@@ -15668,7 +15753,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       }
                     >
                       <option value="needs_review">needs_review</option>
-                      <option value="approved">approved</option>
+                      <option value="human_verified">human_verified</option>
                     </select>
                     <textarea
                       style={{ ...styles.input, minHeight: 90 }}
@@ -15840,9 +15925,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                         onChange={(e) => updateLocalEstimateItem(item.id, { review_status: e.target.value })}
                       >
                         <option value="needs_review">needs_review</option>
-                        <option value="approved">approved</option>
-                        <option value="rejected">rejected</option>
                         <option value="human_verified">human_verified</option>
+                        <option value="rejected">rejected</option>
+                        <option value="deprecated">deprecated</option>
                       </select>
                     </div>
 
@@ -16442,13 +16527,12 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #d7dfd3',
     background: '#ffffff',
     color: '#173425',
-    borderRadius: 12,
+    borderRadius: 8,
     minHeight: 48,
     padding: '10px 8px',
     fontSize: 14,
     fontWeight: 900,
     cursor: 'pointer',
-    boxShadow: '0 4px 12px rgba(15,84,45,0.08)',
   },
   messageEmptyState: {
     border: '1px solid #dfe8da',
@@ -16490,7 +16574,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     alignItems: 'center',
     minHeight: 30,
-    borderRadius: 999,
+    borderRadius: 8,
     background: '#eef6ec',
     color: '#0f542d',
     padding: '6px 10px',
@@ -16535,7 +16619,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '0 14px',
     border: '1px solid #d7dfd3',
-    borderRadius: 14,
+    borderRadius: 8,
     color: '#173425',
     background: '#ffffff',
     fontWeight: 900,
@@ -16629,7 +16713,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #d7dfd3',
     background: '#ffffff',
     color: '#5f6f63',
-    borderRadius: 999,
+    borderRadius: 8,
     padding: '5px 9px',
     fontSize: 12,
     fontWeight: 900,
@@ -16657,7 +16741,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f542d',
     color: '#ffffff',
     padding: '13px 18px',
-    borderRadius: 14,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 900,
     minHeight: 48,
@@ -16702,7 +16786,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#ffffff',
     color: '#173425',
     padding: '12px 14px',
-    borderRadius: 14,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 800,
     minHeight: 48,
@@ -16850,8 +16934,8 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto' as any,
     background: '#ffffff',
     border: '1px solid #d8cfc4',
-    borderRadius: 14,
-    boxShadow: '0 18px 45px rgba(0,0,0,0.14)',
+    borderRadius: 8,
+    boxShadow: '0 8px 18px rgba(0,0,0,0.10)',
     padding: 8,
     zIndex: 100,
   },
@@ -16918,22 +17002,22 @@ const styles: Record<string, React.CSSProperties> = {
   card: {
     background: 'white',
     border: '1px solid #d7dfd3',
-    borderRadius: 22,
-    padding: 24,
-    boxShadow: '0 10px 28px rgba(15,84,45,0.06)',
-    marginBottom: 18,
+    borderRadius: 8,
+    padding: 20,
+    boxShadow: 'none',
+    marginBottom: 16,
   },
   mobileCard: {
-    borderRadius: 24,
-    padding: 18,
-    marginBottom: 14,
-    boxShadow: '0 10px 30px rgba(15,84,45,0.08)',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    boxShadow: 'none',
   },
   sideCard: {
     background: '#eef3ea',
     border: '1px solid #d7dfd3',
-    borderRadius: 22,
-    padding: 24,
+    borderRadius: 8,
+    padding: 20,
     alignSelf: 'start',
   },
   healthGrid: {
@@ -16979,11 +17063,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
   },
   hero: {
-    background: 'linear-gradient(135deg,#0f542d,#07391f)',
+    background: '#173425',
     color: 'white',
-    padding: 28,
-    borderRadius: 24,
-    fontSize: 34,
+    padding: 24,
+    borderRadius: 8,
+    fontSize: 30,
     fontWeight: 900,
     marginBottom: 18,
   },
@@ -17006,7 +17090,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     minHeight: 52,
     padding: '14px 16px',
-    borderRadius: 16,
+    borderRadius: 8,
     border: '1px solid #d7dfd3',
     marginBottom: 12,
     boxSizing: 'border-box',
@@ -17068,7 +17152,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f542d',
     color: 'white',
     padding: '13px 18px',
-    borderRadius: 16,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 900,
     minHeight: 48,
@@ -17078,7 +17162,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'white',
     color: '#173425',
     padding: '13px 18px',
-    borderRadius: 16,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 900,
     minHeight: 48,
@@ -17088,7 +17172,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#f8faf7',
     color: '#173425',
     padding: '10px 14px',
-    borderRadius: 16,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 800,
     minHeight: 48,
@@ -17099,7 +17183,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f542d',
     color: 'white',
     padding: '13px 18px',
-    borderRadius: 16,
+    borderRadius: 8,
     cursor: 'pointer',
     fontWeight: 900,
     marginTop: 10,
@@ -17122,12 +17206,12 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 14,
   },
   column: {
-    borderRadius: 20,
-    padding: 18,
+    borderRadius: 8,
+    padding: 16,
     minHeight: 0,
   },
   mobileColumn: {
-    borderRadius: 24,
+    borderRadius: 8,
     padding: 12,
   },
   empty: {
@@ -17139,17 +17223,17 @@ const styles: Record<string, React.CSSProperties> = {
   requestCard: {
     background: 'white',
     border: '1px solid #d7dfd3',
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 8,
+    padding: 16,
     marginBottom: 14,
     maxWidth: 920,
   },
   mobileRequestCard: {
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: 8,
+    padding: 16,
     maxWidth: 'none',
     marginBottom: 12,
-    boxShadow: '0 8px 22px rgba(15,84,45,0.07)',
+    boxShadow: 'none',
   },
   mobileRequestTitle: {
     display: 'block',
@@ -17364,7 +17448,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     alignItems: 'center',
     minHeight: 30,
-    borderRadius: 999,
+    borderRadius: 8,
     background: '#e7f3e5',
     color: '#0f542d',
     padding: '6px 10px',
@@ -17376,7 +17460,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     alignItems: 'center',
     minHeight: 30,
-    borderRadius: 999,
+    borderRadius: 8,
     background: '#f4f1ec',
     color: '#5f6f63',
     padding: '6px 10px',
@@ -17388,7 +17472,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     alignItems: 'center',
     minHeight: 30,
-    borderRadius: 999,
+    borderRadius: 8,
     background: '#fde8df',
     color: '#8a2f12',
     padding: '6px 10px',
