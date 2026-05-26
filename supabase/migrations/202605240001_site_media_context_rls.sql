@@ -34,13 +34,13 @@ as $$
         from public.files f
         left join public.leads fl on fl.id = f.lead_id
         where f.id = target_source_file_id
+          and f.lead_id is not null
           and (
             target_lead_id is null
             or f.lead_id = target_lead_id
           )
           and (
             target_property_id is null
-            or f.linked_property_id = target_property_id
             or fl.property_id = target_property_id
           )
       )
