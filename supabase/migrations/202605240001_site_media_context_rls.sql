@@ -1,6 +1,8 @@
 -- Site media analysis rows inherit access from the referenced lead/property/file context.
 -- This keeps RLS enabled and prevents orphan media intelligence rows from being created
 -- unless an operational user can prove the row belongs to an existing work context.
+-- TODO: Add contractor read access in a later migration after contractor_assignments
+-- and its assignment helper functions are guaranteed to exist in production.
 
 create or replace function public.property_media_context_matches(
   target_property_id bigint,
@@ -75,14 +77,6 @@ as $$
     or (
       public.current_user_role() = 'estimator'
       and public.property_media_context_matches(target_property_id, target_lead_id, target_source_file_id)
-    )
-    or (
-      target_property_id is not null
-      and public.is_assigned_contractor_for_property(target_property_id)
-    )
-    or (
-      target_lead_id is not null
-      and public.is_assigned_contractor_for_work_request(target_lead_id)
     );
 $$;
 
@@ -166,14 +160,6 @@ as $$
         target_lead_id,
         target_source_file_id
       )
-    )
-    or (
-      target_property_id is not null
-      and public.is_assigned_contractor_for_property(target_property_id)
-    )
-    or (
-      target_lead_id is not null
-      and public.is_assigned_contractor_for_work_request(target_lead_id)
     );
 $$;
 
