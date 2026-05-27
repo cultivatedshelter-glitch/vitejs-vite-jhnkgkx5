@@ -6009,6 +6009,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function getBestWorkGroupResearchTask(request: WorkRequest, group: InspectionRepairBundleDraft) {
     const tasks = getWorkGroupResearchTasks(request, group)
+      .slice()
+      .sort((a, b) => Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || ''))
     return tasks.find((task) => task.answer_draft) || tasks[0] || null
   }
 
@@ -12775,8 +12777,10 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   }
 
   function renderWorkGroupResearchResources(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    const tasks = getWorkGroupResearchTasks(request, group)
     const task = getBestWorkGroupResearchTask(request, group)
     const sources = task ? agentResearchSourcesByTask[task.id] || [] : []
+    const historyTasks = task ? tasks.filter((item) => item.id !== task.id) : []
 
     if (!task) {
       return (
@@ -12784,47 +12788,109 @@ This will hide it from the dashboard without deleting linked estimates, files, m
       )
     }
 
-    const bestResourceNames = sources.slice(0, 3).map((source) => source.source_title).join(', ')
+    const bestResources = sources.slice(0, 3)
+    const isFireSuppression = /fire|sprinkler|suppression/i.test(`${group.title} ${group.system_category} ${group.recommended_trade}`)
+    const conclusion = isFireSuppression
+      ? 'Painted sprinkler heads may be a fire/life-safety issue requiring fire authority or sprinkler professional review.'
+      : (task.answer_draft || group.evidence_summary || group.summary || 'Draft research is available for admin review.').split('\n').find((line) => line.trim() && !/^Research Draft/i.test(line))?.replace(/^What we know:\s*/i, '') || 'Draft research is available for admin review.'
+    const nextSteps = isFireSuppression
+      ? [
+          'Contact TVF&R Fire Marshal.',
+          'Contact Wilsonville permit desk.',
+          'Request seller/HOA sprinkler documentation and photos.',
+        ]
+      : (task.recommended_next_action || 'Review source context. Confirm missing evidence. Route to qualified trade.')
+          .split(/(?:\.\s+|\n)/)
+          .map((step) => step.trim())
+          .filter(Boolean)
+          .slice(0, 3)
 
     return (
       <>
         <div style={styles.noticeBox}>
-          <strong>Research Draft</strong>
-          <p style={styles.small}>
-            <strong>What we know:</strong> {task.evidence_summary || group.evidence_summary || group.summary}
+          <div style={styles.buttonRow}>
+            <strong>Research Draft</strong>
+            <span style={getOperationalStatusStyle(task.status)}>{getLearningDisplayName(task.status)}</span>
+          </div>
+          <p style={{ ...styles.small, maxWidth: 720 }}>
+            <strong>What matters:</strong> {conclusion}
           </p>
-          <p style={styles.small}>
-            <strong>Best resources:</strong> {bestResourceNames || 'No source rows saved yet.'}
-          </p>
-          <p style={styles.small}>
-            <strong>Next 3 steps:</strong> {task.recommended_next_action || 'Run Research, then review the draft before use.'}
-          </p>
-          {task.answer_draft && <p style={styles.small}>{task.answer_draft}</p>}
-          <span style={styles.badgeMuted}>{getLearningDisplayName(task.status)}</span>
+          <div>
+            <strong style={styles.small}>Best resources</strong>
+            {bestResources.length === 0 ? (
+              <p style={styles.small}>No suggested resources saved yet.</p>
+            ) : (
+              <ul style={styles.smallList}>
+                {bestResources.map((source) => (
+                  <li key={`${task.id}-best-${source.id}`}>{source.source_title}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <strong style={styles.small}>Next steps</strong>
+            <ol style={styles.smallList}>
+              {nextSteps.map((step, index) => (
+                <li key={`${task.id}-step-${index}`}>{step.replace(/\.$/, '')}.</li>
+              ))}
+            </ol>
+          </div>
+          {hasAdminConsoleAccess && (
+            <div style={styles.buttonRow}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={agentResearchSavingId === task.id || task.status === 'human_verified'}
+                onClick={() => saveAgentResearchTask(task, { status: 'human_verified' })}
+              >
+                Human Verify
+              </button>
+              <button
+                type="button"
+                style={styles.linkButton}
+                disabled={agentResearchSavingId === task.id}
+                onClick={() => saveAgentResearchTask(task)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                style={styles.linkButton}
+                disabled={agentResearchSavingId === task.id || task.status === 'rejected'}
+                onClick={() => saveAgentResearchTask(task, { status: 'rejected' })}
+              >
+                Reject
+              </button>
+            </div>
+          )}
         </div>
-        {sources.length > 0 && (
-          <ul style={styles.smallList}>
-            {sources.map((source) => (
-              <li key={source.id}>
-                {source.source_url ? (
-                  <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
-                ) : (
-                  <span>{source.source_title}</span>
-                )}
-                {' '}({source.source_quality || 'unknown'}, {source.source_category || source.source_type})
-                {source.source_publisher && <> - {source.source_publisher}</>}
-                {(source.relevance_note || source.source_excerpt || source.excerpt) && (
-                  <>
-                    <br />
-                    <span style={styles.small}>{source.relevance_note || source.source_excerpt || source.excerpt}</span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
         <details style={styles.moreActions}>
-          <summary style={styles.moreActionsSummary}>Details</summary>
+          <summary style={styles.moreActionsSummary}>Show Sources / Details</summary>
+          {task.answer_draft && <p style={{ ...styles.small, whiteSpace: 'pre-wrap', maxWidth: 760 }}>{task.answer_draft}</p>}
+          {sources.length > 0 ? (
+            <ul style={styles.smallList}>
+              {sources.map((source) => (
+                <li key={source.id}>
+                  {source.source_url ? (
+                    <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                  ) : (
+                    <span>{source.source_title}</span>
+                  )}
+                  {' '}({source.source_quality || 'unknown'}, {source.source_category || source.source_type})
+                  {source.source_publisher && <> - {source.source_publisher}</>}
+                  {source.source_date_accessed && <> - accessed {new Date(source.source_date_accessed).toLocaleDateString()}</>}
+                  {(source.relevance_note || source.source_excerpt || source.excerpt) && (
+                    <>
+                      <br />
+                      <span style={styles.small}>{source.relevance_note || source.source_excerpt || source.excerpt}</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={styles.small}>No source rows saved for this draft.</p>
+          )}
           <p style={styles.small}>Online source search requested: {task.online_search_requested ? 'Yes' : 'No'}</p>
           <p style={styles.small}>Live online source search performed: {task.online_search_performed ? 'Yes' : 'No'}</p>
           <p style={styles.small}>Official sources used: {task.official_sources_used ? 'Yes' : 'No'}</p>
@@ -12834,34 +12900,38 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             <p style={styles.small}>Live online source search not performed.</p>
           )}
           {hasAdminConsoleAccess && (
-            <div style={styles.buttonRow}>
-              <button
-                type="button"
-                style={styles.outlineButton}
-                disabled={agentResearchSavingId === task.id}
-                onClick={() => saveAgentResearchTask(task)}
-              >
-                Save Answer
-              </button>
-              <button
-                type="button"
-                style={styles.outlineButton}
-                disabled={agentResearchSavingId === task.id || task.status === 'human_verified'}
-                onClick={() => saveAgentResearchTask(task, { status: 'human_verified' })}
-              >
-                Human Verify
-              </button>
-              <button
-                type="button"
-                style={styles.outlineButton}
-                disabled={agentResearchSavingId === task.id || task.status === 'rejected'}
-                onClick={() => saveAgentResearchTask(task, { status: 'rejected' })}
-              >
-                Reject
-              </button>
-            </div>
+            <textarea
+              style={{ ...styles.input, minHeight: 92 }}
+              defaultValue={task.answer_draft || ''}
+              placeholder="Edit research draft"
+              onBlur={(event) => saveAgentResearchTask(task, { answer_draft: event.target.value })}
+            />
           )}
         </details>
+        {historyTasks.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>History ({historyTasks.length})</summary>
+            <ul style={styles.smallList}>
+              {historyTasks.map((historyTask) => (
+                <li key={`history-${historyTask.id}`}>
+                  {getLearningDisplayName(historyTask.status)} - {getResearchAnswerSummary(historyTask)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {getArchivedResearchTasks(request).filter((historyTask) => historyTask.evidence_id === `work-group:${group.id}`).length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Rejected / Archived</summary>
+            <ul style={styles.smallList}>
+              {getArchivedResearchTasks(request)
+                .filter((historyTask) => historyTask.evidence_id === `work-group:${group.id}`)
+                .map((historyTask) => (
+                  <li key={`archived-research-${historyTask.id}`}>{historyTask.question}</li>
+                ))}
+            </ul>
+          </details>
+          )}
       </>
     )
   }
@@ -13044,11 +13114,14 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     <details style={styles.moreActions}>
                       <summary style={styles.moreActionsSummary}>Resources</summary>
                       {(group.resource_categories || []).length > 0 && (
+                        <>
+                        <p style={styles.small}>{Math.min(3, group.resource_categories.length)} suggested resources</p>
                         <ul style={styles.smallList}>
-                          {(group.resource_categories || []).map((category, index) => (
+                          {(group.resource_categories || []).slice(0, 3).map((category, index) => (
                             <li key={`${group.id}-resource-${index}`}>{category}</li>
                           ))}
                         </ul>
+                        </>
                       )}
                       {renderWorkGroupResearchResources(request, group)}
                     </details>
