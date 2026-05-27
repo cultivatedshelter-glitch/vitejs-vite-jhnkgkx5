@@ -100,6 +100,18 @@ Use UI language such as Estimate Range, Request Paid Contractor Bid, Shelter Pre
 
 Contractor approval statuses should support pending_review, approved, suspended, rejected, and expired_credentials. Contractor credential records should support license_number, license_state, license_expiration, bonded_status, insurance_status, insurance_expiration, verified_at, verified_by, service_area, approved_trades, and notes.
 
+## Admin Research Confirmation Links
+
+When a work group, finding, estimate assumption, material assumption, permit question, code question, safety issue, manufacturer issue, or contractor scope note needs verification, admin must have source links available for research confirmation.
+
+Consumer reports get clean Helpful Resources. Admin review gets Research Confirmation Links.
+
+Source Research tasks should return admin-facing confirmation links when sources are available, even when a source is not approved for a consumer report. If no source links are found, show: "No confirmation links found yet. Run additional research or add source manually."
+
+Admins can manually add source links and review them with confirmation status: not_reviewed, confirms, partially_supports, does_not_support, or needs_more_research. Admins can set report visibility: internal_only, report_candidate, report_approved, report_hidden, or rejected.
+
+Only report_approved links may appear in consumer Helpful Resources. Internal-only, hidden, rejected, and unreviewed links must stay out of consumer reports. Do not allow AI to human-verify a finding based only on general web sources; prefer official, manufacturer, supplier, internal verified, or jurisdiction sources.
+
 ## Material Compatibility + Field Finish Memory
 
 Shelter Prep should capture field-tested material compatibility lessons as human-verified operational memory, not generic product advice.

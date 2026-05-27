@@ -215,6 +215,50 @@ Contractor credential fields should support:
 - approved_trades.
 - notes.
 
+## Admin Research Confirmation Links
+
+Shelter Prep must keep source confirmation available for admin review without turning consumer reports into research machinery. When a work group, finding, estimate assumption, material assumption, permit question, code question, safety issue, manufacturer issue, or contractor scope note needs verification, admins should see Research Confirmation Links.
+
+Purpose:
+
+- Help admins quickly verify the basis of an AI Draft before Human Verify.
+- Preserve internal proof links even when they are not appropriate for consumer-facing reports.
+- Keep consumer reports clean by showing only approved Helpful Resources.
+
+Source confirmation fields:
+
+- source_title.
+- source_url.
+- publisher.
+- source_category.
+- source_quality.
+- relevance_note.
+- admin_confirmation_status: not_reviewed, confirms, partially_supports, does_not_support, needs_more_research.
+- report_visibility: internal_only, report_candidate, report_approved, report_hidden, rejected.
+- consumer_summary.
+- admin_notes.
+- checked_at.
+- checked_by.
+
+Rules:
+
+- Source Research tasks should return admin-facing confirmation links when sources are available.
+- Admin confirmation links may be shown internally even if they are not approved for the consumer report.
+- If no links are found, show: "No confirmation links found yet. Run additional research or add source manually."
+- Admin can manually add a source link with title, publisher, relevance note, category, confirmation status, and report visibility.
+- Consumer reports only show report_approved links under Helpful Resources.
+- Internal-only, hidden, rejected, and unreviewed links never appear in consumer reports.
+- Do not allow AI to Human Verify based only on general web sources. General web may support context, but official, manufacturer, supplier, jurisdiction, and internal verified sources are preferred.
+
+Category preferences:
+
+- Fire/life safety: fire marshal, fire district, city permit office, official safety resources.
+- Electrical: city/county/state electrical permit resources, official code guidance where available, manufacturer installation manuals when relevant.
+- Roofing/water intrusion: roofer verification, manufacturer/installation guidance, and building department permit guidance when applicable.
+- Plumbing: permit office, licensed plumber verification, manufacturer guidance.
+- Materials/parts: manufacturer, supplier, or product spec pages as reference only.
+- Jurisdiction/code: official jurisdiction sources.
+
 ## Material Compatibility + Field Finish Memory
 
 Shelter Prep should learn from real field outcomes when material compatibility, prep method, lighting, and finish behavior affect the job. This is not generic product advice. It is human-verified operational memory tied first to the property, room, substrate, product, photos, and observed result.

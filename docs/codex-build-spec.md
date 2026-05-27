@@ -202,6 +202,39 @@ Contractor credential fields:
 - approved_trades.
 - notes.
 
+### Admin Research Confirmation Links
+
+Build Source Research so admins always have proof links available when an AI Draft needs verification. This applies to work groups, findings, estimate assumptions, material assumptions, permit/code questions, safety issues, manufacturer issues, and contractor scope notes.
+
+Admin review uses Research Confirmation Links. Consumer reports use Helpful Resources.
+
+Data fields on source records:
+
+- source_title.
+- source_url.
+- publisher / source_publisher.
+- source_category.
+- source_quality.
+- relevance_note.
+- admin_confirmation_status: not_reviewed, confirms, partially_supports, does_not_support, needs_more_research.
+- report_visibility: internal_only, report_candidate, report_approved, report_hidden, rejected.
+- consumer_summary.
+- admin_notes.
+- checked_at.
+- checked_by.
+
+Implementation rules:
+
+- Every Source Research task should show admin-facing confirmation links when source rows exist.
+- If no links exist, show: "No confirmation links found yet. Run additional research or add source manually."
+- Admin can manually add a confirmation link and choose category, confirmation status, and report visibility.
+- Admin can mark a source as confirming, partially supporting, not supporting, or needing more research.
+- Consumer Helpful Resources must include only report_approved links.
+- Internal-only links must never appear in consumer reports.
+- Do not dump excerpts or technical flags by default. Put raw excerpts, source metadata, and technical details behind Show Details.
+- Do not allow AI to Human Verify a finding based only on general web sources.
+- Prefer official/jurisdiction sources for code and permit questions, fire authority resources for life safety, manufacturer documentation for products, supplier pages as reference only, and internal verified records where available.
+
 ### Material Compatibility + Field Finish Memory
 
 Material Compatibility + Field Finish Memory records field-tested lessons about how a product behaved on a substrate under real site conditions. Build this as operational memory, not generic product advice and not a broad recommendation engine.

@@ -398,6 +398,8 @@ type AgentResearchScope =
   | 'Online resources allowed'
   | 'Building code / jurisdiction resources'
 type AgentResearchSourceType = 'uploaded_file' | 'property_record' | 'building_code' | 'supplier' | 'web' | 'manual'
+type SourceConfirmationStatus = 'not_reviewed' | 'confirms' | 'partially_supports' | 'does_not_support' | 'needs_more_research'
+type SourceReportVisibility = 'internal_only' | 'report_candidate' | 'report_approved' | 'report_hidden' | 'rejected'
 type AgentResearchCategory =
   | 'Building code / jurisdiction'
   | 'Parts / materials'
@@ -493,7 +495,7 @@ type AgentResearchSource = {
   source_title: string
   source_url?: string | null
   source_type: AgentResearchSourceType
-  source_category?: AgentResearchCategory | null
+  source_category?: string | null
   source_quality?: AgentResearchSourceQuality | null
   source_publisher?: string | null
   source_excerpt?: string | null
@@ -501,6 +503,12 @@ type AgentResearchSource = {
   relevance_note?: string | null
   excerpt?: string | null
   confidence?: PropertyMediaConfidence | null
+  admin_confirmation_status?: SourceConfirmationStatus | null
+  report_visibility?: SourceReportVisibility | null
+  consumer_summary?: string | null
+  admin_notes?: string | null
+  checked_at?: string | null
+  checked_by?: string | null
   created_at?: string | null
 }
 
@@ -820,6 +828,20 @@ const AGENT_RESEARCH_CATEGORIES: AgentResearchCategory[] = [
   'Internal Shelter Prep memory',
   'Property history',
   'General web',
+]
+const SOURCE_CONFIRMATION_STATUSES: SourceConfirmationStatus[] = [
+  'not_reviewed',
+  'confirms',
+  'partially_supports',
+  'does_not_support',
+  'needs_more_research',
+]
+const SOURCE_REPORT_VISIBILITIES: SourceReportVisibility[] = [
+  'internal_only',
+  'report_candidate',
+  'report_approved',
+  'report_hidden',
+  'rejected',
 ]
 const AGENT_RESEARCH_QUESTION_TYPES: AgentResearchQuestionType[] = [
   'code / jurisdiction',
@@ -4171,6 +4193,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [agentResearchSourcesByTask, setAgentResearchSourcesByTask] = useState<Record<string, AgentResearchSource[]>>({})
   const [agentResearchDraftsByFinding, setAgentResearchDraftsByFinding] = useState<Record<string, AgentResearchQuestionDraft>>({})
   const [agentResearchSavingId, setAgentResearchSavingId] = useState<string | null>(null)
+  const [researchSourceSavingId, setResearchSourceSavingId] = useState<string | null>(null)
   const [noteResearchDraftsByNote, setNoteResearchDraftsByNote] = useState<Record<string, SourceResearchSetupDraft>>({})
   const [openNoteResearchByNote, setOpenNoteResearchByNote] = useState<Record<string, boolean>>({})
   const [sourceResearchMessagesByRequest, setSourceResearchMessagesByRequest] = useState<Record<string, string>>({})
@@ -6172,6 +6195,112 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       authorLabel: 'Admin',
     })
     await runAgentResearchTask(request, finding, task)
+  }
+
+  function updateLocalAgentResearchSource(source: AgentResearchSource) {
+    setAgentResearchSourcesByTask((prev) => ({
+      ...prev,
+      [source.research_task_id]: (prev[source.research_task_id] || []).map((item) =>
+        item.id === source.id ? source : item
+      ),
+    }))
+  }
+
+  async function saveAgentResearchSource(source: AgentResearchSource, changes: Partial<AgentResearchSource>) {
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admin or owner can review research confirmation links.')
+      return
+    }
+
+    const patch = {
+      ...changes,
+      checked_at: new Date().toISOString(),
+      checked_by: currentUserId,
+    }
+
+    setResearchSourceSavingId(source.id)
+    try {
+      updateLocalAgentResearchSource({ ...source, ...patch })
+      const { data, error } = await supabase
+        .from('agent_research_sources')
+        .update(patch)
+        .eq('id', source.id)
+        .select()
+        .single()
+
+      if (error) throw error
+      updateLocalAgentResearchSource(data as AgentResearchSource)
+    } catch (error: any) {
+      console.error('[Research Confirmation] Source update error:', error)
+      alert(error?.message || 'Could not update research confirmation link.')
+      setAgentResearchSourcesByTask((prev) => ({ ...prev }))
+    } finally {
+      setResearchSourceSavingId(null)
+    }
+  }
+
+  async function addManualResearchSource(task: AgentResearchTask) {
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admin or owner can add research confirmation links.')
+      return
+    }
+
+    const sourceUrl = window.prompt('Source URL')
+    if (!sourceUrl?.trim()) return
+    const sourceTitle = window.prompt('Source title', sourceUrl.trim()) || sourceUrl.trim()
+    const publisher = window.prompt('Publisher', '') || ''
+    const relevanceNote = window.prompt('Relevance note', 'Why this source matters for admin confirmation.') || ''
+    const categoryInput = window.prompt('Source category', 'Property history') || 'Property history'
+    const confirmationInput = window.prompt('Confirmation status: not_reviewed, confirms, partially_supports, does_not_support, needs_more_research', 'not_reviewed') || 'not_reviewed'
+    const visibilityInput = window.prompt('Report visibility: internal_only, report_candidate, report_approved, report_hidden, rejected', 'internal_only') || 'internal_only'
+    const admin_confirmation_status = SOURCE_CONFIRMATION_STATUSES.includes(confirmationInput as SourceConfirmationStatus)
+      ? confirmationInput as SourceConfirmationStatus
+      : 'not_reviewed'
+    const report_visibility = SOURCE_REPORT_VISIBILITIES.includes(visibilityInput as SourceReportVisibility)
+      ? visibilityInput as SourceReportVisibility
+      : 'internal_only'
+
+    const record = {
+      research_task_id: task.id,
+      source_title: sourceTitle.trim(),
+      source_url: sourceUrl.trim(),
+      source_type: 'manual' as AgentResearchSourceType,
+      source_category: categoryInput.trim(),
+      source_quality: 'unknown' as AgentResearchSourceQuality,
+      source_publisher: publisher.trim() || null,
+      source_excerpt: null,
+      source_date_accessed: new Date().toISOString(),
+      relevance_note: relevanceNote.trim() || null,
+      excerpt: null,
+      confidence: 'low' as PropertyMediaConfidence,
+      admin_confirmation_status,
+      report_visibility,
+      consumer_summary: null,
+      admin_notes: null,
+      checked_at: new Date().toISOString(),
+      checked_by: currentUserId,
+    }
+
+    setResearchSourceSavingId(`new-${task.id}`)
+    try {
+      const { data, error } = await supabase
+        .from('agent_research_sources')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+      const saved = data as AgentResearchSource
+      setAgentResearchSourcesByTask((prev) => ({
+        ...prev,
+        [task.id]: [saved, ...(prev[task.id] || [])],
+      }))
+    } catch (error: any) {
+      console.error('[Research Confirmation] Manual source insert error:', error)
+      alert(error?.message || 'Could not add research confirmation link.')
+    } finally {
+      setResearchSourceSavingId(null)
+    }
   }
 
   function getWorkGroupResearchTasks(request: WorkRequest, group: InspectionRepairBundleDraft) {
@@ -12829,6 +12958,22 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return (agentResearchTasksByRequest[request.id] || []).filter(isRejectedResearchTask)
   }
 
+  function getReportApprovedHelpfulResources(request: WorkRequest | null | undefined) {
+    if (!request) return []
+    const requestTasks = agentResearchTasksByRequest[request.id] || []
+    const findingTasks = (siteMediaFindingsByRequest[request.id] || [])
+      .flatMap((finding) => agentResearchTasksByFinding[finding.id] || [])
+    const approvedSources = [...requestTasks, ...findingTasks]
+      .flatMap((task) => agentResearchSourcesByTask[task.id] || [])
+      .filter((source) => source.report_visibility === 'report_approved')
+    const unique = new Map<string, AgentResearchSource>()
+    approvedSources.forEach((source) => {
+      const key = `${source.source_url || ''}|${source.source_title}`.toLowerCase()
+      if (!unique.has(key)) unique.set(key, source)
+    })
+    return Array.from(unique.values())
+  }
+
   function isBerlinAveRequest(request: WorkRequest) {
     const text = [
       request.propertyAddress,
@@ -12936,6 +13081,166 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     )
   }
 
+  function getSourceConfirmationStyle(source: AgentResearchSource) {
+    const status = source.admin_confirmation_status || 'not_reviewed'
+    if (status === 'confirms') return styles.badge
+    if (status === 'does_not_support') return styles.badgeDanger
+    return styles.badgeMuted
+  }
+
+  function renderResearchConfirmationLinks(task: AgentResearchTask, sources: AgentResearchSource[]) {
+    const visibleSources = sources.slice(0, 5)
+    const detailsSources = sources.length > 5 ? sources.slice(5) : []
+
+    return (
+      <div style={styles.noticeBox}>
+        <div style={styles.buttonRow}>
+          <strong>Research Confirmation</strong>
+          {hasAdminConsoleAccess && (
+            <button
+              type="button"
+              style={styles.linkButton}
+              disabled={researchSourceSavingId === `new-${task.id}`}
+              onClick={() => addManualResearchSource(task)}
+            >
+              Add Link
+            </button>
+          )}
+        </div>
+        {visibleSources.length === 0 ? (
+          <p style={styles.small}>No confirmation links found yet. Run additional research or add source manually.</p>
+        ) : (
+          <div style={styles.revealItemList}>
+            {visibleSources.map((source) => (
+              <div key={source.id} style={styles.revealLineItem}>
+                <div style={styles.buttonRow}>
+                  <div style={{ flex: 1 }}>
+                    <strong>
+                      {source.source_url ? (
+                        <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                      ) : (
+                        source.source_title
+                      )}
+                    </strong>
+                    <small>{source.source_publisher || source.source_quality || 'Source'} · {source.source_category || source.source_type}</small>
+                  </div>
+                  <span style={getSourceConfirmationStyle(source)}>
+                    {getLearningDisplayName(source.admin_confirmation_status || 'not_reviewed')}
+                  </span>
+                </div>
+                {source.relevance_note && <p style={styles.small}>{source.relevance_note}</p>}
+                {hasAdminConsoleAccess && (
+                  <div style={styles.buttonRow}>
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={researchSourceSavingId === source.id}
+                      onClick={() => saveAgentResearchSource(source, { admin_confirmation_status: 'confirms' })}
+                    >
+                      Confirms
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={researchSourceSavingId === source.id}
+                      onClick={() => saveAgentResearchSource(source, { admin_confirmation_status: 'partially_supports' })}
+                    >
+                      Partial
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={researchSourceSavingId === source.id}
+                      onClick={() => saveAgentResearchSource(source, { admin_confirmation_status: 'does_not_support' })}
+                    >
+                      Does Not Support
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={researchSourceSavingId === source.id}
+                      onClick={() => saveAgentResearchSource(source, { report_visibility: 'report_approved' })}
+                    >
+                      Include in Report
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={researchSourceSavingId === source.id}
+                      onClick={() => saveAgentResearchSource(source, { report_visibility: 'internal_only' })}
+                    >
+                      Internal Only
+                    </button>
+                  </div>
+                )}
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Show Details</summary>
+                  <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                    <select
+                      style={styles.input}
+                      value={source.admin_confirmation_status || 'not_reviewed'}
+                      disabled={!hasAdminConsoleAccess}
+                      onChange={(event) => saveAgentResearchSource(source, { admin_confirmation_status: event.target.value as SourceConfirmationStatus })}
+                    >
+                      {SOURCE_CONFIRMATION_STATUSES.map((status) => (
+                        <option key={status} value={status}>{getLearningDisplayName(status)}</option>
+                      ))}
+                    </select>
+                    <select
+                      style={styles.input}
+                      value={source.report_visibility || 'internal_only'}
+                      disabled={!hasAdminConsoleAccess}
+                      onChange={(event) => saveAgentResearchSource(source, { report_visibility: event.target.value as SourceReportVisibility })}
+                    >
+                      {SOURCE_REPORT_VISIBILITIES.map((visibility) => (
+                        <option key={visibility} value={visibility}>{getLearningDisplayName(visibility)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p style={styles.small}>Quality: {source.source_quality || 'unknown'} · Type: {source.source_type} · Publisher: {source.source_publisher || 'Not listed'}</p>
+                  {source.source_date_accessed && <p style={styles.small}>Accessed: {new Date(source.source_date_accessed).toLocaleDateString()}</p>}
+                  {(source.source_excerpt || source.excerpt) && <p style={styles.small}>{source.source_excerpt || source.excerpt}</p>}
+                  {hasAdminConsoleAccess && (
+                    <>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 68 }}
+                        defaultValue={source.consumer_summary || ''}
+                        placeholder="Consumer summary, if approved for Helpful Resources"
+                        onBlur={(event) => saveAgentResearchSource(source, { consumer_summary: event.target.value })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 68 }}
+                        defaultValue={source.admin_notes || ''}
+                        placeholder="Admin source review notes"
+                        onBlur={(event) => saveAgentResearchSource(source, { admin_notes: event.target.value })}
+                      />
+                    </>
+                  )}
+                </details>
+              </div>
+            ))}
+          </div>
+        )}
+        {detailsSources.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>More confirmation links ({detailsSources.length})</summary>
+            <ul style={styles.smallList}>
+              {detailsSources.map((source) => (
+                <li key={`extra-source-${source.id}`}>
+                  {source.source_url ? (
+                    <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                  ) : (
+                    source.source_title
+                  )} · {getLearningDisplayName(source.admin_confirmation_status || 'not_reviewed')}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    )
+  }
+
   function renderWorkGroupResearchResources(request: WorkRequest, group: InspectionRepairBundleDraft) {
     const tasks = getWorkGroupResearchTasks(request, group)
     const task = getBestWorkGroupResearchTask(request, group)
@@ -13024,6 +13329,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             </div>
           )}
         </div>
+        {renderResearchConfirmationLinks(task, sources)}
         <details style={styles.moreActions}>
           <summary style={styles.moreActionsSummary}>Show Sources / Details</summary>
           {task.answer_draft && <p style={{ ...styles.small, whiteSpace: 'pre-wrap', maxWidth: 760 }}>{task.answer_draft}</p>}
@@ -14118,30 +14424,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                                     <strong>Source priority:</strong> {task.source_priority}
                                   </p>
                                 )}
-                                <strong>Sources</strong>
-                                {sources.length === 0 ? (
-                                  <p style={styles.small}>No source rows saved for this answer.</p>
-                                ) : (
-                                  <ul style={styles.smallList}>
-                                    {sources.map((source) => (
-                                      <li key={source.id}>
-                                        {source.source_url ? (
-                                          <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
-                                        ) : (
-                                          <span>{source.source_title}</span>
-                                        )}
-                                        {' '}({source.source_type}, {source.confidence || 'low'} confidence)
-                                        {source.source_quality && <> - {source.source_quality}</>}
-                                        {source.excerpt && (
-                                          <>
-                                            <br />
-                                            <span style={styles.small}>{source.excerpt}</span>
-                                          </>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
+                                {renderResearchConfirmationLinks(task, sources)}
                               </details>
                             )}
 
@@ -16289,21 +16572,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                                               Online research was requested, but no live source search has been performed yet. This draft uses uploaded/property/admin-note context only.
                                             </p>
                                           )}
-                                          {sources.length > 0 && (
-                                            <ul style={styles.smallList}>
-                                              {sources.map((source) => (
-                                                <li key={source.id}>
-                                                  {source.source_url ? (
-                                                    <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
-                                                  ) : (
-                                                    <span>{source.source_title}</span>
-                                                  )}
-                                                  {' '}({source.source_type}, {source.source_quality || 'unknown'})
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          )}
-                                          {sources.length === 0 && <p style={styles.small}>Source list: no source rows saved yet.</p>}
+                                          {renderResearchConfirmationLinks(task, sources)}
                                         </div>
                                       </details>
                                       <div style={styles.buttonRow}>
@@ -16878,6 +17147,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                           : 'Disabled until human verified'}
                       </strong>
                     </div>
+                    <details style={styles.moreActions}>
+                      <summary style={styles.moreActionsSummary}>Helpful Resources</summary>
+                      {getReportApprovedHelpfulResources(sellerPrepSelectedRequest).length === 0 ? (
+                        <p style={styles.small}>No report-approved Helpful Resources yet.</p>
+                      ) : (
+                        <ul style={styles.smallList}>
+                          {getReportApprovedHelpfulResources(sellerPrepSelectedRequest).map((source) => (
+                            <li key={`helpful-resource-${source.id}`}>
+                              {source.source_url ? (
+                                <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                              ) : (
+                                source.source_title
+                              )}
+                              {source.consumer_summary ? ` - ${source.consumer_summary}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </details>
                   </div>
                 )}
 
