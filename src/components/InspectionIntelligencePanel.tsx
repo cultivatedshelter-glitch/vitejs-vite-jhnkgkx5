@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, type CompactReviewPacket } from '../inspectionIntelligence'
 import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../inspectionIntelligence'
 
 type Styles = Record<string, CSSProperties>
@@ -24,6 +25,41 @@ export function ReviewStatusBadge({
   getStatusLabel: (value?: string | null) => string
 }) {
   return <span style={styles.badgeMuted}>{getStatusLabel(status)}</span>
+}
+
+function ReviewPacketSummary({
+  packet,
+  bundle,
+  styles,
+}: {
+  packet?: CompactReviewPacket | null
+  bundle: InspectionRepairBundleDraft
+  styles: Styles
+}) {
+  if (!packet) return null
+  const laneLabel = packet.review_lane === 'extended' ? 'Extended' : packet.review_lane === 'deep' ? 'Deep' : 'Standard'
+  const targetLabel = bundle.target_review_time_seconds && bundle.target_review_time_seconds >= 172800
+    ? 'Target 1-2 business days'
+    : bundle.target_review_time_seconds && bundle.target_review_time_seconds >= 600
+      ? 'Target up to 10 min'
+      : 'Target under 320 sec'
+
+  return (
+    <div style={styles.noticeBox}>
+      <div style={styles.buttonRow}>
+        <span style={packet.review_lane === 'extended' ? styles.badgeDanger : styles.badgeMuted}>{laneLabel}</span>
+        <span style={styles.badgeMuted}>{targetLabel}</span>
+        <span style={styles.badgeMuted}>{packet.confidence} confidence</span>
+        <span style={styles.badgeMuted}>{packet.source_reference_count} refs</span>
+      </div>
+      {bundle.packet_warning && <p style={styles.small}>{bundle.packet_warning}</p>}
+      {packet.review_lane === 'extended' && <p style={styles.small}>{bundle.extended_review_message || EXTENDED_REVIEW_CUSTOMER_MESSAGE}</p>}
+      <p style={styles.small}><strong>What matters:</strong> {packet.what_matters}</p>
+      {packet.missing_info.length > 0 && <p style={styles.small}><strong>Missing info:</strong> {packet.missing_info.join(' ')}</p>}
+      <p style={styles.small}><strong>Next action:</strong> {packet.suggested_next_action}</p>
+      <p style={styles.small}><strong>Sources:</strong> {packet.source_reference_count} short reference{packet.source_reference_count === 1 ? '' : 's'} available.</p>
+    </div>
+  )
 }
 
 export function InspectionSummarySection({ intelligence, styles, getStatusLabel }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
@@ -216,6 +252,11 @@ export function AddressWorkGroupsSection({
       <div style={styles.inspectionTaskGrid}>
         {activeBundles.map((bundle) => (
           <div key={bundle.id} style={styles.inspectionTaskCard}>
+            <ReviewPacketSummary
+              packet={bundle.compact_review_packet || applyReviewPacketToBundle(bundle, intelligence.propertyAddress).compact_review_packet}
+              bundle={bundle.compact_review_packet ? bundle : applyReviewPacketToBundle(bundle, intelligence.propertyAddress)}
+              styles={styles}
+            />
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
                 <strong>{bundle.title}</strong>
@@ -223,6 +264,8 @@ export function AddressWorkGroupsSection({
               </div>
               <span style={styles.badgeMuted}>{bundle.priority}</span>
             </div>
+            <details style={styles.moreActions}>
+              <summary style={styles.moreActionsSummary}>Show Audit Details</summary>
             <p style={styles.small}>Trade: {bundle.recommended_trade}</p>
             <p style={styles.small}>Next action: {bundle.recommended_next_action || 'Review before use.'}</p>
             <details style={styles.moreActions}>
@@ -310,9 +353,10 @@ export function AddressWorkGroupsSection({
                   </ul>
                 </details>
               )}
-              {(bundle.resource_categories || []).length > 0 && (
-                <details style={styles.moreActions}>
-                  <summary style={styles.moreActionsSummary}>Resources</summary>
+            </details>
+            {(bundle.resource_categories || []).length > 0 && (
+              <details style={styles.moreActions}>
+                <summary style={styles.moreActionsSummary}>Show Full Sources</summary>
                   <ul style={styles.smallList}>
                     {(bundle.resource_categories || []).map((item, index) => (
                       <li key={`${bundle.id}-resource-${index}`}>{item}</li>

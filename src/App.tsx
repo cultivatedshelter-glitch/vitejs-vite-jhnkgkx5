@@ -7,15 +7,21 @@ import {
   type EstimateIntelligenceResult,
 } from './estimateIntelligence'
 import {
+  EXTENDED_REVIEW_CUSTOMER_MESSAGE,
+  REVIEW_PACKET_SIZE_LIMIT_BYTES,
+  applyReviewPacketToBundle,
   buildBerlinAveWorkGroups,
   buildInspectionIntelligenceDraft,
   buildRepairBundles,
+  createReviewPacketMetadata,
   extractInspectionDate,
   extractInspectionFindings,
   type InspectionDraftStatus,
   type InspectionIntelligenceDraft,
   type InspectionRepairBundleDraft,
   type InspectionRepairItemDraft,
+  type CompactReviewPacket,
+  type ReviewLane,
 } from './inspectionIntelligence'
 import { InspectionIntelligencePanel } from './components/InspectionIntelligencePanel'
 
@@ -368,6 +374,7 @@ type SourceLessonDraft = Omit<SourceLesson, 'id' | 'created_at' | 'created_by' |
 type PropertyMediaReviewStatus =
   | 'ai_draft'
   | 'needs_review'
+  | 'in_review'
   | 'needs_more_info'
   | 'research_requested'
   | 'research_drafted'
@@ -411,8 +418,34 @@ type AgentResearchCategory =
   | 'Property history'
   | 'General web'
 type AgentResearchSourceQuality = 'official' | 'manufacturer' | 'supplier' | 'internal_memory' | 'general_web' | 'unknown'
+type FastReviewStatus =
+  | 'ai_draft'
+  | 'needs_review'
+  | 'in_review'
+  | 'needs_more_info'
+  | 'research_requested'
+  | 'human_verified'
+  | 'rejected'
+  | 'deprecated'
 
-type PropertyMediaAnalysis = {
+type ReviewPacketMetadataFields = {
+  review_lane?: ReviewLane | null
+  review_status?: FastReviewStatus | null
+  target_review_time_seconds?: number | null
+  review_started_at?: string | null
+  review_due_at?: string | null
+  reviewed_at?: string | null
+  reviewed_by?: string | null
+  packet_size_bytes?: number | null
+  packet_warning?: string | null
+  packet_version?: string | null
+  source_reference_count?: number | null
+  compact_review_packet?: CompactReviewPacket | null
+  full_source_refs?: Array<Record<string, unknown>> | null
+  extended_review_message?: string | null
+}
+
+type PropertyMediaAnalysis = ReviewPacketMetadataFields & {
   id: string
   created_at?: string | null
   updated_at?: string | null
@@ -431,7 +464,7 @@ type PropertyMediaAnalysis = {
   admin_notes?: string | null
 }
 
-type PropertyMediaFinding = {
+type PropertyMediaFinding = ReviewPacketMetadataFields & {
   id: string
   created_at?: string | null
   updated_at?: string | null
@@ -452,7 +485,7 @@ type PropertyMediaFinding = {
   admin_notes: string
 }
 
-type AgentResearchTask = {
+type AgentResearchTask = ReviewPacketMetadataFields & {
   id: string
   property_id?: string | number | null
   lead_id?: string | null
@@ -633,7 +666,9 @@ type CuratedLessonIntakeDraft = {
 type LessonExtractionResult = {
   status?: string
   error?: string
-  transcriptSource?: 'pasted' | 'youtube' | 'unavailable'
+  errorCode?: string
+  warning?: string
+  transcriptSource?: 'pasted' | 'youtube' | 'fallback' | 'unavailable'
   draft?: {
     lesson_summary?: string
     operational_meaning?: string
@@ -5513,6 +5548,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       confidence: 'low' as PropertyMediaConfidence,
       review_status: 'ai_draft' as PropertyMediaReviewStatus,
       admin_notes: 'Created from uploaded property media. No outside image source used.',
+      ...createReviewPacketMetadata({
+        propertyAddress: request.propertyAddress,
+        title: file?.name || 'Uploaded media analysis',
+        tradeCategory: file?.type === 'document' ? 'Document evidence' : 'Photo evidence',
+        priority: 'Needs review',
+        whatMatters: 'Uploaded evidence is stored in full; reviewer should confirm only the summarized interpretation.',
+        evidenceSummary: file?.name ? `Linked uploaded file: ${file.name}` : 'Manual media analysis.',
+        missingInfo: ['Confirm visible condition, work area, quantity, and trade route.'],
+        nextAction: 'Review linked evidence and create or verify findings.',
+        sourceReferenceCount: sourceFileId ? 1 : 0,
+        confidence: 'low',
+      }),
     }
 
     const { data, error } = await supabase
@@ -5741,6 +5788,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verified_for_memory: false,
         created_by: currentUserId,
       }
+      Object.assign(record, buildResearchReviewPacket(request, record as AgentResearchTask))
 
       const { data, error } = await supabase
         .from('agent_research_tasks')
@@ -5804,6 +5852,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verified_for_memory: false,
         created_by: currentUserId,
       }
+      Object.assign(record, buildResearchReviewPacket(request, record as AgentResearchTask))
 
       const { data, error } = await supabase
         .from('agent_research_tasks')
@@ -5991,6 +6040,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         source_priority: draft.sourcePriority,
         updated_at: new Date().toISOString(),
       }
+      Object.assign(patch, buildResearchReviewPacket(request, { ...task, ...patch } as AgentResearchTask, draft.sources.map((source, index) => ({
+        id: `draft-source-${index}`,
+        research_task_id: task.id,
+        ...source,
+      }))))
 
       const { data, error } = await supabase
         .from('agent_research_tasks')
@@ -6074,6 +6128,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verified_for_memory: false,
         created_by: currentUserId,
       }
+      Object.assign(record, buildResearchReviewPacket(request, record as AgentResearchTask))
 
       const { data, error } = await supabase
         .from('agent_research_tasks')
@@ -6568,6 +6623,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     setAgentResearchSavingId(task.id)
     try {
+      const reviewStartedAt = statusChanged && next.status === 'researching' ? new Date().toISOString() : undefined
+      const packetMetadata = buildResearchReviewPacket(findingRequestContext(next.lead_id || ''), next, agentResearchSourcesByTask[next.id] || [])
       const patch = {
         question: next.question,
         question_type: next.question_type,
@@ -6589,6 +6646,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         answer_status: next.answer_status || next.status,
         source_priority: next.source_priority || '',
         verified_for_memory: Boolean(next.verified_for_memory),
+        ...packetMetadata,
+        ...(reviewStartedAt ? { review_started_at: reviewStartedAt, review_due_at: getReviewDueAt(reviewStartedAt, packetMetadata.target_review_time_seconds) } : {}),
         ...(statusChanged && verifying ? { reviewed_by: currentUserId, reviewed_at: new Date().toISOString() } : {}),
         ...(statusChanged && next.status === 'needs_review' ? { reviewed_by: null, reviewed_at: null } : {}),
       }
@@ -6636,6 +6695,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         review_status: 'needs_review' as PropertyMediaReviewStatus,
         admin_notes: 'Draft finding created from existing uploaded media only.',
       }
+      Object.assign(record, buildFindingReviewPacket(request, record as PropertyMediaFinding))
 
       const { data, error } = await supabase
         .from('property_media_findings')
@@ -6674,6 +6734,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     setSiteMediaSavingId(finding.id)
     try {
+      const reviewStartedAt = statusChanged && next.review_status === 'in_review' ? new Date().toISOString() : undefined
+      const packetMetadata = buildFindingReviewPacket(findingRequestContext(next.lead_id || ''), next, agentResearchTasksByFinding[next.id]?.flatMap((task) => agentResearchSourcesByTask[task.id] || []) || [])
       const patch = {
         finding_type: next.finding_type,
         observation: next.observation,
@@ -6685,6 +6747,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         source_file_id: asNullableUuid(next.source_file_id || ''),
         review_status: next.review_status,
         admin_notes: next.admin_notes,
+        ...packetMetadata,
+        ...(reviewStartedAt ? { review_started_at: reviewStartedAt, review_due_at: getReviewDueAt(reviewStartedAt, packetMetadata.target_review_time_seconds) } : {}),
         ...(statusChanged && approving ? { reviewed_at: new Date().toISOString(), reviewed_by: currentUserId } : {}),
         ...(statusChanged && next.review_status === 'needs_review' ? { reviewed_at: null, reviewed_by: null } : {}),
       }
@@ -7079,6 +7143,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         agent_facing_notes: draft.agentFacingNotes,
         contractor_facing_notes: draft.contractorFacingNotes,
         human_review_status: 'needs_review',
+        ...createReviewPacketMetadata({
+          propertyAddress: draft.propertyAddress || request.propertyAddress,
+          title: draft.workType || 'Scope interpretation',
+          tradeCategory: draft.workType || 'General repair',
+          priority: draft.urgency || 'Needs review',
+          whatMatters: draft.scopeInterpretation || draft.description,
+          evidenceSummary: draft.description || draft.scopeInterpretation || 'Scope notes saved for review.',
+          missingInfo: draft.missingInformation ? [draft.missingInformation] : [],
+          nextAction: draft.missingInformation ? 'Resolve missing information before external use.' : 'Review and verify scope interpretation.',
+          sourceReferenceCount: getUniqueUploadedFiles(request).length,
+          confidence: draft.missingInformation ? 'low' : 'medium',
+        }),
       })
     } catch (error) {
       console.warn('scope_interpretations table unavailable; saved scope notes on lead property_facts.', error)
@@ -7395,6 +7471,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         extracted_text: params.extractedText?.slice(0, 24000) || null,
         extraction_summary: params.extractionSummary,
         human_review_status: params.status === 'extraction_failed' ? 'needs_review' : 'ai_draft',
+        ...createReviewPacketMetadata({
+          propertyAddress: params.request.propertyAddress,
+          title: params.file.name,
+          tradeCategory: 'Inspection extraction',
+          priority: params.status,
+          whatMatters: params.extractionSummary,
+          evidenceSummary: params.extractionSummary,
+          missingInfo: params.status === 'extraction_failed' ? ['Upload clearer PDF/images or manually add findings.'] : [],
+          nextAction: params.status === 'extraction_failed' ? 'Request readable evidence before relying on interpretation.' : 'Review extracted work groups before use.',
+          sourceReferenceCount: 1,
+          confidence: params.status === 'extraction_failed' ? 'low' : 'medium',
+        }),
       })
     } catch (error) {
       console.warn('inspection_extractions table unavailable; saved extraction on lead property_facts.', error)
@@ -7602,6 +7690,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         extracted_text: params.extractedText?.slice(0, 24000) || null,
         extracted_text_char_count: params.extractedText?.length || 0,
         extraction_warning: params.extractionWarning || null,
+        ...createReviewPacketMetadata({
+          propertyAddress: params.request.propertyAddress,
+          title: params.file.name,
+          tradeCategory: getEvidenceType(params.file, params.mode).replace(/_/g, ' '),
+          priority: params.status,
+          whatMatters: 'Full evidence is stored; reviewer sees only extraction status and next verification action.',
+          evidenceSummary: params.extractionWarning || params.extractedText?.slice(0, 220) || 'Evidence stored without inline raw text.',
+          missingInfo: params.extractedText ? [] : ['Readable evidence or manual summary may be needed.'],
+          nextAction: params.status === 'failed' ? 'Upload clearer evidence or add a manual finding.' : 'Review generated interpretation and source references.',
+          sourceReferenceCount: 1,
+          confidence: params.extractedText ? 'medium' : 'low',
+        }),
       })
     } catch (error) {
       console.warn('evidence_items table unavailable; evidence inspection finding still saved in property_media_findings.', error)
@@ -7636,6 +7736,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       review_status: 'needs_review' as PropertyMediaReviewStatus,
       admin_notes: params.adminNotes,
     }
+    Object.assign(record, buildFindingReviewPacket(params.request, record as PropertyMediaFinding))
 
     const { data, error } = await supabase
       .from('property_media_findings')
@@ -7811,9 +7912,24 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
 
     const updateBundles = (bundles: InspectionRepairBundleDraft[] = []) =>
-      bundles.map((bundle) =>
-        bundle.id === bundleId ? { ...bundle, ...changes } : bundle
-      )
+      bundles.map((bundle) => {
+        if (bundle.id !== bundleId) return bundle
+        const reviewStartedAt = changes.status === 'in_review' ? new Date().toISOString() : undefined
+        const updated = {
+          ...bundle,
+          ...changes,
+          ...(reviewStartedAt ? { review_started_at: reviewStartedAt } : {}),
+        }
+        const sources = getBestWorkGroupResearchTask(request, updated)
+          ? agentResearchSourcesByTask[getBestWorkGroupResearchTask(request, updated)?.id || ''] || []
+          : []
+        const packetMetadata = buildWorkGroupReviewPacket(request, updated, sources)
+        return {
+          ...updated,
+          ...packetMetadata,
+          ...(reviewStartedAt ? { review_started_at: reviewStartedAt, review_due_at: getReviewDueAt(reviewStartedAt, packetMetadata.target_review_time_seconds) } : {}),
+        }
+      })
     const existingWorkGroups = request.inspectionIntelligence.workGroups || request.inspectionIntelligence.repairBundles || []
     const nextIntelligence: InspectionIntelligenceDraft = {
       ...request.inspectionIntelligence,
@@ -7943,6 +8059,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verified_for_memory: false,
         created_by: currentUserId,
       }
+      Object.assign(record, buildResearchReviewPacket(request, record as AgentResearchTask))
 
       const { data, error } = await supabase
         .from('agent_research_tasks')
@@ -11002,14 +11119,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         },
       })
 
-      if (extractionError || extraction?.error || !extraction?.draft) {
-        const message = extraction?.error || extractionError?.message || 'Transcript unavailable. Paste transcript or notes manually.'
-        setCuratedLessonError(message)
-        alert(message)
-        return
+      const functionUnavailable = Boolean(extractionError || extraction?.error || !extraction?.draft)
+      const fallbackMessage = extraction?.error || extractionError?.message || 'Lesson extraction function unavailable. Created a safe Needs Review fallback draft from the intake fields.'
+      const draft = buildCuratedLessonDraft(curatedLessonIntake, extraction?.draft)
+      if (functionUnavailable) {
+        setCuratedLessonError(`${fallbackMessage} Fallback draft saved as Needs Review; paste transcript/notes and edit before approving.`)
+      } else if (extraction?.warning) {
+        setCuratedLessonError(`${extraction.warning} Fallback draft saved as Needs Review.`)
       }
-
-      const draft = buildCuratedLessonDraft(curatedLessonIntake, extraction.draft)
       const insert = {
         ...draft,
         created_by: currentUserId,
@@ -11028,7 +11145,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         target_id: saved.id,
         previous_value: null,
         new_value: saved as unknown as Record<string, unknown>,
-        reason: `Curated Lesson Intake generated a concise estimating-focused draft from ${extraction.transcriptSource || 'transcript'} text. Not saved to memory.`,
+        reason: functionUnavailable
+          ? `Curated Lesson Intake saved a Needs Review fallback draft because lesson-extract failed: ${fallbackMessage}. Not saved to memory.`
+          : `Curated Lesson Intake generated a concise estimating-focused draft from ${extraction?.transcriptSource || 'transcript'} text. Not saved to memory.`,
         property_id: null,
         work_request_id: null,
       })
@@ -12974,6 +13093,208 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return Array.from(unique.values())
   }
 
+  function getTopReviewPacketSources(sources: AgentResearchSource[], adminView = hasAdminConsoleAccess) {
+    return sources
+      .filter((source) =>
+        adminView
+          ? ['report_approved', 'report_candidate', 'internal_only'].includes(source.report_visibility || 'internal_only') &&
+            ['confirms', 'partially_supports', 'not_reviewed'].includes(source.admin_confirmation_status || 'not_reviewed')
+          : source.report_visibility === 'report_approved'
+      )
+      .slice(0, 3)
+      .map((source) => ({
+        title: source.consumer_summary || source.source_title,
+        url: source.source_url || null,
+        status: source.admin_confirmation_status || 'not_reviewed',
+        visibility: source.report_visibility || 'internal_only',
+      }))
+  }
+
+  function getReviewLaneLabel(lane?: ReviewLane | null) {
+    if (lane === 'extended') return 'Extended'
+    if (lane === 'deep') return 'Deep'
+    return 'Standard'
+  }
+
+  function getReviewTimeLabel(seconds?: number | null) {
+    if (!seconds) return 'Target under 320 sec'
+    if (seconds >= 172800) return 'Target 1-2 business days'
+    if (seconds >= 600) return 'Target up to 10 min'
+    return 'Target under 320 sec'
+  }
+
+  function getReviewDueAt(startIso: string, targetSeconds?: number | null) {
+    return new Date(Date.parse(startIso) + (targetSeconds || 320) * 1000).toISOString()
+  }
+
+  function getReviewStatusForStorage(status?: string | null): FastReviewStatus {
+    if (status === 'human_verified' || status === 'rejected' || status === 'deprecated' || status === 'needs_more_info' || status === 'research_requested' || status === 'in_review') {
+      return status
+    }
+    return status === 'approved' ? 'human_verified' : 'needs_review'
+  }
+
+  function findingRequestContext(leadId?: string | null): WorkRequest {
+    return requests.find((request) => request.id === leadId) || {
+      id: leadId || '',
+      createdAt: '',
+      requesterName: '',
+      email: '',
+      phone: '',
+      workType: 'General repair',
+      propertyAddress: 'Property address needs review',
+      city: '',
+      state: '',
+      zip: '',
+      urgency: '',
+      occupancy: '',
+      timeline: '',
+      description: '',
+      photos: [],
+      documents: [],
+      status: 'new',
+    }
+  }
+
+  function buildFindingReviewPacket(request: WorkRequest, finding: PropertyMediaFinding, sources: AgentResearchSource[] = []) {
+    const metadata = createReviewPacketMetadata({
+      propertyAddress: request.propertyAddress,
+      title: finding.observation,
+      tradeCategory: finding.finding_type,
+      priority: finding.review_status,
+      severity: finding.safety_notes ? 'Safety review' : 'Needs review',
+      whatMatters: finding.field_consequence || finding.observation,
+      evidenceSummary: finding.observation,
+      missingInfo: [finding.access_notes, finding.safety_notes, finding.admin_notes].filter(Boolean),
+      nextAction: finding.estimate_impact || 'Confirm evidence and decide whether more information or research is needed.',
+      estimateNote: finding.estimate_impact,
+      researchConfirmationStatus: sources.length ? 'Research confirmation links available for admin review.' : 'No confirmation links reviewed yet.',
+      sourceLinks: getTopReviewPacketSources(sources),
+      sourceReferenceCount: sources.length + (finding.source_file_id ? 1 : 0),
+      confidence: finding.confidence,
+    })
+    return {
+      ...metadata,
+      review_status: getReviewStatusForStorage(finding.review_status),
+      full_source_refs: [
+        finding.source_file_id ? { type: 'source_file', id: finding.source_file_id } : null,
+        ...sources.map((source) => ({ type: 'research_source', id: source.id, title: source.source_title, url: source.source_url || null })),
+      ].filter(Boolean) as Array<Record<string, unknown>>,
+    }
+  }
+
+  function buildResearchReviewPacket(request: WorkRequest, task: AgentResearchTask, sources: AgentResearchSource[] = []) {
+    const metadata = createReviewPacketMetadata({
+      propertyAddress: request.propertyAddress,
+      title: task.question,
+      tradeCategory: task.question_type,
+      priority: task.status,
+      severity: task.source_quality || 'unknown',
+      whatMatters: getResearchAnswerSummary(task),
+      evidenceSummary: task.evidence_summary || task.question,
+      missingInfo: [task.missing_information || '', task.needs_more_info_prompt || ''].filter(Boolean),
+      nextAction: task.recommended_next_action || getResearchNextStep(task),
+      researchConfirmationStatus: sources.length ? 'Research confirmation links available for admin review.' : 'No confirmation links reviewed yet.',
+      sourceLinks: getTopReviewPacketSources(sources),
+      sourceReferenceCount: sources.length + (task.source_file_id ? 1 : 0),
+      confidence: task.confidence || 'low',
+    })
+    return {
+      ...metadata,
+      review_status: getReviewStatusForStorage(task.status),
+      full_source_refs: [
+        task.source_file_id ? { type: 'source_file', id: task.source_file_id } : null,
+        ...sources.map((source) => ({ type: 'research_source', id: source.id, title: source.source_title, url: source.source_url || null })),
+      ].filter(Boolean) as Array<Record<string, unknown>>,
+    }
+  }
+
+  function buildWorkGroupReviewPacket(request: WorkRequest, group: InspectionRepairBundleDraft, sources: AgentResearchSource[] = []) {
+    const metadata = createReviewPacketMetadata({
+      propertyAddress: request.propertyAddress || request.inspectionIntelligence?.propertyAddress,
+      title: group.title,
+      tradeCategory: group.recommended_trade || group.system_category,
+      priority: group.priority,
+      severity: group.severity,
+      whatMatters: group.risk_explanation || group.summary,
+      evidenceSummary: group.evidence_summary || group.summary,
+      missingInfo: group.missing_information || [],
+      nextAction: group.recommended_next_action,
+      estimateLow: group.estimate_low,
+      estimateHigh: group.estimate_high,
+      estimateNote: group.estimate_note,
+      researchConfirmationStatus: sources.length ? 'Research confirmation links available for admin review.' : 'No confirmation links reviewed yet.',
+      sourceLinks: getTopReviewPacketSources(sources),
+      sourceReferenceCount: sources.length + [group.source_page, group.source_text].filter(Boolean).length,
+      confidence: group.confidence,
+    })
+    return {
+      ...metadata,
+      review_status: getReviewStatusForStorage(group.status),
+      full_source_refs: [
+        group.source_page ? { type: 'source_page', label: group.source_page } : null,
+        group.source_text ? { type: 'inspection_source_text', available: true } : null,
+        ...sources.map((source) => ({ type: 'research_source', id: source.id, title: source.source_title, url: source.source_url || null })),
+      ].filter(Boolean) as Array<Record<string, unknown>>,
+    }
+  }
+
+  function renderReviewPacket(packet: CompactReviewPacket | null | undefined, metadata: ReviewPacketMetadataFields, options: {
+    onStart?: () => void
+    onVerify?: () => void
+    onNeedsMoreInfo?: () => void
+    onResearchNeeded?: () => void
+    onReject?: () => void
+    disabled?: boolean
+  } = {}) {
+    if (!packet) return null
+    const warning = metadata.packet_warning || ((metadata.packet_size_bytes || 0) > REVIEW_PACKET_SIZE_LIMIT_BYTES
+      ? 'Review packet is too large. Compress summary or move raw details to source refs.'
+      : '')
+    const lane = metadata.review_lane || packet.review_lane
+
+    return (
+      <div style={styles.noticeBox}>
+        <div style={styles.badgeRow}>
+          <span style={lane === 'extended' ? styles.badgeDanger : lane === 'deep' ? styles.badgeMuted : styles.badge}>
+            {getReviewLaneLabel(lane)}
+          </span>
+          <span style={styles.badgeMuted}>{getReviewTimeLabel(metadata.target_review_time_seconds)}</span>
+          <span style={styles.badgeMuted}>{packet.confidence} confidence</span>
+          <span style={styles.badgeMuted}>{packet.source_reference_count} refs</span>
+        </div>
+        {warning && hasAdminConsoleAccess && <p style={{ ...styles.small, color: '#8a2f12' }}>{warning}</p>}
+        {lane === 'extended' && <p style={styles.small}>{metadata.extended_review_message || EXTENDED_REVIEW_CUSTOMER_MESSAGE}</p>}
+        <p style={styles.small}><strong>What matters:</strong> {packet.what_matters}</p>
+        <p style={styles.small}><strong>Evidence:</strong> {packet.evidence_summary}</p>
+        {packet.missing_info.length > 0 && (
+          <p style={styles.small}><strong>Missing info:</strong> {packet.missing_info.join(' ')}</p>
+        )}
+        <p style={styles.small}><strong>Next action:</strong> {packet.suggested_next_action}</p>
+        <p style={styles.small}><strong>Estimate/bid:</strong> {packet.estimate_range_bid_status}</p>
+        <p style={styles.small}><strong>Sources:</strong> {packet.research_confirmation_status}</p>
+        {packet.top_source_links.length > 0 && (
+          <ul style={styles.smallList}>
+            {packet.top_source_links.map((source, index) => (
+              <li key={`${packet.work_group_title}-packet-source-${index}`}>
+                {source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}
+              </li>
+            ))}
+          </ul>
+        )}
+        {hasAdminConsoleAccess && (
+          <div style={styles.buttonRow}>
+            {options.onStart && <button type="button" style={styles.outlineButton} disabled={options.disabled} onClick={options.onStart}>Start Review</button>}
+            {options.onVerify && <button type="button" style={styles.primaryButton} disabled={options.disabled} onClick={options.onVerify}>Human Verify</button>}
+            {options.onNeedsMoreInfo && <button type="button" style={styles.outlineButton} disabled={options.disabled} onClick={options.onNeedsMoreInfo}>Needs More Info</button>}
+            {options.onResearchNeeded && <button type="button" style={styles.outlineButton} disabled={options.disabled} onClick={options.onResearchNeeded}>Research Needed</button>}
+            {options.onReject && <button type="button" style={styles.outlineButton} disabled={options.disabled} onClick={options.onReject}>Reject</button>}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   function isBerlinAveRequest(request: WorkRequest) {
     const text = [
       request.propertyAddress,
@@ -12992,14 +13313,19 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (!intelligence) return []
 
     const persistedGroups = (intelligence.workGroups || intelligence.repairBundles || []) as InspectionRepairBundleDraft[]
-    if (persistedGroups.length > 0) return persistedGroups.filter((bundle) => bundle.status !== 'rejected')
+    if (persistedGroups.length > 0) {
+      return persistedGroups
+        .filter((bundle) => bundle.status !== 'rejected')
+        .map((bundle) => bundle.compact_review_packet ? bundle : applyReviewPacketToBundle(bundle, request.propertyAddress || intelligence.propertyAddress))
+    }
 
     if (isBerlinAveRequest(request)) {
       return buildBerlinAveWorkGroups(intelligence.id || `inspection-${request.id}`, request.propertyId || getRequestPropertyId(request))
+        .map((bundle) => applyReviewPacketToBundle(bundle, request.propertyAddress || intelligence.propertyAddress))
     }
 
     if (intelligence.repairItems?.length) {
-      return buildRepairBundles(intelligence.repairItems, request.propertyId || getRequestPropertyId(request))
+      return buildRepairBundles(intelligence.repairItems, request.propertyId || getRequestPropertyId(request), request.propertyAddress || intelligence.propertyAddress)
         .filter((bundle) => bundle.status !== 'rejected')
     }
 
@@ -13254,6 +13580,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
 
     const bestResources = sources.slice(0, 3)
+    const packetMetadata = buildResearchReviewPacket(request, task, sources)
     const isFireSuppression = /fire|sprinkler|suppression/i.test(`${group.title} ${group.system_category} ${group.recommended_trade}`)
     const conclusion = isFireSuppression
       ? 'Painted sprinkler heads may be a fire/life-safety issue requiring fire authority or sprinkler professional review.'
@@ -13329,6 +13656,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             </div>
           )}
         </div>
+        {renderReviewPacket(task.compact_review_packet || packetMetadata.compact_review_packet, { ...task, ...packetMetadata }, {
+          disabled: agentResearchSavingId === task.id,
+          onStart: () => saveAgentResearchTask(task, { status: 'researching' }),
+          onVerify: () => saveAgentResearchTask(task, { status: 'human_verified' }),
+          onNeedsMoreInfo: () => saveAgentResearchTask(task, { status: 'needs_review', missing_information: task.missing_information || 'More evidence is needed before verification.' }),
+          onResearchNeeded: () => runWorkGroupResearchTask(request, group, task),
+          onReject: () => saveAgentResearchTask(task, { status: 'rejected' }),
+        })}
         {renderResearchConfirmationLinks(task, sources)}
         <details style={styles.moreActions}>
           <summary style={styles.moreActionsSummary}>Show Sources / Details</summary>
@@ -13437,24 +13772,31 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           </div>
         ) : (
           <div style={styles.inspectionTaskGrid}>
-            {workGroups.map((group) => (
+            {workGroups.map((group) => {
+              const task = getBestWorkGroupResearchTask(request, group)
+              const sources = task ? agentResearchSourcesByTask[task.id] || [] : []
+              const packetMetadata = buildWorkGroupReviewPacket(request, group, sources)
+              const packet = group.compact_review_packet || packetMetadata.compact_review_packet
+              return (
               <div key={group.id} style={styles.inspectionTaskCard}>
                 <div style={styles.buttonRow}>
                   <div style={{ flex: 1 }}>
                     <strong>{group.title}</strong>
-                    <p style={styles.small}>{group.evidence_summary || group.summary}</p>
+                    <p style={styles.small}>Store everything. Show only what matters.</p>
                   </div>
                   <span style={group.priority === 'Critical' ? styles.badgeDanger : styles.badgeMuted}>{group.priority}</span>
                 </div>
-                <p style={styles.small}>Trade: {group.recommended_trade}</p>
-                <p style={styles.small}>Next action: {group.recommended_next_action || 'Review before use.'}</p>
-                <div style={styles.buttonRow}>
-                  <span style={styles.badgeMuted}>{getLearningDisplayName(group.status)}</span>
-                  {group.safety_concern && <span style={styles.badgeMuted}>Safety concern</span>}
-                </div>
+                {renderReviewPacket(packet, { ...group, ...packetMetadata }, {
+                  disabled: inspectionFindingSavingId === group.id,
+                  onStart: () => updateInspectionBundle(request, group.id, { status: 'in_review' }),
+                  onVerify: () => updateInspectionBundle(request, group.id, { status: 'human_verified' }),
+                  onNeedsMoreInfo: () => requestResearchForWorkGroup(request, group, 'needs_more_info'),
+                  onResearchNeeded: () => requestResearchForWorkGroup(request, group, 'research_requested'),
+                  onReject: () => updateInspectionBundle(request, group.id, { status: 'rejected' }),
+                })}
 
                 <details style={styles.moreActions}>
-                  <summary style={styles.moreActionsSummary}>Edit Details</summary>
+                  <summary style={styles.moreActionsSummary}>Show Audit Details</summary>
                   {hasAdminConsoleAccess ? (
                     <>
                       <input
@@ -13593,8 +13935,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                     </details>
                   )}
                 </details>
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Show Full Sources</summary>
+                  {renderWorkGroupResearchResources(request, group)}
+                </details>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
         {archivedGroups.length > 0 && (
@@ -14165,7 +14512,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           </div>
         ) : (
           <div style={styles.siteMediaFindingGrid}>
-            {findings.map((finding) => (
+            {findings.map((finding) => {
+              const findingSources = (agentResearchTasksByFinding[finding.id] || []).flatMap((task) => agentResearchSourcesByTask[task.id] || [])
+              const packetMetadata = finding.compact_review_packet ? finding : buildFindingReviewPacket(request, finding, findingSources)
+              return (
               <div key={finding.id} style={styles.siteMediaFindingCard}>
                 <div style={styles.badgeRow}>
                   <span style={getOperationalStatusStyle(finding.review_status)}>
@@ -14174,10 +14524,17 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   <span style={styles.badgeMuted}>{getSiteMediaSourceFileLabel(request, finding.source_file_id)}</span>
                 </div>
 
-                <p style={styles.small}>{finding.observation}</p>
+                {renderReviewPacket(packetMetadata.compact_review_packet, packetMetadata, {
+                  disabled: siteMediaSavingId === finding.id,
+                  onStart: () => saveSiteMediaFinding(finding, { review_status: 'in_review' }),
+                  onVerify: () => saveSiteMediaFinding(finding, { review_status: 'human_verified' }),
+                  onNeedsMoreInfo: () => markFindingNeedsMoreInfo(request, finding),
+                  onResearchNeeded: () => markFindingNeedsMoreInfo(request, finding),
+                  onReject: () => saveSiteMediaFinding(finding, { review_status: 'rejected' }),
+                })}
 
                 <details style={styles.moreActions}>
-                  <summary style={styles.moreActionsSummary}>Show details</summary>
+                  <summary style={styles.moreActionsSummary}>Show Audit Details</summary>
                 <div style={isCompact ? styles.mobileStack : styles.grid3}>
                   <select
                     style={styles.input}
@@ -14270,6 +14627,16 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                 />
 
                 <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Show Full Sources</summary>
+                  <button type="button" style={styles.linkButton} onClick={() => {
+                    const file = uploadedFiles.find((item) => item.id === finding.source_file_id)
+                    if (file) openRequestFile(file)
+                  }}>
+                    Open linked source
+                  </button>
+                </details>
+
+                <details style={styles.moreActions}>
                   <summary style={styles.moreActionsSummary}>Research Questions</summary>
                   {canEditSiteMedia && (() => {
                     const draft = getAgentResearchDraft(finding)
@@ -14336,6 +14703,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                     <div style={styles.inspectionTaskGrid}>
                       {(agentResearchTasksByFinding[finding.id] || []).map((task) => {
                         const sources = agentResearchSourcesByTask[task.id] || []
+                        const packetMetadata = task.compact_review_packet ? task : buildResearchReviewPacket(request, task, sources)
                         return (
                           <div key={task.id} style={styles.inspectionTaskCard}>
                             <div style={styles.badgeRow}>
@@ -14346,6 +14714,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                               <span style={styles.badgeMuted}>{task.question_type}</span>
                               {task.source_quality && <span style={styles.badgeMuted}>{task.source_quality}</span>}
                             </div>
+                            {renderReviewPacket(packetMetadata.compact_review_packet, packetMetadata, {
+                              disabled: agentResearchSavingId === task.id,
+                              onStart: () => runAgentResearchTask(request, finding, task),
+                              onVerify: () => saveAgentResearchTask(task, { status: 'human_verified' }),
+                              onNeedsMoreInfo: () => saveAgentResearchTask(task, { status: 'needs_review', missing_information: task.missing_information || 'More evidence is needed before verification.' }),
+                              onResearchNeeded: () => runAgentResearchTask(request, finding, task),
+                              onReject: () => saveAgentResearchTask(task, { status: 'rejected' }),
+                            })}
 
                             {canEditSiteMedia ? (
                               <>
@@ -14561,7 +14937,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                 </div>
                 </details>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
         {archivedFindings.length > 0 && (

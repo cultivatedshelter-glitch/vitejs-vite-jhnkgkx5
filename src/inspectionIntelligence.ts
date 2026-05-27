@@ -1,12 +1,40 @@
 export type InspectionRepairRecommendation = 'repair_before_listing' | 'buyer_credit' | 'optional' | 'monitor' | 'contractor_review'
+export type ReviewLane = 'standard' | 'deep' | 'extended'
+export type ReviewConfidence = 'low' | 'medium' | 'high'
 export type InspectionDraftStatus =
   | 'ai_draft'
   | 'needs_review'
+  | 'in_review'
   | 'needs_more_info'
   | 'research_requested'
   | 'human_verified'
   | 'approved'
   | 'rejected'
+  | 'deprecated'
+
+export type ReviewPacketLink = {
+  title: string
+  url?: string | null
+  status?: string | null
+  visibility?: string | null
+}
+
+export type CompactReviewPacket = {
+  property_address: string
+  work_group_title: string
+  trade_category: string
+  priority_severity: string
+  what_matters: string
+  evidence_summary: string
+  missing_info: string[]
+  suggested_next_action: string
+  estimate_range_bid_status: string
+  research_confirmation_status: string
+  top_source_links: ReviewPacketLink[]
+  confidence: ReviewConfidence
+  review_lane: ReviewLane
+  source_reference_count: number
+}
 
 export type InspectionRepairItemDraft = {
   id: string
@@ -26,6 +54,19 @@ export type InspectionRepairItemDraft = {
   estimate_low: number
   estimate_high: number
   confidence: string
+  review_lane?: ReviewLane
+  target_review_time_seconds?: number
+  review_started_at?: string | null
+  review_due_at?: string | null
+  reviewed_at?: string | null
+  reviewed_by?: string | null
+  packet_size_bytes?: number
+  packet_warning?: string | null
+  packet_version?: string
+  source_reference_count?: number
+  compact_review_packet?: CompactReviewPacket
+  full_source_refs?: Array<Record<string, unknown>>
+  extended_review_message?: string | null
   missing_info: string[]
   status: InspectionDraftStatus
   admin_notes: string
@@ -56,6 +97,19 @@ export type InspectionRepairBundleDraft = {
   estimate_note?: string
   contractor_scope_note?: string
   confidence: string
+  review_lane?: ReviewLane
+  target_review_time_seconds?: number
+  review_started_at?: string | null
+  review_due_at?: string | null
+  reviewed_at?: string | null
+  reviewed_by?: string | null
+  packet_size_bytes?: number
+  packet_warning?: string | null
+  packet_version?: string
+  source_reference_count?: number
+  compact_review_packet?: CompactReviewPacket
+  full_source_refs?: Array<Record<string, unknown>>
+  extended_review_message?: string | null
   status: InspectionDraftStatus
   admin_notes: string
   finding_ids: string[]
@@ -114,6 +168,175 @@ type InspectionBundleBasics = {
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '-')
+}
+
+export const REVIEW_PACKET_VERSION = 'review-packet-v1'
+export const REVIEW_PACKET_SIZE_LIMIT_BYTES = 250 * 1024
+export const EXTENDED_REVIEW_CUSTOMER_MESSAGE =
+  'We need additional time to verify reliable information for this item. We will follow up within 1-2 business days.'
+
+export function getReviewLaneTargetSeconds(reviewLane: ReviewLane) {
+  if (reviewLane === 'extended') return 172800
+  if (reviewLane === 'deep') return 600
+  return 320
+}
+
+export function normalizeReviewConfidence(confidence?: string | null): ReviewConfidence {
+  const lower = (confidence || '').toLowerCase()
+  if (lower.includes('high')) return 'high'
+  if (lower.includes('medium')) return 'medium'
+  return 'low'
+}
+
+function packetByteSize(packet: CompactReviewPacket) {
+  const serialized = JSON.stringify(packet)
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(serialized).length
+  return serialized.length
+}
+
+export function assignReviewLane(input: {
+  confidence?: string | null
+  missingInfo?: string[]
+  text?: string
+  sourceReferenceCount?: number
+  hasResearchTask?: boolean
+  hasConflictingEvidence?: boolean
+}): ReviewLane {
+  const text = `${input.text || ''} ${(input.missingInfo || []).join(' ')}`.toLowerCase()
+  const confidence = normalizeReviewConfidence(input.confidence)
+  const needsOutsideResearch = /(jurisdiction|code|permit|structural|mold|moisture|supplier|contractor|site confirmation|outside research|specialty|fire marshal|licensed|contradict|conflict)/i.test(text)
+  const safetyOrWater = /(safety|fire|sprinkler|electrical|plumbing|water intrusion|leak|moisture|roof)/i.test(text)
+  const missingCritical = (input.missingInfo || []).some((item) => /(critical|insufficient|cannot|unknown|confirm|required|documentation|location|quantity|photo)/i.test(item))
+
+  if (confidence === 'low' && (missingCritical || needsOutsideResearch || input.hasConflictingEvidence)) return 'extended'
+  if (needsOutsideResearch || input.hasResearchTask || safetyOrWater || confidence === 'low') return 'deep'
+  return 'standard'
+}
+
+export function createReviewPacketMetadata(params: {
+  propertyAddress?: string
+  title?: string
+  tradeCategory?: string
+  priority?: string
+  severity?: string
+  whatMatters?: string
+  evidenceSummary?: string
+  missingInfo?: string[]
+  nextAction?: string
+  estimateLow?: number | null
+  estimateHigh?: number | null
+  estimateNote?: string | null
+  researchConfirmationStatus?: string
+  sourceLinks?: ReviewPacketLink[]
+  confidence?: string | null
+  sourceReferenceCount?: number
+  reviewLane?: ReviewLane
+}) {
+  const sourceLinks = (params.sourceLinks || []).slice(0, 3).map((source) => ({
+    title: source.title,
+    url: source.url || null,
+    status: source.status || null,
+    visibility: source.visibility || null,
+  }))
+  const sourceReferenceCount = params.sourceReferenceCount ?? sourceLinks.length
+  const confidence = normalizeReviewConfidence(params.confidence)
+  const reviewLane = params.reviewLane || assignReviewLane({
+    confidence,
+    missingInfo: params.missingInfo || [],
+    text: `${params.title || ''} ${params.tradeCategory || ''} ${params.whatMatters || ''} ${params.evidenceSummary || ''} ${params.nextAction || ''}`,
+    sourceReferenceCount,
+  })
+  const estimateRange = Number(params.estimateLow || 0) > 0 || Number(params.estimateHigh || 0) > 0
+    ? `$${Number(params.estimateLow || 0).toFixed(0)} - $${Number(params.estimateHigh || 0).toFixed(0)} Estimate Range draft. ${params.estimateNote || 'Not a final bid.'}`
+    : params.estimateNote || 'No estimate range available yet.'
+  const packet: CompactReviewPacket = {
+    property_address: params.propertyAddress || 'Property address needs review',
+    work_group_title: params.title || 'Review item',
+    trade_category: params.tradeCategory || 'Trade/category needs review',
+    priority_severity: [params.priority, params.severity].filter(Boolean).join(' / ') || 'Needs review',
+    what_matters: params.whatMatters || params.evidenceSummary || 'Confirm visible condition, consequence, and next action.',
+    evidence_summary: params.evidenceSummary || 'Evidence summary needs review.',
+    missing_info: (params.missingInfo || []).filter(Boolean).slice(0, 5),
+    suggested_next_action: params.nextAction || 'Confirm evidence, trade route, and whether more information is needed.',
+    estimate_range_bid_status: estimateRange,
+    research_confirmation_status: params.researchConfirmationStatus || 'No confirmation links reviewed yet.',
+    top_source_links: sourceLinks,
+    confidence,
+    review_lane: reviewLane,
+    source_reference_count: sourceReferenceCount,
+  }
+  const packetSizeBytes = packetByteSize(packet)
+
+  return {
+    review_lane: reviewLane,
+    target_review_time_seconds: getReviewLaneTargetSeconds(reviewLane),
+    packet_size_bytes: packetSizeBytes,
+    packet_warning: packetSizeBytes > REVIEW_PACKET_SIZE_LIMIT_BYTES
+      ? 'Review packet is too large. Compress summary or move raw details to source refs.'
+      : null,
+    packet_version: REVIEW_PACKET_VERSION,
+    source_reference_count: sourceReferenceCount,
+    compact_review_packet: packet,
+    full_source_refs: [] as Array<Record<string, unknown>>,
+    confidence,
+    extended_review_message: reviewLane === 'extended' ? EXTENDED_REVIEW_CUSTOMER_MESSAGE : null,
+  }
+}
+
+export function applyReviewPacketToBundle(
+  bundle: InspectionRepairBundleDraft,
+  propertyAddress = ''
+): InspectionRepairBundleDraft {
+  const metadata = createReviewPacketMetadata({
+    propertyAddress,
+    title: bundle.title,
+    tradeCategory: bundle.recommended_trade || bundle.system_category,
+    priority: bundle.priority,
+    severity: bundle.severity,
+    whatMatters: bundle.risk_explanation || bundle.summary,
+    evidenceSummary: bundle.evidence_summary || bundle.summary,
+    missingInfo: bundle.missing_information || [],
+    nextAction: bundle.recommended_next_action,
+    estimateLow: bundle.estimate_low,
+    estimateHigh: bundle.estimate_high,
+    estimateNote: bundle.estimate_note,
+    researchConfirmationStatus: (bundle.resource_categories || []).length ? 'Source research categories suggested; admin confirmation pending.' : 'No confirmation links reviewed yet.',
+    sourceReferenceCount: [bundle.source_page, bundle.source_text, ...(bundle.resource_categories || [])].filter(Boolean).length,
+    confidence: bundle.confidence,
+  })
+  return {
+    ...bundle,
+    ...metadata,
+    status: bundle.status,
+    confidence: metadata.confidence,
+  }
+}
+
+export function applyReviewPacketToItem(
+  item: InspectionRepairItemDraft,
+  propertyAddress = ''
+): InspectionRepairItemDraft {
+  const metadata = createReviewPacketMetadata({
+    propertyAddress,
+    title: item.category,
+    tradeCategory: item.trade || item.category,
+    priority: item.urgency,
+    severity: item.severity,
+    whatMatters: item.description,
+    evidenceSummary: item.source_text,
+    missingInfo: item.missing_info || [],
+    nextAction: item.recommendation.replace(/_/g, ' '),
+    estimateLow: item.estimate_low,
+    estimateHigh: item.estimate_high,
+    sourceReferenceCount: item.source_text ? 1 : 0,
+    confidence: item.confidence,
+  })
+  return {
+    ...item,
+    ...metadata,
+    status: item.status,
+    confidence: metadata.confidence,
+  }
 }
 
 export function buildBerlinAveWorkGroups(
@@ -474,11 +697,12 @@ export function buildRepairItemsFromFindings(params: {
   inspectionReportId: string
   findings: string[]
   propertyId?: string | number | null
+  propertyAddress?: string
 }) {
   return params.findings.map((finding, index): InspectionRepairItemDraft => {
     const basics = getInspectionBundleBasics(finding)
 
-    return {
+    return applyReviewPacketToItem({
       id: `${params.inspectionReportId}-repair-${index}`,
       property_id: params.propertyId || null,
       inspection_report_id: params.inspectionReportId,
@@ -499,11 +723,11 @@ export function buildRepairItemsFromFindings(params: {
       missing_info: getInspectionMissingInfoForFinding(finding, basics),
       status: 'ai_draft',
       admin_notes: 'AI Draft from inspection extraction. Human/admin review required before final scope, pricing, report, or contractor routing.',
-    }
+    }, params.propertyAddress)
   })
 }
 
-export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], propertyId?: string | number | null) {
+export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], propertyId?: string | number | null, propertyAddress = '') {
   const bundleMap = new Map<string, InspectionRepairBundleDraft>()
   repairItems.forEach((item) => {
     const basics = getInspectionBundleBasics(item.source_text)
@@ -516,7 +740,7 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
       return
     }
 
-    bundleMap.set(item.repair_bundle_id, {
+    bundleMap.set(item.repair_bundle_id, applyReviewPacketToBundle({
       id: item.repair_bundle_id,
       property_id: propertyId || null,
       inspection_report_id: item.inspection_report_id,
@@ -544,7 +768,7 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
       status: 'ai_draft',
       admin_notes: 'Bundle is AI Draft. Admin must confirm evidence, trade route, sequence, and pricing before use.',
       finding_ids: [item.id],
-    })
+    }, propertyAddress))
   })
 
   return Array.from(bundleMap.values()).sort((a, b) => {
@@ -593,10 +817,11 @@ export function buildInspectionIntelligenceDraft(params: {
     inspectionReportId,
     findings: sourceFindings,
     propertyId: params.propertyId,
+    propertyAddress: params.propertyAddress,
   })
-  const builtRepairBundles = buildRepairBundles(repairItems, params.propertyId)
+  const builtRepairBundles = buildRepairBundles(repairItems, params.propertyId, params.propertyAddress)
   const normalizedWorkGroups = hasBerlinAddress
-    ? buildBerlinAveWorkGroups(inspectionReportId, params.propertyId)
+    ? buildBerlinAveWorkGroups(inspectionReportId, params.propertyId).map((bundle) => applyReviewPacketToBundle(bundle, '11134 SW Berlin Ave'))
     : builtRepairBundles
   const estimateLow = normalizedWorkGroups.reduce((sum, bundle) => sum + bundle.estimate_low, 0)
   const estimateHigh = normalizedWorkGroups.reduce((sum, bundle) => sum + bundle.estimate_high, 0)

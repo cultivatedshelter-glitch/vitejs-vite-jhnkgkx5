@@ -7,6 +7,7 @@ type LessonExtractRequest = {
 }
 
 type SourceLessonConfidence = 'low' | 'medium' | 'high'
+type TranscriptSource = 'pasted' | 'youtube' | 'fallback' | 'unavailable'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,30 +17,31 @@ const corsHeaders = {
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response(null, { status: 204, headers: corsHeaders })
   }
 
   if (request.method !== 'POST') {
-    return jsonResponse({ status: 'error', error: 'Use POST for lesson extraction.' }, 405)
+    return jsonResponse({ status: 'error', errorCode: 'method_not_allowed', error: 'Use POST for lesson extraction.' }, 405)
   }
 
+  let body: LessonExtractRequest = {}
   try {
     const authResult = await validateLearningUser(request)
     if (!authResult.ok) {
-      return jsonResponse({ status: 'error', error: authResult.error }, authResult.status)
+      return jsonResponse({ status: 'error', errorCode: authResult.errorCode, error: authResult.error }, authResult.status)
     }
 
-    const body = (await request.json()) as LessonExtractRequest
+    body = await readJsonBody(request)
     const sourceLinks = Array.isArray(body.sourceLinks)
       ? body.sourceLinks.map((url) => String(url || '').trim()).filter(Boolean)
       : []
     const learningGoal = String(body.learningGoal || '').trim()
     const tradeCategory = String(body.tradeCategory || 'General Repair').trim() || 'General Repair'
     let transcript = String(body.transcriptText || '').trim()
-    let transcriptSource: 'pasted' | 'youtube' = transcript ? 'pasted' : 'youtube'
+    let transcriptSource: TranscriptSource = transcript ? 'pasted' : 'youtube'
 
     if (!learningGoal) {
-      return jsonResponse({ status: 'error', error: 'Add the learning goal first.' }, 400)
+      return jsonResponse({ status: 'error', errorCode: 'missing_learning_goal', error: 'Add the learning goal first.' }, 400)
     }
 
     if (!transcript && sourceLinks.length) {
@@ -49,11 +51,13 @@ Deno.serve(async (request) => {
     if (!transcript) {
       return jsonResponse(
         {
-          status: 'transcript_unavailable',
-          error: 'Transcript unavailable. Paste transcript or notes manually.',
-          transcriptSource: 'unavailable',
+          status: 'needs_review',
+          warning: 'Transcript unavailable. Generated a safe fallback draft from the learning goal and source links.',
+          errorCode: 'transcript_unavailable_fallback',
+          transcriptSource: 'fallback',
+          draft: buildFallbackLessonDraft({ sourceLinks, learningGoal, tradeCategory }),
         },
-        422
+        200
       )
     }
 
@@ -69,24 +73,52 @@ Deno.serve(async (request) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Lesson extraction failed.'
     console.log('[lesson-extract] request failed', { message })
-    return jsonResponse({ status: 'error', error: 'Lesson extraction failed.' }, 500)
+
+    const learningGoal = String(body.learningGoal || '').trim()
+    const tradeCategory = String(body.tradeCategory || 'General Repair').trim() || 'General Repair'
+    const sourceLinks = Array.isArray(body.sourceLinks)
+      ? body.sourceLinks.map((url) => String(url || '').trim()).filter(Boolean)
+      : []
+
+    if (learningGoal) {
+      return jsonResponse(
+        {
+          status: 'needs_review',
+          warning: 'Live lesson extraction failed. Generated a safe fallback draft for human review.',
+          errorCode: 'fallback_after_extract_error',
+          error: message,
+          transcriptSource: 'fallback',
+          draft: buildFallbackLessonDraft({ sourceLinks, learningGoal, tradeCategory }),
+        },
+        200
+      )
+    }
+
+    return jsonResponse(
+      {
+        status: 'error',
+        errorCode: 'lesson_extract_failed',
+        error: message,
+      },
+      500
+    )
   }
 })
 
 async function validateLearningUser(request: Request): Promise<
   | { ok: true; userId: string; role: string }
-  | { ok: false; status: number; error: string }
+  | { ok: false; status: number; errorCode: string; error: string }
 > {
   const authorization = request.headers.get('authorization') || ''
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || ''
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('SUPABASE_PUBLISHABLE_KEY') || ''
 
   if (!authorization.toLowerCase().startsWith('bearer ')) {
-    return { ok: false, status: 401, error: 'Please sign in with Supabase before generating lessons.' }
+    return { ok: false, status: 401, errorCode: 'missing_auth', error: 'Please sign in with Supabase before generating lessons.' }
   }
 
   if (!supabaseUrl || !anonKey) {
-    return { ok: false, status: 500, error: 'Lesson extraction is not configured.' }
+    return { ok: false, status: 503, errorCode: 'supabase_env_missing', error: 'Lesson extraction is not configured.' }
   }
 
   const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
@@ -97,14 +129,14 @@ async function validateLearningUser(request: Request): Promise<
   })
 
   if (!userResponse.ok) {
-    return { ok: false, status: 401, error: 'Please sign in with Supabase before generating lessons.' }
+    return { ok: false, status: 401, errorCode: 'invalid_auth', error: 'Please sign in with Supabase before generating lessons.' }
   }
 
   const user = await userResponse.json() as { id?: string }
   const userId = user.id || ''
 
   if (!userId) {
-    return { ok: false, status: 401, error: 'Please sign in with Supabase before generating lessons.' }
+    return { ok: false, status: 401, errorCode: 'missing_user', error: 'Please sign in with Supabase before generating lessons.' }
   }
 
   const profileResponse = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=role`, {
@@ -116,17 +148,25 @@ async function validateLearningUser(request: Request): Promise<
   })
 
   if (!profileResponse.ok) {
-    return { ok: false, status: 403, error: 'Could not verify your learning role.' }
+    return { ok: false, status: 403, errorCode: 'role_lookup_failed', error: 'Could not verify your learning role.' }
   }
 
   const profiles = await profileResponse.json() as Array<{ role?: string }>
   const role = profiles[0]?.role || 'viewer'
 
   if (!['owner', 'admin', 'estimator'].includes(role)) {
-    return { ok: false, status: 403, error: 'Only admin, owner, or estimator users can generate curated lessons.' }
+    return { ok: false, status: 403, errorCode: 'insufficient_role', error: 'Only admin, owner, or estimator users can generate curated lessons.' }
   }
 
   return { ok: true, userId, role }
+}
+
+async function readJsonBody(request: Request): Promise<LessonExtractRequest> {
+  try {
+    return (await request.json()) as LessonExtractRequest
+  } catch (_error) {
+    throw new Error('Request body must be valid JSON.')
+  }
 }
 
 async function getFirstAvailableTranscript(sourceLinks: string[]) {
@@ -245,6 +285,27 @@ function buildLessonDraft(transcript: string, learningGoal: string, tradeCategor
     applies_when: `Use only for ${tradeCategory} work matching the source conditions, material system, access, and finish quality.`,
     does_not_apply_when: 'Do not apply when substrate, moisture/structural risk, code/licensed trade requirements, access, materials, or client expectations differ.',
   }
+}
+
+function buildFallbackLessonDraft(params: {
+  sourceLinks: string[]
+  learningGoal: string
+  tradeCategory: string
+}) {
+  const sourceContext = params.sourceLinks.length
+    ? `Source links provided: ${params.sourceLinks.slice(0, 3).join(' ')}`
+    : 'No source transcript was available.'
+  return buildLessonDraft(
+    [
+      `${params.tradeCategory}: ${params.learningGoal}.`,
+      sourceContext,
+      'Transcript or live extraction was unavailable, so this is a safe fallback draft.',
+      'Human review must confirm the actual source, field conditions, sequence, quantities, materials, safety limits, cleanup, and estimating impact before any memory save.',
+      'Do not treat this fallback as verified. Keep it needs review.',
+    ].join(' '),
+    params.learningGoal,
+    params.tradeCategory
+  )
 }
 
 function splitSentences(text: string) {
