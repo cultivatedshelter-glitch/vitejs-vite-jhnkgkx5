@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import type { InspectionDraftStatus, InspectionIntelligenceDraft } from '../inspectionIntelligence'
+import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../inspectionIntelligence'
 
 type Styles = Record<string, CSSProperties>
 
@@ -8,6 +8,10 @@ type InspectionIntelligencePanelProps = {
   styles: Styles
   money: (value: number | null | undefined) => string
   getStatusLabel: (value?: string | null) => string
+  canEdit?: boolean
+  savingFindingId?: string | null
+  onUpdateFinding?: (itemId: string, changes: Partial<InspectionRepairItemDraft>) => void
+  onUpdateBundle?: (bundleId: string, changes: Partial<InspectionRepairBundleDraft>) => void
 }
 
 export function ReviewStatusBadge({
@@ -80,6 +84,91 @@ export function PriorityItemsSection({ intelligence, styles, getStatusLabel }: O
   )
 }
 
+export function RepairFindingsSection({
+  intelligence,
+  styles,
+  getStatusLabel,
+  canEdit,
+  savingFindingId,
+  onUpdateFinding,
+}: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
+  return (
+    <details style={styles.moreActions}>
+      <summary style={styles.moreActionsSummary}>Repair findings</summary>
+      {intelligence.repairItems.length === 0 ? (
+        <div style={styles.empty}>No repair findings extracted yet.</div>
+      ) : (
+        <div style={styles.inspectionTaskGrid}>
+          {intelligence.repairItems.map((item) => (
+            <div key={item.id} style={styles.inspectionTaskCard}>
+              <div style={styles.buttonRow}>
+                <div style={{ flex: 1 }}>
+                  <strong>{item.category}</strong>
+                  <p style={styles.small}>
+                    {item.trade} - {item.urgency} - Risk {item.inspection_risk_score}/10
+                  </p>
+                </div>
+                <ReviewStatusBadge status={item.status} styles={styles} getStatusLabel={getStatusLabel} />
+              </div>
+
+              {canEdit && onUpdateFinding ? (
+                <>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 82 }}
+                    defaultValue={item.description}
+                    onBlur={(event) => onUpdateFinding(item.id, { description: event.target.value, source_text: event.target.value })}
+                  />
+                  <div style={styles.grid3}>
+                    <select
+                      style={styles.input}
+                      value={item.severity}
+                      onChange={(event) => onUpdateFinding(item.id, { severity: event.target.value })}
+                    >
+                      {['High', 'Medium', 'Low', 'Needs review'].map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                    <select
+                      style={styles.input}
+                      value={item.urgency}
+                      onChange={(event) => onUpdateFinding(item.id, { urgency: event.target.value })}
+                    >
+                      {['Immediate review', 'Needs licensed trade review', 'Needs review before estimating', 'Needs review'].map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                    <select
+                      style={styles.input}
+                      value={item.status}
+                      onChange={(event) => onUpdateFinding(item.id, { status: event.target.value as InspectionDraftStatus })}
+                      disabled={savingFindingId === item.id}
+                    >
+                      {['ai_draft', 'needs_review', 'approved', 'rejected'].map((value) => (
+                        <option key={value} value={value}>{getStatusLabel(value)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 72 }}
+                    defaultValue={item.admin_notes}
+                    placeholder="Admin review notes"
+                    onBlur={(event) => onUpdateFinding(item.id, { admin_notes: event.target.value })}
+                  />
+                </>
+              ) : (
+                <>
+                  <p style={styles.small}>{item.description}</p>
+                  {item.admin_notes && <p style={styles.small}>Admin notes: {item.admin_notes}</p>}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </details>
+  )
+}
+
 export function RepairBundlesSection({ intelligence, styles, money, getStatusLabel }: InspectionIntelligencePanelProps & { intelligence: InspectionIntelligenceDraft }) {
   return (
     <details style={styles.moreActions}>
@@ -107,6 +196,146 @@ export function RepairBundlesSection({ intelligence, styles, money, getStatusLab
         </div>
       )}
     </details>
+  )
+}
+
+export function AddressWorkGroupsSection({
+  intelligence,
+  styles,
+  getStatusLabel,
+  canEdit,
+  onUpdateBundle,
+}: InspectionIntelligencePanelProps & { intelligence: InspectionIntelligenceDraft }) {
+  const activeBundles = intelligence.repairBundles.filter((bundle) => bundle.status !== 'rejected')
+  const archivedBundles = intelligence.repairBundles.filter((bundle) => bundle.status === 'rejected')
+
+  if (activeBundles.length === 0) return <p style={styles.small}>No grouped repair work extracted yet.</p>
+
+  return (
+    <>
+      <div style={styles.inspectionTaskGrid}>
+        {activeBundles.map((bundle) => (
+          <div key={bundle.id} style={styles.inspectionTaskCard}>
+            <div style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <strong>{bundle.title}</strong>
+                <p style={styles.small}>{bundle.evidence_summary || bundle.summary}</p>
+              </div>
+              <span style={styles.badgeMuted}>{bundle.priority}</span>
+            </div>
+            <p style={styles.small}>Trade: {bundle.recommended_trade}</p>
+            <p style={styles.small}>Next action: {bundle.recommended_next_action || 'Review before use.'}</p>
+            <details style={styles.moreActions}>
+              <summary style={styles.moreActionsSummary}>Review</summary>
+              {canEdit && onUpdateBundle ? (
+                <>
+                  <input
+                    style={styles.input}
+                    value={bundle.title}
+                    placeholder="Work group title"
+                    onChange={(event) => onUpdateBundle(bundle.id, { title: event.target.value })}
+                  />
+                  <div style={styles.grid3}>
+                    <input
+                      style={styles.input}
+                      value={bundle.recommended_trade}
+                      placeholder="Trade"
+                      onChange={(event) => onUpdateBundle(bundle.id, { recommended_trade: event.target.value })}
+                    />
+                    <input
+                      style={styles.input}
+                      value={bundle.priority}
+                      placeholder="Priority"
+                      onChange={(event) => onUpdateBundle(bundle.id, { priority: event.target.value })}
+                    />
+                    <select
+                      style={styles.input}
+                      value={bundle.status}
+                      onChange={(event) => onUpdateBundle(bundle.id, { status: event.target.value as InspectionDraftStatus })}
+                    >
+                      {['ai_draft', 'needs_review', 'approved', 'rejected'].map((value) => (
+                        <option key={value} value={value}>{getStatusLabel(value)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={bundle.evidence_summary || ''}
+                    placeholder="Evidence summary"
+                    onChange={(event) => onUpdateBundle(bundle.id, { evidence_summary: event.target.value })}
+                  />
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={bundle.recommended_next_action || ''}
+                    placeholder="Next action"
+                    onChange={(event) => onUpdateBundle(bundle.id, { recommended_next_action: event.target.value })}
+                  />
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={(bundle.missing_information || []).join('\n')}
+                    placeholder="Missing information"
+                    onChange={(event) => onUpdateBundle(bundle.id, { missing_information: event.target.value.split('\n').filter(Boolean) })}
+                  />
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={(bundle.resource_categories || []).join('\n')}
+                    placeholder="Resource categories"
+                    onChange={(event) => onUpdateBundle(bundle.id, { resource_categories: event.target.value.split('\n').filter(Boolean) })}
+                  />
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={bundle.estimate_note || ''}
+                    placeholder="Estimate note"
+                    onChange={(event) => onUpdateBundle(bundle.id, { estimate_note: event.target.value })}
+                  />
+                  <textarea
+                    style={{ ...styles.input, minHeight: 70 }}
+                    value={bundle.contractor_scope_note || ''}
+                    placeholder="Contractor scope note"
+                    onChange={(event) => onUpdateBundle(bundle.id, { contractor_scope_note: event.target.value })}
+                  />
+                </>
+              ) : null}
+              <p style={styles.small}>Area: {bundle.work_area || bundle.system_category}</p>
+              <p style={styles.small}>Severity: {bundle.severity || 'Needs review'}; safety concern: {bundle.safety_concern ? 'yes' : 'no'}</p>
+              <p style={styles.small}>Source: {bundle.source_page || 'Inspection source needs review'}</p>
+              <p style={styles.small}>Source text: {bundle.source_text || bundle.summary}</p>
+              {(bundle.missing_information || []).length > 0 && (
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Missing information</summary>
+                  <ul style={styles.smallList}>
+                    {(bundle.missing_information || []).map((item, index) => (
+                      <li key={`${bundle.id}-missing-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {(bundle.resource_categories || []).length > 0 && (
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Resources</summary>
+                  <ul style={styles.smallList}>
+                    {(bundle.resource_categories || []).map((item, index) => (
+                      <li key={`${bundle.id}-resource-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                  <p style={styles.small}>Source research not yet performed.</p>
+                </details>
+              )}
+            </details>
+          </div>
+        ))}
+      </div>
+      {archivedBundles.length > 0 && (
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Rejected / Archived ({archivedBundles.length})</summary>
+          <ul style={styles.smallList}>
+            {archivedBundles.map((bundle) => (
+              <li key={`archived-bundle-${bundle.id}`}>{bundle.title}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
   )
 }
 
@@ -190,19 +419,44 @@ export function InspectionIntelligencePanel({
   styles,
   money,
   getStatusLabel,
+  canEdit,
+  savingFindingId,
+  onUpdateFinding,
+  onUpdateBundle,
 }: InspectionIntelligencePanelProps) {
   if (!intelligence) return null
 
   return (
     <section style={styles.inspectionTaskPanel}>
       <InspectionSummarySection intelligence={intelligence} styles={styles} getStatusLabel={getStatusLabel} />
-      <PriorityItemsSection intelligence={intelligence} styles={styles} getStatusLabel={getStatusLabel} />
-      <RepairBundlesSection intelligence={intelligence} styles={styles} money={money} getStatusLabel={getStatusLabel} />
-      <TradeScopesSection intelligence={intelligence} styles={styles} />
-      <MissingInfoSection intelligence={intelligence} styles={styles} />
-      <EstimateDraftSection intelligence={intelligence} styles={styles} money={money} />
-      <SellerReportSection intelligence={intelligence} styles={styles} />
-      <ContractorScopeSection intelligence={intelligence} styles={styles} />
+      <details open={intelligence.repairBundles.length > 0} style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Work Groups ({intelligence.repairBundles.filter((bundle) => bundle.status !== 'rejected').length})</summary>
+        <AddressWorkGroupsSection
+          intelligence={intelligence}
+          styles={styles}
+          money={money}
+          getStatusLabel={getStatusLabel}
+          canEdit={canEdit}
+          savingFindingId={savingFindingId}
+          onUpdateFinding={onUpdateFinding}
+          onUpdateBundle={onUpdateBundle}
+        />
+      </details>
+      {intelligence.repairItems.length > 0 && (
+        <RepairFindingsSection
+          intelligence={intelligence}
+          styles={styles}
+          getStatusLabel={getStatusLabel}
+          canEdit={canEdit}
+          savingFindingId={savingFindingId}
+          onUpdateFinding={onUpdateFinding}
+        />
+      )}
+      {intelligence.tradeScopes.length > 0 && <TradeScopesSection intelligence={intelligence} styles={styles} />}
+      {intelligence.missingInformationQuestions.length > 0 && <MissingInfoSection intelligence={intelligence} styles={styles} />}
+      {(intelligence.estimateLow > 0 || intelligence.estimateHigh > 0) && <EstimateDraftSection intelligence={intelligence} styles={styles} money={money} />}
+      {intelligence.sellerPrepSummary && <SellerReportSection intelligence={intelligence} styles={styles} />}
+      {intelligence.contractorReadyScopes.length > 0 && <ContractorScopeSection intelligence={intelligence} styles={styles} />}
     </section>
   )
 }

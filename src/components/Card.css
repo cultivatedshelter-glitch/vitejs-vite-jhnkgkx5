@@ -1,10 +1,9 @@
 .card {
   background: white;
-  border-radius: var(--radius-xl);
+  border-radius: 8px;
   padding: var(--spacing-6);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   border: 1px solid var(--neutral-200);
-  transition: all 0.3s ease;
 }
 
 .card-hover {
@@ -12,8 +11,6 @@
 }
 
 .card-hover:hover {
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
   border-color: var(--pacific-blue-200);
 }
 

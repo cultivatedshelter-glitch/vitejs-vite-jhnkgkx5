@@ -7,10 +7,15 @@ import {
   type EstimateIntelligenceResult,
 } from './estimateIntelligence'
 import {
+  buildBerlinAveWorkGroups,
   buildInspectionIntelligenceDraft,
+  buildRepairBundles,
   extractInspectionDate,
   extractInspectionFindings,
+  type InspectionDraftStatus,
   type InspectionIntelligenceDraft,
+  type InspectionRepairBundleDraft,
+  type InspectionRepairItemDraft,
 } from './inspectionIntelligence'
 import { InspectionIntelligencePanel } from './components/InspectionIntelligencePanel'
 
@@ -35,6 +40,83 @@ type StoredFile = {
 
 type UploadEvidenceStatus = 'selected' | 'uploading' | 'uploaded' | 'failed'
 type UploadEvidenceCategory = 'photo' | 'video' | 'inspection report' | 'document'
+type InspectionProcessingStatus =
+  | 'uploaded'
+  | 'extracting_pdf'
+  | 'inspection_review_drafted'
+  | 'needs_human_review'
+  | 'human_verified'
+  | 'extraction_failed'
+type EvidenceInspectionStatus =
+  | 'uploaded'
+  | 'queued_for_interpretation'
+  | 'interpreting'
+  | 'interpretation_drafted'
+  | 'needs_admin_review'
+  | 'needs_more_info'
+  | 'researched'
+  | 'human_verified'
+  | 'rejected'
+  | 'failed'
+type EvidenceType =
+  | 'full_inspection_report'
+  | 'inspection_page'
+  | 'photo'
+  | 'screenshot'
+  | 'invoice'
+  | 'seller_disclosure'
+  | 'contractor_photo'
+  | 'manual'
+
+type AdminNoteType = 'internal' | 'agent-facing' | 'contractor-facing'
+
+type AdminNote = {
+  id: string
+  body: string
+  noteType: AdminNoteType
+  createdAt: string
+  updatedAt?: string
+  authorLabel: string
+}
+
+type RequestEditDraft = {
+  propertyAddress: string
+  bedrooms: string
+  bathrooms: string
+  squareFeet: string
+  yearBuilt: string
+  propertyType: string
+  jurisdiction: string
+  workType: string
+  description: string
+  status: RequestStatus
+  urgency: string
+  occupancy: string
+  scopeInterpretation: string
+  missingInformation: string
+  internalNotes: string
+  agentFacingNotes: string
+  contractorFacingNotes: string
+}
+
+type AdminNoteDraft = {
+  noteType: AdminNoteType
+  body: string
+}
+
+type EvidenceResearchDraft = {
+  question: string
+  question_type: AgentResearchQuestionType
+  research_scope: AgentResearchScope
+  research_categories: AgentResearchCategory[]
+}
+
+type SourceResearchSetupDraft = {
+  question: string
+  question_type: AgentResearchQuestionType
+  research_scope: AgentResearchScope
+  research_categories: AgentResearchCategory[]
+}
 
 type AiEstimate = {
   projectSummary?: string
@@ -69,6 +151,15 @@ type WorkRequest = {
   archiveReason?: string
   aiEstimate?: AiEstimate
   inspectionIntelligence?: InspectionIntelligenceDraft | null
+  inspectionProcessingStatus?: InspectionProcessingStatus
+  inspectionExtractionSummary?: string
+  inspectionExtractionMessage?: string
+  scopeInterpretation?: string
+  missingInformation?: string
+  adminNotes?: AdminNote[]
+  internalNotes?: string
+  agentFacingNotes?: string
+  contractorFacingNotes?: string
 }
 
 type PropertyAgentName =
@@ -269,8 +360,50 @@ type SourceLesson = {
 
 type SourceLessonDraft = Omit<SourceLesson, 'id' | 'created_at' | 'created_by' | 'approved_by' | 'approved_at'>
 
-type PropertyMediaReviewStatus = 'ai_draft' | 'needs_review' | 'approved' | 'rejected' | 'human_verified'
+type PropertyMediaReviewStatus =
+  | 'ai_draft'
+  | 'needs_review'
+  | 'needs_more_info'
+  | 'research_requested'
+  | 'research_drafted'
+  | 'approved'
+  | 'rejected'
+  | 'human_verified'
+  | 'deprecated'
 type PropertyMediaConfidence = 'low' | 'medium' | 'high'
+type AgentResearchTaskStatus = 'draft' | 'queued' | 'researching' | 'answered' | 'needs_review' | 'human_verified' | 'rejected'
+type AgentResearchQuestionType =
+  | 'code / jurisdiction'
+  | 'material / product'
+  | 'cost range'
+  | 'contractor verification'
+  | 'missing info'
+  | 'safety'
+  | 'permit / inspection'
+  | 'property-specific'
+type AgentResearchScope =
+  | 'Uploaded evidence only'
+  | 'Property database'
+  | 'Shelter Prep memory'
+  | 'Official/code resources'
+  | 'Supplier/material resources'
+  | 'General web allowed'
+  | 'Uploaded files only'
+  | 'Uploaded files + property data'
+  | 'Online resources allowed'
+  | 'Building code / jurisdiction resources'
+type AgentResearchSourceType = 'uploaded_file' | 'property_record' | 'building_code' | 'supplier' | 'web' | 'manual'
+type AgentResearchCategory =
+  | 'Building code / jurisdiction'
+  | 'Parts / materials'
+  | 'Product / manufacturer documentation'
+  | 'Supplier references'
+  | 'Safety guidance'
+  | 'Permit / inspection requirements'
+  | 'Internal Shelter Prep memory'
+  | 'Property history'
+  | 'General web'
+type AgentResearchSourceQuality = 'official' | 'manufacturer' | 'supplier' | 'internal_memory' | 'general_web' | 'unknown'
 
 type PropertyMediaAnalysis = {
   id: string
@@ -310,6 +443,67 @@ type PropertyMediaFinding = {
   reviewed_by?: string | null
   reviewed_at?: string | null
   admin_notes: string
+}
+
+type AgentResearchTask = {
+  id: string
+  property_id?: string | number | null
+  lead_id?: string | null
+  finding_id?: string | null
+  note_id?: string | null
+  source_file_id?: string | null
+  evidence_id?: string | null
+  page_number?: number | null
+  page_range?: string | null
+  question: string
+  question_type: AgentResearchQuestionType
+  research_scope: AgentResearchScope
+  status: AgentResearchTaskStatus
+  answer_draft?: string | null
+  confidence?: PropertyMediaConfidence | null
+  evidence_summary?: string | null
+  missing_information?: string | null
+  recommended_next_action?: string | null
+  needs_more_info_prompt?: string | null
+  research_categories?: AgentResearchCategory[] | null
+  online_search_requested?: boolean | null
+  online_search_performed?: boolean | null
+  internal_memory_used?: boolean | null
+  official_sources_used?: boolean | null
+  supplier_sources_used?: boolean | null
+  source_quality?: AgentResearchSourceQuality | null
+  answer_status?: string | null
+  source_priority?: string | null
+  verified_for_memory?: boolean | null
+  created_by?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+}
+
+type AgentResearchSource = {
+  id: string
+  research_task_id: string
+  source_title: string
+  source_url?: string | null
+  source_type: AgentResearchSourceType
+  source_category?: AgentResearchCategory | null
+  source_quality?: AgentResearchSourceQuality | null
+  source_publisher?: string | null
+  source_excerpt?: string | null
+  source_date_accessed?: string | null
+  relevance_note?: string | null
+  excerpt?: string | null
+  confidence?: PropertyMediaConfidence | null
+  created_at?: string | null
+}
+
+type AgentResearchQuestionDraft = {
+  question: string
+  question_type: AgentResearchQuestionType
+  research_scope: AgentResearchScope
+  research_categories: AgentResearchCategory[]
 }
 
 type AgentMemoryAuditLog = {
@@ -587,6 +781,39 @@ const CONTRACTOR_UPDATABLE_ASSIGNMENT_STATUSES: ContractorAssignmentStatus[] = [
 
 const SITE_MEDIA_FINDING_TYPES = ['roof', 'access', 'terrain', 'obstruction', 'equipment', 'safety', 'estimate_impact', 'other']
 const SITE_MEDIA_CONFIDENCE_LEVELS: PropertyMediaConfidence[] = ['low', 'medium', 'high']
+const AGENT_RESEARCH_SCOPES: AgentResearchScope[] = [
+  'Uploaded evidence only',
+  'Property database',
+  'Shelter Prep memory',
+  'Official/code resources',
+  'Supplier/material resources',
+  'General web allowed',
+  'Uploaded files only',
+  'Uploaded files + property data',
+  'Online resources allowed',
+  'Building code / jurisdiction resources',
+]
+const AGENT_RESEARCH_CATEGORIES: AgentResearchCategory[] = [
+  'Building code / jurisdiction',
+  'Parts / materials',
+  'Product / manufacturer documentation',
+  'Supplier references',
+  'Safety guidance',
+  'Permit / inspection requirements',
+  'Internal Shelter Prep memory',
+  'Property history',
+  'General web',
+]
+const AGENT_RESEARCH_QUESTION_TYPES: AgentResearchQuestionType[] = [
+  'code / jurisdiction',
+  'material / product',
+  'cost range',
+  'contractor verification',
+  'missing info',
+  'safety',
+  'permit / inspection',
+  'property-specific',
+]
 
 function canApproveOperationalMemory(role: MemoryActorRole) {
   return role === 'owner' || role === 'admin'
@@ -602,6 +829,70 @@ function canEditOperationalMemory(role: MemoryActorRole) {
 
 function getEffectiveMemoryActorRole(role: MemoryActorRole) {
   return role
+}
+
+function getSourceResearchDefaults(questionType: AgentResearchQuestionType, text = ''): AgentResearchCategory[] {
+  const haystack = `${questionType} ${text}`.toLowerCase()
+  const categories = new Set<AgentResearchCategory>()
+
+  if (/code|jurisdiction|fire marshal|permit|inspection/.test(haystack)) {
+    categories.add('Building code / jurisdiction')
+    categories.add('Permit / inspection requirements')
+  }
+  if (/material|part|product|manufacturer|manual|install|appliance|microwave/.test(haystack)) {
+    categories.add('Parts / materials')
+    categories.add('Product / manufacturer documentation')
+  }
+  if (/supplier|price|cost|quote|ferguson|grainger|home depot|lowe/.test(haystack)) {
+    categories.add('Supplier references')
+  }
+  if (/safety|fire|sprinkler|electrical|shock|hazard|osha/.test(haystack)) {
+    categories.add('Safety guidance')
+  }
+
+  categories.add('Property history')
+  return Array.from(categories)
+}
+
+function normalizeResearchCategories(value: unknown, fallback: AgentResearchCategory[] = ['Property history']): AgentResearchCategory[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',').map((item) => item.trim())
+      : []
+  const categories = rawItems.filter((item): item is AgentResearchCategory =>
+    AGENT_RESEARCH_CATEGORIES.includes(item as AgentResearchCategory)
+  )
+  return categories.length ? categories : fallback
+}
+
+function toggleResearchCategory(current: AgentResearchCategory[], category: AgentResearchCategory) {
+  return current.includes(category)
+    ? current.filter((item) => item !== category)
+    : [...current, category]
+}
+
+function researchCategoriesRequestOnline(categories: AgentResearchCategory[], scope: AgentResearchScope) {
+  return categories.some((category) =>
+    [
+      'Building code / jurisdiction',
+      'Parts / materials',
+      'Product / manufacturer documentation',
+      'Supplier references',
+      'Safety guidance',
+      'Permit / inspection requirements',
+      'General web',
+    ].includes(category)
+  ) || ['Online resources allowed', 'Building code / jurisdiction resources', 'Official/code resources', 'Supplier/material resources', 'General web allowed'].includes(scope)
+}
+
+function getPrimarySourceQuality(categories: AgentResearchCategory[]): AgentResearchSourceQuality {
+  if (categories.some((category) => ['Building code / jurisdiction', 'Permit / inspection requirements', 'Safety guidance'].includes(category))) return 'official'
+  if (categories.includes('Product / manufacturer documentation')) return 'manufacturer'
+  if (categories.includes('Supplier references') || categories.includes('Parts / materials')) return 'supplier'
+  if (categories.includes('Internal Shelter Prep memory') || categories.includes('Property history')) return 'internal_memory'
+  if (categories.includes('General web')) return 'general_web'
+  return 'unknown'
 }
 
 function canDraftSourceLessonsWithSession(role: MemoryActorRole, hasSession: boolean) {
@@ -2128,6 +2419,8 @@ function getLearningDisplayName(value?: string | null) {
   const operationalStatusLabels: Record<string, string> = {
     ai_draft: 'AI Draft',
     needs_review: 'Needs Review',
+    needs_more_info: 'Needs More Info',
+    research_requested: 'Research Needed',
     needs_confirmation: 'Needs Review',
     approved: 'Human Verified',
     human_approved: 'Human Verified',
@@ -3572,10 +3865,32 @@ function normalizeRequestStatus(value: string | null | undefined): RequestStatus
   return 'new'
 }
 
+function normalizeInspectionProcessingStatus(value: unknown): InspectionProcessingStatus {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === 'extracting_pdf') return 'extracting_pdf'
+  if (raw === 'inspection_review_drafted') return 'inspection_review_drafted'
+  if (raw === 'needs_human_review') return 'needs_human_review'
+  if (raw === 'human_verified') return 'human_verified'
+  if (raw === 'extraction_failed') return 'extraction_failed'
+  return 'uploaded'
+}
+
+function getOperationalRecord(propertyFacts: Record<string, any>) {
+  const record = propertyFacts.operationalRecord
+  return record && typeof record === 'object' ? record : {}
+}
+
+function getAdminNotesFromFacts(propertyFacts: Record<string, any>): AdminNote[] {
+  return Array.isArray(propertyFacts.adminNotes)
+    ? propertyFacts.adminNotes.filter((note: any) => note && typeof note.body === 'string')
+    : []
+}
+
 function mapLeadRowToWorkRequest(row: any): WorkRequest {
   const rowPropertyFacts = row.property_facts && typeof row.property_facts === 'object'
     ? row.property_facts
     : {}
+  const operationalRecord = getOperationalRecord(rowPropertyFacts)
 
   return {
     id: row.id,
@@ -3584,13 +3899,13 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     requesterName: row.name || row.requester_name || row.client_name || '',
     email: row.email || row.client_email || row.requester_email || row.contact_email || '',
     phone: row.phone || row.client_phone || row.requester_phone || '',
-    workType: row.work_type || row.workType || row.project_type || 'Home Services',
+    workType: operationalRecord.workType || row.work_type || row.workType || row.project_type || 'Home Services',
     propertyAddress: row.address || row.property_address || row.project_address || '',
     city: row.city || '',
     state: row.state || '',
     zip: row.zip || row.postal_code || '',
-    urgency: row.urgency || 'Standard',
-    occupancy: row.occupancy || 'Unknown',
+    urgency: operationalRecord.urgency || row.urgency || 'Standard',
+    occupancy: operationalRecord.occupancy || row.occupancy || 'Unknown',
     timeline: row.timeline || '',
     propertyFacts: {
       ...emptyPropertyFacts(),
@@ -3601,7 +3916,7 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
       parcelNumber: row.parcel_number || rowPropertyFacts.parcelNumber || '',
       verified: Boolean(row.property_verified || rowPropertyFacts.verified),
     },
-    description: row.description || row.scope || row.notes || '',
+    description: operationalRecord.description || row.description || row.scope || row.notes || '',
     photos: [],
     documents: [],
     status: normalizeRequestStatus(row.status),
@@ -3609,6 +3924,15 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     archivedAt: row.archived_at || '',
     archiveReason: row.archive_reason || '',
     inspectionIntelligence: rowPropertyFacts.inspectionIntelligence || null,
+    inspectionProcessingStatus: normalizeInspectionProcessingStatus(rowPropertyFacts.inspectionProcessingStatus),
+    inspectionExtractionSummary: rowPropertyFacts.inspectionExtractionSummary || '',
+    inspectionExtractionMessage: rowPropertyFacts.inspectionExtractionMessage || '',
+    scopeInterpretation: operationalRecord.scopeInterpretation || '',
+    missingInformation: operationalRecord.missingInformation || '',
+    adminNotes: getAdminNotesFromFacts(rowPropertyFacts),
+    internalNotes: operationalRecord.internalNotes || '',
+    agentFacingNotes: operationalRecord.agentFacingNotes || '',
+    contractorFacingNotes: operationalRecord.contractorFacingNotes || '',
   }
 }
 
@@ -3634,6 +3958,12 @@ export default function App() {
   const [archivedSearch, setArchivedSearch] = useState('')
   const [archivedLoading, setArchivedLoading] = useState(false)
   const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null)
+  const [requestEditDrafts, setRequestEditDrafts] = useState<Record<string, RequestEditDraft>>({})
+  const [requestSavingId, setRequestSavingId] = useState<string | null>(null)
+  const [adminNoteDrafts, setAdminNoteDrafts] = useState<Record<string, AdminNoteDraft>>({})
+  const [pdfProcessingByRequest, setPdfProcessingByRequest] = useState<Record<string, InspectionProcessingStatus>>({})
+  const [inspectionFindingSavingId, setInspectionFindingSavingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | RequestStatus>('all')
 
@@ -3813,6 +4143,17 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const [siteMediaFindingsByRequest, setSiteMediaFindingsByRequest] = useState<Record<string, PropertyMediaFinding[]>>({})
   const [siteMediaLoadingByRequest, setSiteMediaLoadingByRequest] = useState<Record<string, boolean>>({})
   const [siteMediaSavingId, setSiteMediaSavingId] = useState<string | null>(null)
+  const [agentResearchTasksByFinding, setAgentResearchTasksByFinding] = useState<Record<string, AgentResearchTask[]>>({})
+  const [agentResearchTasksByRequest, setAgentResearchTasksByRequest] = useState<Record<string, AgentResearchTask[]>>({})
+  const [agentResearchSourcesByTask, setAgentResearchSourcesByTask] = useState<Record<string, AgentResearchSource[]>>({})
+  const [agentResearchDraftsByFinding, setAgentResearchDraftsByFinding] = useState<Record<string, AgentResearchQuestionDraft>>({})
+  const [agentResearchSavingId, setAgentResearchSavingId] = useState<string | null>(null)
+  const [noteResearchDraftsByNote, setNoteResearchDraftsByNote] = useState<Record<string, SourceResearchSetupDraft>>({})
+  const [openNoteResearchByNote, setOpenNoteResearchByNote] = useState<Record<string, boolean>>({})
+  const [sourceResearchMessagesByRequest, setSourceResearchMessagesByRequest] = useState<Record<string, string>>({})
+  const [evidenceInspectionStatusByKey, setEvidenceInspectionStatusByKey] = useState<Record<string, EvidenceInspectionStatus>>({})
+  const [evidencePageDraftsByKey, setEvidencePageDraftsByKey] = useState<Record<string, string>>({})
+  const [evidenceResearchDraftsByKey, setEvidenceResearchDraftsByKey] = useState<Record<string, EvidenceResearchDraft>>({})
 
   useEffect(() => {
     const previewUrls: Record<string, string> = {}
@@ -4100,9 +4441,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         missingInfo,
       })
 
-      if (address.propertyAddress) setPropertyAddress(address.propertyAddress)
-      if (address.city) setCity(address.city)
-      if (address.state) setStateValue(address.state)
+      if (intelligence.propertyAddress || address.propertyAddress) setPropertyAddress(intelligence.propertyAddress || address.propertyAddress)
+      if (intelligence.city || address.city) setCity(intelligence.city || address.city)
+      if (intelligence.state || address.state) setStateValue(intelligence.state || address.state)
       if (address.zip) setZip(address.zip)
       if (clientName) setRequesterName((current) => current || clientName)
       setWorkType('Inspection Repairs')
@@ -4135,9 +4476,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       setInspectionReportDraft({
         fileName: file.name,
         frontPagePayloadBytes: payloadBytes,
-        propertyAddress: address.propertyAddress,
-        city: address.city,
-        state: address.state,
+        propertyAddress: intelligence.propertyAddress || address.propertyAddress,
+        city: intelligence.city || address.city,
+        state: intelligence.state || address.state,
         inspectionDate,
         clientName,
         inspectorName,
@@ -4648,7 +4989,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
   }
 
-  async function loadRequestsFromSupabase() {
+  async function loadRequestsFromSupabase(autoInterpretEvidence = false) {
     try {
       const { data, error } = await supabase
         .from('leads')
@@ -4660,9 +5001,34 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       const mapped = await attachFilesToRequests((data || []).map(mapLeadRowToWorkRequest))
       setRequests(mapped)
+      if (autoInterpretEvidence && hasAdminConsoleAccess) {
+        void autoInterpretEvidenceForRequests(mapped)
+      }
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not load requests from Supabase.')
+    }
+  }
+
+  async function autoInterpretEvidenceForRequests(items: WorkRequest[]) {
+    for (const request of items) {
+      const files = getUniqueUploadedFiles(request)
+      if (!files.length) continue
+
+      const hasCurrentWorkGroups = getInspectionWorkGroups(request).length > 0
+      const hasCurrentInterpretation = hasCurrentWorkGroups || Boolean(request.inspectionIntelligence?.repairItems?.length)
+      if (!hasCurrentInterpretation) {
+        await runFirstPassEvidenceInterpretation(request, files)
+      }
+
+      for (const file of files) {
+        const mode = isPdfEvidence(file) ? 'full_pdf' : isImageEvidence(file) ? 'image' : 'file'
+        const key = getEvidenceKey(file, mode)
+        if (evidenceInspectionStatusByKey[key]) continue
+        if (getEvidenceFindingsForFile(request, file).length > 0) continue
+        setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [key]: 'queued_for_interpretation' }))
+        await inspectEvidenceFile(request, file, mode)
+      }
     }
   }
 
@@ -4919,6 +5285,12 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         ...prev,
         [request.id]: (findingData || []) as PropertyMediaFinding[],
       }))
+
+      const findingIds = (findingData || []).map((finding: any) => finding.id).filter(Boolean)
+      if (findingIds.length) {
+        await loadAgentResearchTasksForFindings(findingIds)
+      }
+      await loadAgentResearchTasksForRequest(request.id)
     } catch (error: any) {
       console.warn('Site media intelligence could not be loaded.', error)
       if (!quiet) alert(error?.message || 'Could not load Site Media Intelligence. Run the migration first.')
@@ -4944,7 +5316,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       source_file_id: sourceFileId,
       missing_info: 'Needs human verification.',
       confidence: 'low' as PropertyMediaConfidence,
-      review_status: 'needs_review' as PropertyMediaReviewStatus,
+      review_status: 'ai_draft' as PropertyMediaReviewStatus,
       admin_notes: 'Created from uploaded property media. No outside image source used.',
     }
 
@@ -4974,6 +5346,965 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       })
       return next
     })
+  }
+
+  function getAgentResearchDraft(finding: PropertyMediaFinding): AgentResearchQuestionDraft {
+    const existing = agentResearchDraftsByFinding[finding.id]
+    if (existing) return existing
+
+    const sprinklerQuestion = 'Verify whether this sprinkler/fire protection item refers to a unit-level system, whole-building system, missing sprinkler heads, inspection requirement, or documentation issue.'
+    const isSprinkler = /sprinkler|fire protection|fire suppression/i.test(`${finding.observation} ${finding.safety_notes} ${finding.admin_notes}`)
+
+    return {
+      question: isSprinkler ? sprinklerQuestion : '',
+      question_type: isSprinkler ? 'permit / inspection' : 'missing info',
+      research_scope: 'Uploaded files + property data',
+      research_categories: getSourceResearchDefaults(isSprinkler ? 'permit / inspection' : 'missing info', `${finding.observation} ${finding.safety_notes} ${finding.admin_notes}`),
+    }
+  }
+
+  function updateAgentResearchDraft(findingId: string, changes: Partial<AgentResearchQuestionDraft>) {
+    setAgentResearchDraftsByFinding((prev) => ({
+      ...prev,
+      [findingId]: {
+        question: prev[findingId]?.question || '',
+        question_type: prev[findingId]?.question_type || 'missing info',
+        research_scope: prev[findingId]?.research_scope || 'Uploaded files + property data',
+        research_categories: prev[findingId]?.research_categories || ['Property history'],
+        ...changes,
+      },
+    }))
+  }
+
+  function getNoteResearchDraft(note: AdminNote): SourceResearchSetupDraft {
+    return noteResearchDraftsByNote[note.id] || {
+      question: note.body,
+      question_type: 'property-specific',
+      research_scope: 'Uploaded files + property data',
+      research_categories: getSourceResearchDefaults('property-specific', note.body),
+    }
+  }
+
+  function openNoteResearchSetup(note: AdminNote) {
+    setNoteResearchDraftsByNote((prev) => ({
+      ...prev,
+      [note.id]: prev[note.id] || {
+        question: note.body,
+        question_type: 'property-specific',
+        research_scope: 'Uploaded files + property data',
+        research_categories: getSourceResearchDefaults('property-specific', note.body),
+      },
+    }))
+    setOpenNoteResearchByNote((prev) => ({ ...prev, [note.id]: true }))
+  }
+
+  function updateNoteResearchDraft(noteId: string, changes: Partial<SourceResearchSetupDraft>) {
+    setNoteResearchDraftsByNote((prev) => ({
+      ...prev,
+      [noteId]: {
+        question: prev[noteId]?.question || '',
+        question_type: prev[noteId]?.question_type || 'property-specific',
+        research_scope: prev[noteId]?.research_scope || 'Uploaded files + property data',
+        research_categories: prev[noteId]?.research_categories || ['Property history'],
+        ...changes,
+      },
+    }))
+  }
+
+  function setSourceResearchMessage(requestId: string, message: string) {
+    console.info('[Source Research Agent]', message)
+    setSourceResearchMessagesByRequest((prev) => ({ ...prev, [requestId]: message }))
+  }
+
+  async function loadAgentResearchTasksForFindings(findingIds: string[]) {
+    if (!findingIds.length) return
+
+    try {
+      const { data: tasks, error } = await supabase
+        .from('agent_research_tasks')
+        .select('*')
+        .in('finding_id', findingIds)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      const taskRows = (tasks || []) as AgentResearchTask[]
+      const taskIds = taskRows.map((task) => task.id).filter(Boolean)
+      let sourceRows: AgentResearchSource[] = []
+
+      if (taskIds.length) {
+        const { data: sources, error: sourceError } = await supabase
+          .from('agent_research_sources')
+          .select('*')
+          .in('research_task_id', taskIds)
+          .order('created_at', { ascending: false })
+
+        if (sourceError) throw sourceError
+        sourceRows = (sources || []) as AgentResearchSource[]
+      }
+
+      setAgentResearchTasksByFinding((prev) => {
+        const next = { ...prev }
+        findingIds.forEach((findingId) => {
+          next[findingId] = taskRows.filter((task) => task.finding_id === findingId)
+        })
+        return next
+      })
+
+      setAgentResearchSourcesByTask((prev) => {
+        const next = { ...prev }
+        taskIds.forEach((taskId) => {
+          next[taskId] = sourceRows.filter((source) => source.research_task_id === taskId)
+        })
+        return next
+      })
+    } catch (error) {
+      console.warn('Agent research tasks could not be loaded. Run the Agent Research Tasks migration.', error)
+    }
+  }
+
+  async function loadAgentResearchTasksForRequest(requestId: string) {
+    if (!requestId) return
+
+    try {
+      const { data: tasks, error } = await supabase
+        .from('agent_research_tasks')
+        .select('*')
+        .eq('lead_id', requestId)
+        .is('finding_id', null)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      const taskRows = (tasks || []) as AgentResearchTask[]
+      if (!taskRows.length) {
+        setSourceResearchMessage(requestId, 'No source research tasks fetched for this request yet.')
+      }
+      const taskIds = taskRows.map((task) => task.id).filter(Boolean)
+      let sourceRows: AgentResearchSource[] = []
+
+      if (taskIds.length) {
+        const { data: sources, error: sourceError } = await supabase
+          .from('agent_research_sources')
+          .select('*')
+          .in('research_task_id', taskIds)
+          .order('created_at', { ascending: false })
+
+        if (sourceError) throw sourceError
+        sourceRows = (sources || []) as AgentResearchSource[]
+      }
+
+      setAgentResearchTasksByRequest((prev) => ({ ...prev, [requestId]: taskRows }))
+      setAgentResearchSourcesByTask((prev) => {
+        const next = { ...prev }
+        taskIds.forEach((taskId) => {
+          next[taskId] = sourceRows.filter((source) => source.research_task_id === taskId)
+        })
+        return next
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Request-level source research tasks could not be loaded.'
+      console.warn('Request-level source research tasks could not be loaded. Run the Agent Research Tasks migration.', error)
+      setSourceResearchMessage(requestId, `Task fetch error: ${message}`)
+    }
+  }
+
+  async function addAgentResearchTask(request: WorkRequest, finding: PropertyMediaFinding) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to add research questions.')
+      return
+    }
+
+    const draft = getAgentResearchDraft(finding)
+    if (!draft.question.trim()) {
+      alert('Add a research question first.')
+      return
+    }
+
+    setAgentResearchSavingId(`new-${finding.id}`)
+    try {
+      const record = {
+        property_id: getLinkedPropertyId(request),
+        lead_id: asNullableUuid(request.id),
+        finding_id: finding.id,
+        question: draft.question.trim(),
+        question_type: draft.question_type,
+        research_scope: draft.research_scope,
+        research_categories: normalizeResearchCategories(draft.research_categories, getSourceResearchDefaults(draft.question_type, draft.question)),
+        status: 'queued' as AgentResearchTaskStatus,
+        confidence: 'low' as PropertyMediaConfidence,
+        missing_information: 'Run research to draft an answer from uploaded files and property context.',
+        recommended_next_action: 'Run Research, then review the draft answer before using it.',
+        online_search_requested: researchCategoriesRequestOnline(normalizeResearchCategories(draft.research_categories), draft.research_scope),
+        online_search_performed: false,
+        internal_memory_used: false,
+        official_sources_used: false,
+        supplier_sources_used: false,
+        source_quality: getPrimarySourceQuality(normalizeResearchCategories(draft.research_categories, getSourceResearchDefaults(draft.question_type, draft.question))),
+        answer_status: 'needs_review',
+        source_priority: 'linked media finding -> uploaded files -> property record -> admin notes',
+        verified_for_memory: false,
+        created_by: currentUserId,
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const saved = data as AgentResearchTask
+      setAgentResearchTasksByFinding((prev) => ({
+        ...prev,
+        [finding.id]: [saved, ...(prev[finding.id] || [])],
+      }))
+      setAgentResearchDraftsByFinding((prev) => ({ ...prev, [finding.id]: { ...draft, question: '' } }))
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save research question. Run the Agent Research Tasks migration first.')
+    } finally {
+      setAgentResearchSavingId(null)
+    }
+  }
+
+  async function addEvidenceResearchTask(request: WorkRequest, file: StoredFile) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to add research questions.')
+      return
+    }
+
+    const draft = getEvidenceResearchDraft(file)
+    if (!draft.question.trim()) {
+      alert('Add a research question first.')
+      return
+    }
+
+    const key = getEvidenceKey(file)
+    setAgentResearchSavingId(`evidence-${key}`)
+    try {
+      const record = {
+        property_id: getLinkedPropertyId(request),
+        lead_id: asNullableUuid(request.id),
+        finding_id: null,
+        source_file_id: asNullableUuid(file.id || ''),
+        evidence_id: file.id || file.path || file.name,
+        question: draft.question.trim(),
+        question_type: draft.question_type,
+        research_scope: draft.research_scope,
+        research_categories: normalizeResearchCategories(draft.research_categories, getSourceResearchDefaults(draft.question_type, draft.question)),
+        status: 'queued' as AgentResearchTaskStatus,
+        confidence: 'low' as PropertyMediaConfidence,
+        missing_information: 'Run research to draft an answer from this linked evidence file/page/image.',
+        recommended_next_action: 'Inspect the linked evidence first, then run research and review the draft answer.',
+        online_search_requested: researchCategoriesRequestOnline(normalizeResearchCategories(draft.research_categories), draft.research_scope),
+        online_search_performed: false,
+        internal_memory_used: false,
+        official_sources_used: false,
+        supplier_sources_used: false,
+        source_quality: getPrimarySourceQuality(normalizeResearchCategories(draft.research_categories, getSourceResearchDefaults(draft.question_type, draft.question))),
+        answer_status: 'needs_review',
+        source_priority: 'linked evidence item -> extracted text -> related uploaded files -> property record -> admin notes',
+        verified_for_memory: false,
+        created_by: currentUserId,
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+      const saved = data as AgentResearchTask
+      setAgentResearchTasksByRequest((prev) => ({
+        ...prev,
+        [request.id]: [saved, ...(prev[request.id] || [])],
+      }))
+      setEvidenceResearchDraftsByKey((prev) => ({ ...prev, [key]: { ...draft, question: '', research_categories: ['Property history'] } }))
+      alert('Research question saved. It is linked to this evidence file.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save evidence research question. Run the Agent Research Tasks migration first.')
+    } finally {
+      setAgentResearchSavingId(null)
+    }
+  }
+
+  function getResearchContextEvidence(request: WorkRequest, finding: PropertyMediaFinding, task: AgentResearchTask) {
+    const lowerQuestion = task.question.toLowerCase()
+    const uploadedMatches = [...request.documents, ...request.photos]
+      .filter((file) => lowerQuestion.split(/\s+/).some((word) => word.length > 4 && file.name.toLowerCase().includes(word)))
+      .slice(0, 4)
+    const propertyBits = [
+      request.propertyAddress,
+      request.propertyFacts?.jurisdiction ? `Jurisdiction: ${request.propertyFacts.jurisdiction}` : '',
+      request.propertyFacts?.propertyType ? `Property type: ${request.propertyFacts.propertyType}` : '',
+      request.propertyFacts?.yearBuilt ? `Year built: ${request.propertyFacts.yearBuilt}` : '',
+      request.inspectionExtractionSummary,
+    ].filter(Boolean)
+    const adminBits = [
+      finding.observation,
+      finding.safety_notes,
+      finding.access_notes,
+      finding.admin_notes,
+      ...(request.adminNotes || []).map((note) => `${note.noteType}: ${note.body}`),
+    ].filter(Boolean)
+
+    return { uploadedMatches, propertyBits, adminBits }
+  }
+
+  function buildAgentResearchDraftAnswer(request: WorkRequest, finding: PropertyMediaFinding, task: AgentResearchTask) {
+    const { uploadedMatches, propertyBits, adminBits } = getResearchContextEvidence(request, finding, task)
+    const allowsProperty = !['Uploaded files only', 'Uploaded evidence only'].includes(task.research_scope)
+    const categories = normalizeResearchCategories(task.research_categories, getSourceResearchDefaults(task.question_type, task.question))
+    const allowsOnline = researchCategoriesRequestOnline(categories, task.research_scope)
+    const requestsInternalMemory = categories.includes('Internal Shelter Prep memory') || categories.includes('Property history') || task.research_scope === 'Shelter Prep memory' || task.research_scope === 'Property database'
+    const internalMemoryUsed = allowsProperty && requestsInternalMemory && (propertyBits.length > 0 || adminBits.length > 0)
+    const officialSourcesRequested = categories.some((category) => ['Building code / jurisdiction', 'Safety guidance', 'Permit / inspection requirements'].includes(category))
+    const supplierSourcesRequested = categories.some((category) => ['Parts / materials', 'Product / manufacturer documentation', 'Supplier references'].includes(category))
+    const sourceQuality = getPrimarySourceQuality(categories)
+    const isSprinkler = /sprinkler|fire protection|fire suppression/i.test(`${task.question} ${finding.observation} ${finding.safety_notes}`)
+    const evidenceParts = [
+      uploadedMatches.length ? `Uploaded evidence names reviewed: ${uploadedMatches.map((file) => file.name).join(', ')}.` : '',
+      adminBits.length ? `Finding/admin context: ${adminBits.slice(0, 3).join(' ')}` : '',
+      allowsProperty && propertyBits.length ? `Property context: ${propertyBits.join(' ')}` : '',
+    ].filter(Boolean)
+
+    const missingInfo = isSprinkler
+      ? 'Confirm sprinkler head count, locations, system ownership/control, fire panel or inspection tags, and whether the report shows missing, painted, obstructed, or sealed heads.'
+      : 'Confirm exact location, quantity, source page/photo, and whether a contractor or jurisdiction reviewer has verified the condition.'
+    const onlineGuardrail = allowsOnline
+      ? 'Online research was requested, but no live source search has been performed yet. This draft uses uploaded/property/admin-note context only.'
+      : 'Online resources were not used because this task scope does not allow them.'
+    const requestedSources = categories.length ? `Requested source categories: ${categories.join(', ')}.` : ''
+
+    return {
+      answer: isSprinkler
+        ? `Draft answer: current uploaded/property context is not enough to determine whether this is a unit-level sprinkler system, whole-building system, missing-head issue, inspection requirement, or documentation issue. Treat it as a fire protection documentation/safety question until close-up photos, head count, tags, and panel/system context are reviewed. ${onlineGuardrail}`
+        : `Draft answer: the available uploaded evidence and property context identify a review question, but they do not provide enough verified detail for a final answer. ${onlineGuardrail}`,
+      confidence: evidenceParts.length >= 2 ? 'medium' as PropertyMediaConfidence : 'low' as PropertyMediaConfidence,
+      evidenceSummary: [requestedSources, ...evidenceParts].filter(Boolean).join(' ') || 'No strong evidence found in uploaded files, media findings, property facts, or admin notes.',
+      missingInformation: missingInfo,
+      recommendedNextAction: isSprinkler
+        ? 'Ask for close-up photos of every sprinkler head, wide ceiling/room photos, head count, fire inspection tags, and fire panel/system photos; route to Fire Marshal or licensed fire suppression specialist before final guidance.'
+        : `Gather missing evidence and route to the right trade/admin reviewer. ${onlineGuardrail}`,
+      onlineSearchRequested: allowsOnline,
+      onlineSearchPerformed: false,
+      internalMemoryUsed,
+      officialSourcesUsed: false,
+      supplierSourcesUsed: false,
+      sourceQuality,
+      sourcePriority: [
+        'linked evidence item',
+        'extracted text from that evidence',
+        'related uploaded files',
+        'full property record',
+        'admin notes',
+        'prior verified findings',
+        'Shelter Prep memory',
+        allowsOnline ? 'official/primary online sources allowed but not performed in this local draft' : 'online sources not allowed',
+      ].join(' -> '),
+      sources: [
+        ...uploadedMatches.map((file): Omit<AgentResearchSource, 'id' | 'research_task_id' | 'created_at'> => ({
+          source_title: file.name,
+          source_url: file.url || null,
+          source_type: 'uploaded_file',
+          source_category: 'Property history',
+          source_quality: 'unknown',
+          source_publisher: null,
+          source_excerpt: `Uploaded ${file.type} attached to this request.`,
+          source_date_accessed: new Date().toISOString(),
+          relevance_note: 'Linked uploaded evidence was searched before external sources.',
+          excerpt: `Uploaded ${file.type} attached to this request.`,
+          confidence: 'medium',
+        })),
+        ...(allowsProperty && propertyBits.length ? [{
+          source_title: 'Property/request record',
+          source_url: null,
+          source_type: 'property_record' as AgentResearchSourceType,
+          source_category: 'Property history' as AgentResearchCategory,
+          source_quality: 'internal_memory' as AgentResearchSourceQuality,
+          source_publisher: 'Shelter Prep',
+          source_excerpt: propertyBits.join(' '),
+          source_date_accessed: new Date().toISOString(),
+          relevance_note: 'Property facts were used as internal context.',
+          excerpt: propertyBits.join(' '),
+          confidence: 'medium' as PropertyMediaConfidence,
+        }] : []),
+        ...(adminBits.length ? [{
+          source_title: 'Media finding and admin notes',
+          source_url: null,
+          source_type: 'manual' as AgentResearchSourceType,
+          source_category: 'Property history' as AgentResearchCategory,
+          source_quality: 'internal_memory' as AgentResearchSourceQuality,
+          source_publisher: 'Shelter Prep',
+          source_excerpt: adminBits.slice(0, 4).join(' '),
+          source_date_accessed: new Date().toISOString(),
+          relevance_note: 'Admin notes and finding text were used as human-entered context.',
+          excerpt: adminBits.slice(0, 4).join(' '),
+          confidence: 'medium' as PropertyMediaConfidence,
+        }] : []),
+      ],
+    }
+  }
+
+  function updateLocalAgentResearchTask(taskId: string, changes: Partial<AgentResearchTask>) {
+    setAgentResearchTasksByFinding((prev) => {
+      const next: Record<string, AgentResearchTask[]> = {}
+      Object.entries(prev).forEach(([findingId, tasks]) => {
+        next[findingId] = tasks.map((task) => task.id === taskId ? { ...task, ...changes } : task)
+      })
+      return next
+    })
+    setAgentResearchTasksByRequest((prev) => {
+      const next: Record<string, AgentResearchTask[]> = {}
+      Object.entries(prev).forEach(([requestId, tasks]) => {
+        next[requestId] = tasks.map((task) => task.id === taskId ? { ...task, ...changes } : task)
+      })
+      return next
+    })
+  }
+
+  async function runAgentResearchTask(request: WorkRequest, finding: PropertyMediaFinding, task: AgentResearchTask) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to run research.')
+      return
+    }
+
+    setAgentResearchSavingId(task.id)
+    updateLocalAgentResearchTask(task.id, { status: 'researching' })
+
+    try {
+      const draft = buildAgentResearchDraftAnswer(request, finding, task)
+      const patch = {
+        status: 'needs_review' as AgentResearchTaskStatus,
+        answer_draft: draft.answer,
+        confidence: draft.confidence,
+        evidence_summary: draft.evidenceSummary,
+        missing_information: draft.missingInformation,
+        recommended_next_action: draft.recommendedNextAction,
+        research_categories: normalizeResearchCategories(task.research_categories, getSourceResearchDefaults(task.question_type, task.question)),
+        online_search_requested: draft.onlineSearchRequested,
+        online_search_performed: draft.onlineSearchPerformed,
+        internal_memory_used: draft.internalMemoryUsed,
+        official_sources_used: draft.officialSourcesUsed,
+        supplier_sources_used: draft.supplierSourcesUsed,
+        source_quality: draft.sourceQuality,
+        answer_status: 'needs_review',
+        source_priority: draft.sourcePriority,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .update(patch)
+        .eq('id', task.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      await supabase.from('agent_research_sources').delete().eq('research_task_id', task.id)
+      const sourceRows = draft.sources.map((source) => ({
+        research_task_id: task.id,
+        ...source,
+      }))
+      let savedSources: AgentResearchSource[] = []
+      if (sourceRows.length) {
+        const { data: sources, error: sourceError } = await supabase
+          .from('agent_research_sources')
+          .insert(sourceRows)
+          .select()
+
+        if (sourceError) throw sourceError
+        savedSources = (sources || []) as AgentResearchSource[]
+      }
+
+      updateLocalAgentResearchTask(task.id, data as AgentResearchTask)
+      setAgentResearchSourcesByTask((prev) => ({ ...prev, [task.id]: savedSources }))
+    } catch (error: any) {
+      console.error(error)
+      updateLocalAgentResearchTask(task.id, { status: 'draft' })
+      alert(error?.message || 'Could not run research.')
+    } finally {
+      setAgentResearchSavingId(null)
+    }
+  }
+
+  async function markFindingNeedsMoreInfo(request: WorkRequest, finding: PropertyMediaFinding) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to request research.')
+      return
+    }
+
+    const prompt = window.prompt('What should the agent try to find?', 'Find the missing evidence needed to verify this finding.')
+    if (!prompt?.trim()) return
+
+    const scopeInput = window.prompt(
+      'Research scope: Uploaded evidence only, Property database, Shelter Prep memory, Official/code resources, Supplier/material resources, or General web allowed',
+      'Uploaded evidence only'
+    ) || 'Uploaded evidence only'
+    const scope = AGENT_RESEARCH_SCOPES.includes(scopeInput as AgentResearchScope)
+      ? scopeInput as AgentResearchScope
+      : 'Uploaded evidence only'
+    const categories = getSourceResearchDefaults('missing info', `${prompt} ${finding.observation} ${finding.safety_notes}`)
+
+    setSiteMediaSavingId(finding.id)
+    try {
+      await saveSiteMediaFinding(finding, { review_status: 'needs_more_info' })
+      const record = {
+        property_id: getLinkedPropertyId(request),
+        lead_id: asNullableUuid(request.id),
+        finding_id: finding.id,
+        source_file_id: asNullableUuid(finding.source_file_id || ''),
+        question: prompt.trim(),
+        question_type: 'missing info' as AgentResearchQuestionType,
+        research_scope: scope,
+        research_categories: categories,
+        status: 'queued' as AgentResearchTaskStatus,
+        confidence: 'low' as PropertyMediaConfidence,
+        needs_more_info_prompt: prompt.trim(),
+        missing_information: prompt.trim(),
+        recommended_next_action: 'Run Research, then review the draft answer and sources before using it.',
+        online_search_requested: researchCategoriesRequestOnline(categories, scope),
+        online_search_performed: false,
+        internal_memory_used: false,
+        official_sources_used: false,
+        supplier_sources_used: false,
+        source_quality: getPrimarySourceQuality(categories),
+        answer_status: 'needs_review',
+        source_priority: 'linked evidence item -> extracted text -> related uploaded files -> property record -> admin notes -> verified internal memory -> allowed official/online sources',
+        verified_for_memory: false,
+        created_by: currentUserId,
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+      const saved = data as AgentResearchTask
+      setAgentResearchTasksByFinding((prev) => ({
+        ...prev,
+        [finding.id]: [saved, ...(prev[finding.id] || [])],
+      }))
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not create Needs More Info research task.')
+    } finally {
+      setSiteMediaSavingId(null)
+    }
+  }
+
+  function buildAdminNoteFinding(note: AdminNote): PropertyMediaFinding {
+    return {
+      id: `admin-note-${note.id}`,
+      finding_type: 'property-specific',
+      observation: note.body,
+      field_consequence: 'Admin note research question. Needs source-backed draft answer before use.',
+      estimate_impact: '',
+      access_notes: '',
+      safety_notes: '',
+      confidence: 'low',
+      source_file_id: null,
+      review_status: 'needs_review',
+      admin_notes: `${note.noteType} note by ${note.authorLabel || 'Admin'}`,
+    }
+  }
+
+  async function askAgentToResearchAdminNote(request: WorkRequest, note: AdminNote) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to request source research.')
+      return
+    }
+
+    const draft = getNoteResearchDraft(note)
+    if (!draft.question.trim()) {
+      setSourceResearchMessage(request.id, 'Task creation error: add a research question before running research.')
+      return
+    }
+    const categories = normalizeResearchCategories(draft.research_categories, getSourceResearchDefaults(draft.question_type, draft.question))
+    const scope = draft.research_scope
+
+    setRequestSavingId(request.id)
+    setAgentResearchSavingId(`note-${note.id}`)
+    setSourceResearchMessage(request.id, 'Creating source research task...')
+    try {
+      const record = {
+        property_id: getLinkedPropertyId(request),
+        lead_id: asNullableUuid(request.id),
+        finding_id: null,
+        note_id: note.id,
+        evidence_id: `admin-note:${note.id}`,
+        question: draft.question.trim(),
+        question_type: draft.question_type,
+        research_scope: scope,
+        research_categories: categories,
+        status: 'queued' as AgentResearchTaskStatus,
+        confidence: 'low' as PropertyMediaConfidence,
+        needs_more_info_prompt: draft.question.trim(),
+        missing_information: 'Run research to draft a source-backed answer from the selected source categories.',
+        recommended_next_action: 'Run Research, then review source quality before verification.',
+        online_search_requested: researchCategoriesRequestOnline(categories, scope),
+        online_search_performed: false,
+        internal_memory_used: false,
+        official_sources_used: false,
+        supplier_sources_used: false,
+        source_quality: getPrimarySourceQuality(categories),
+        answer_status: 'needs_review',
+        source_priority: 'linked admin note -> property record -> uploaded evidence -> internal memory -> allowed official/manufacturer/supplier/web sources',
+        verified_for_memory: false,
+        created_by: currentUserId,
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+      const saved = data as AgentResearchTask
+      setAgentResearchTasksByRequest((prev) => ({
+        ...prev,
+        [request.id]: [saved, ...(prev[request.id] || [])],
+      }))
+      setOpenNoteResearchByNote((prev) => ({ ...prev, [note.id]: false }))
+      setSourceResearchMessage(request.id, `Source research task created for note ${note.id}. Running draft research...`)
+      await runRequestAgentResearchTask(request, saved)
+    } catch (error: any) {
+      const message = error?.message || 'Could not create source research task.'
+      console.error('[Source Research Agent] Supabase insert/select error:', error)
+      setSourceResearchMessage(request.id, `Supabase insert/select error: ${message}`)
+      alert(message)
+    } finally {
+      setRequestSavingId(null)
+      setAgentResearchSavingId(null)
+    }
+  }
+
+  async function runRequestAgentResearchTask(request: WorkRequest, task: AgentResearchTask) {
+    const linkedNote = (request.adminNotes || []).find((note) => note.id === task.note_id)
+    if (!task.note_id && !task.finding_id && !task.evidence_id) {
+      setSourceResearchMessage(request.id, `Missing note_id/finding_id/evidence_id linkage for task ${task.id}. Using task question as fallback context.`)
+    }
+    const finding = buildAdminNoteFinding(linkedNote || {
+      id: task.id,
+      body: task.question,
+      noteType: 'internal',
+      createdAt: task.created_at || new Date().toISOString(),
+      authorLabel: 'Admin',
+    })
+    await runAgentResearchTask(request, finding, task)
+  }
+
+  function getWorkGroupResearchTasks(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    return (agentResearchTasksByRequest[request.id] || [])
+      .filter((task) => task.evidence_id === `work-group:${group.id}` && task.status !== 'rejected')
+  }
+
+  function getBestWorkGroupResearchTask(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    const tasks = getWorkGroupResearchTasks(request, group)
+    return tasks.find((task) => task.answer_draft) || tasks[0] || null
+  }
+
+  function buildWilsonvilleFireSuppressionSources(): Array<Omit<AgentResearchSource, 'id' | 'research_task_id' | 'created_at'>> {
+    const accessed = new Date().toISOString()
+    return [
+      {
+        source_title: 'Tualatin Valley Fire & Rescue Fire Marshal’s Office',
+        source_url: 'https://www.tvfr.gov/129/Fire-Marshals-Office',
+        source_type: 'building_code',
+        source_category: 'Safety guidance',
+        source_quality: 'official',
+        source_publisher: 'Tualatin Valley Fire & Rescue',
+        source_excerpt: 'TVF&R Fire Marshal’s Office oversees fire code enforcement, new construction review, fire investigations, and prevention education.',
+        source_date_accessed: accessed,
+        relevance_note: 'Likely fire authority/fire marshal resource for Wilsonville fire protection questions.',
+        excerpt: 'Official fire authority resource for fire code enforcement and fire prevention questions.',
+        confidence: 'medium',
+      },
+      {
+        source_title: 'City of Wilsonville Building - Plumbing - Mechanical - Fire Permits',
+        source_url: 'https://www.wilsonvilleoregon.gov/building/page/building-plumbing-mechanical-fire-permits',
+        source_type: 'building_code',
+        source_category: 'Permit / inspection requirements',
+        source_quality: 'official',
+        source_publisher: 'City of Wilsonville',
+        source_excerpt: 'City page for building, plumbing, mechanical, and fire permit resources and forms.',
+        source_date_accessed: accessed,
+        relevance_note: 'Official local permit desk starting point for fire sprinkler permit or inspection requirements.',
+        excerpt: 'Official Wilsonville permit resource for building, plumbing, mechanical, and fire permits.',
+        confidence: 'medium',
+      },
+      {
+        source_title: 'Wilsonville Fire Sprinkler Affidavit',
+        source_url: 'https://www.wilsonvilleoregon.gov/sites/default/files/fileattachments/building/page/96530/fire_sprinkler_affidavit_fillable_1.22.24.pdf',
+        source_type: 'building_code',
+        source_category: 'Permit / inspection requirements',
+        source_quality: 'official',
+        source_publisher: 'City of Wilsonville Building Department',
+        source_excerpt: 'Fire sprinkler affidavit lists City Hall contact: 29799 SW Town Center Loop East, Wilsonville, OR 97070; (503) 682-4960 #1; permits@ci.wilsonville.or.us.',
+        source_date_accessed: accessed,
+        relevance_note: 'Official city form with permit contact details relevant to sprinkler affidavits and building department routing.',
+        excerpt: 'Building Department contact: 29799 SW Town Center Loop East, Wilsonville, OR 97070; (503) 682-4960 #1; permits@ci.wilsonville.or.us.',
+        confidence: 'medium',
+      },
+      {
+        source_title: 'TVF&R New Construction and Service Provider Permits',
+        source_url: 'https://www.tvfr.gov/376/New-Construction-and-Service-Provider-Pe',
+        source_type: 'building_code',
+        source_category: 'Permit / inspection requirements',
+        source_quality: 'official',
+        source_publisher: 'Tualatin Valley Fire & Rescue',
+        source_excerpt: 'TVF&R permit resource for new construction and service providers, including Wilsonville in the listed jurisdictions.',
+        source_date_accessed: accessed,
+        relevance_note: 'Fire district permit/service provider context for fire sprinkler questions.',
+        excerpt: 'Official TVF&R permit and service provider resource for fire-related construction and provider coordination.',
+        confidence: 'medium',
+      },
+    ]
+  }
+
+  function buildGenericWorkGroupSources(request: WorkRequest, group: InspectionRepairBundleDraft): Array<Omit<AgentResearchSource, 'id' | 'research_task_id' | 'created_at'>> {
+    const accessed = new Date().toISOString()
+    const lower = `${group.title} ${group.recommended_trade} ${group.system_category}`.toLowerCase()
+    const city = request.city || request.inspectionIntelligence?.city || ''
+    const permitUrl = /wilsonville/i.test(city)
+      ? 'https://www.wilsonvilleoregon.gov/building/page/building-plumbing-mechanical-fire-permits'
+      : null
+    const category: AgentResearchCategory = /electrical/i.test(lower)
+      ? 'Permit / inspection requirements'
+      : /roof|plumb/i.test(lower)
+        ? 'Building code / jurisdiction'
+        : 'Property history'
+
+    return [
+      {
+        source_title: city ? `${city} permit/building department resource` : 'Local permit/building department resource',
+        source_url: permitUrl,
+        source_type: permitUrl ? 'building_code' : 'manual',
+        source_category: category,
+        source_quality: permitUrl ? 'official' : 'unknown',
+        source_publisher: city ? `City of ${city}` : 'Local building department',
+        source_excerpt: permitUrl
+          ? 'Official local permit page. Confirm whether this work needs permit, inspection, or department guidance.'
+          : 'Local building/permitting resource should be confirmed by admin for this jurisdiction.',
+        source_date_accessed: accessed,
+        relevance_note: 'Local permit or inspection requirements may affect scope, sequencing, and contractor routing.',
+        excerpt: permitUrl
+          ? 'Official local permit page for permit/inspection routing.'
+          : 'No live official URL was available in the local template; admin should confirm the jurisdiction resource.',
+        confidence: permitUrl ? 'medium' : 'low',
+      },
+      {
+        source_title: `${group.recommended_trade || 'Trade'} contractor verification`,
+        source_url: null,
+        source_type: 'manual',
+        source_category: /electrical|plumb|roof/i.test(lower) ? 'Safety guidance' : 'Property history',
+        source_quality: 'unknown',
+        source_publisher: 'Shelter Prep local draft',
+        source_excerpt: 'Use licensed trade review to verify visible evidence, hidden conditions, quantities, and repair-vs-replace path before pricing.',
+        source_date_accessed: accessed,
+        relevance_note: 'Trade verification is the safest next source when uploaded evidence is incomplete.',
+        excerpt: 'Trade verification needed before final scope, pricing, or report language.',
+        confidence: 'low',
+      },
+    ]
+  }
+
+  function buildWorkGroupResearchDraft(request: WorkRequest, group: InspectionRepairBundleDraft, task: AgentResearchTask) {
+    const text = `${group.title} ${group.system_category} ${group.recommended_trade} ${group.evidence_summary} ${task.question}`.toLowerCase()
+    const isWilsonvilleFire = /fire|sprinkler|suppression/.test(text) && /wilsonville|11134\s+sw\s+berlin/i.test(`${request.propertyAddress} ${request.city} ${request.inspectionIntelligence?.propertyAddress} ${request.inspectionIntelligence?.city}`)
+    const sources = isWilsonvilleFire ? buildWilsonvilleFireSuppressionSources() : buildGenericWorkGroupSources(request, group)
+    const bestResources = sources.slice(0, 3).map((source, index) => `${index + 1}. ${source.source_title}${source.source_url ? ` (${source.source_url})` : ''}`)
+    const liveSearchNotice = 'Live online source search not performed. This draft uses approved local resource templates plus uploaded/property context.'
+
+    const nextSteps = isWilsonvilleFire
+      ? [
+          'Contact TVF&R Fire Marshal’s Office about painted sprinkler heads and ask what documentation or correction path they require.',
+          'Contact Wilsonville Building Department / permits desk about fire sprinkler permit, affidavit, or inspection requirements: 29799 SW Town Center Loop East, Wilsonville, OR 97070; (503) 682-4960 #1; permits@ci.wilsonville.or.us.',
+          'Request seller/HOA/building manager sprinkler system documentation, latest inspection/service records, head count, and photos of every sprinkler head.',
+        ]
+      : [
+          `Confirm the local permit/inspection path for ${group.recommended_trade || group.system_category}.`,
+          `Ask a qualified ${group.likely_contractor_type || group.recommended_trade || 'trade contractor'} to verify the condition, location, and repair-vs-replace scope.`,
+          'Request missing evidence: source page/photo, quantities, affected locations, and any prior service or permit records.',
+        ]
+
+    return {
+      answer: [
+        `Research Draft (${getLearningDisplayName(task.status)}):`,
+        `What we know: ${group.evidence_summary || group.summary}`,
+        `Best resources: ${bestResources.join(' ')}`,
+        `Best next 3 steps: ${nextSteps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
+        liveSearchNotice,
+      ].join('\n\n'),
+      confidence: sources.some((source) => source.source_quality === 'official') ? 'medium' as PropertyMediaConfidence : 'low' as PropertyMediaConfidence,
+      evidenceSummary: `Work group: ${group.title}. Source evidence: ${group.source_page || 'uploaded evidence'}. ${group.evidence_summary || group.summary}`,
+      missingInformation: (group.missing_information || []).join(' ') || 'Confirm source evidence, location, quantity, and trade verification.',
+      recommendedNextAction: nextSteps.join(' '),
+      onlineSearchRequested: Boolean(task.online_search_requested),
+      onlineSearchPerformed: false,
+      internalMemoryUsed: true,
+      officialSourcesUsed: sources.some((source) => source.source_quality === 'official'),
+      supplierSourcesUsed: sources.some((source) => source.source_quality === 'supplier'),
+      sourceQuality: sources.some((source) => source.source_quality === 'official') ? 'official' as AgentResearchSourceQuality : getPrimarySourceQuality(normalizeResearchCategories(task.research_categories, getSourceResearchDefaults(task.question_type, task.question))),
+      sourcePriority: 'linked work group -> uploaded evidence/property context -> approved local resource templates -> official online source search when backend is available',
+      sources,
+    }
+  }
+
+  async function runWorkGroupResearchTask(request: WorkRequest, group: InspectionRepairBundleDraft, task: AgentResearchTask) {
+    setAgentResearchSavingId(task.id)
+    updateLocalAgentResearchTask(task.id, { status: 'researching' })
+
+    try {
+      const draft = buildWorkGroupResearchDraft(request, group, task)
+      const patch = {
+        status: 'needs_review' as AgentResearchTaskStatus,
+        answer_draft: draft.answer,
+        confidence: draft.confidence,
+        evidence_summary: draft.evidenceSummary,
+        missing_information: draft.missingInformation,
+        recommended_next_action: draft.recommendedNextAction,
+        online_search_requested: draft.onlineSearchRequested,
+        online_search_performed: draft.onlineSearchPerformed,
+        internal_memory_used: draft.internalMemoryUsed,
+        official_sources_used: draft.officialSourcesUsed,
+        supplier_sources_used: draft.supplierSourcesUsed,
+        source_quality: draft.sourceQuality,
+        answer_status: 'needs_review',
+        source_priority: draft.sourcePriority,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .update(patch)
+        .eq('id', task.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      await supabase.from('agent_research_sources').delete().eq('research_task_id', task.id)
+      const { data: sources, error: sourceError } = await supabase
+        .from('agent_research_sources')
+        .insert(draft.sources.map((source) => ({ research_task_id: task.id, ...source })))
+        .select()
+
+      if (sourceError) throw sourceError
+
+      updateLocalAgentResearchTask(task.id, data as AgentResearchTask)
+      setAgentResearchSourcesByTask((prev) => ({ ...prev, [task.id]: (sources || []) as AgentResearchSource[] }))
+      setSourceResearchMessage(request.id, `Research draft created for ${group.title}. Needs Human Review.`)
+    } catch (error: any) {
+      console.error('[Work Group Research] Draft/update error:', error)
+      updateLocalAgentResearchTask(task.id, { status: 'draft' })
+      setSourceResearchMessage(request.id, `Task creation error: ${error?.message || 'Could not draft source research.'}`)
+      alert(error?.message || 'Could not draft source research.')
+    } finally {
+      setAgentResearchSavingId(null)
+    }
+  }
+
+  async function saveVerifiedFindingToMemory(request: WorkRequest, finding: PropertyMediaFinding) {
+    if (!isHumanVerifiedStatus(finding.review_status)) {
+      alert('Human Verify this finding before saving it to memory.')
+      return
+    }
+    if (!canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admin or owner can save verified findings to memory.')
+      return
+    }
+
+    setSiteMediaSavingId(finding.id)
+    try {
+      const record = {
+        property_id: getRequestPropertyId(request),
+        work_request_id: request.id,
+        file_id: finding.source_file_id || finding.id,
+        photo_description: finding.observation,
+        trade_category: finding.finding_type || request.workType || 'General repair',
+        work_phase: 'evidence_interpretation',
+        equipment_seen: '',
+        field_consequence: finding.field_consequence || finding.observation,
+        estimate_impact: finding.estimate_impact || 'Verified finding saved for future review context.',
+        required_line_items: [],
+        risk_flags: [finding.safety_notes, finding.access_notes].filter(Boolean),
+        human_verified: true,
+        follow_up_lesson: finding.admin_notes || finding.field_consequence || finding.observation,
+        reviewed_at: new Date().toISOString(),
+      }
+      const { error } = await supabase.from('photo_field_memory').insert(record)
+      if (error) throw error
+      updateLocalSiteMediaFinding(finding.id, { review_status: 'human_verified' })
+      alert('Verified finding saved to field memory.')
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save verified finding to memory.')
+    } finally {
+      setSiteMediaSavingId(null)
+    }
+  }
+
+  async function saveAgentResearchTask(task: AgentResearchTask, changes: Partial<AgentResearchTask> = {}) {
+    const next = { ...task, ...changes }
+    const statusChanged = Boolean(changes.status)
+    const verifying = next.status === 'human_verified' || next.status === 'rejected'
+
+    if (verifying && !canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admin or owner can verify or reject research answers.')
+      return
+    }
+
+    setAgentResearchSavingId(task.id)
+    try {
+      const patch = {
+        question: next.question,
+        question_type: next.question_type,
+        research_scope: next.research_scope,
+        research_categories: normalizeResearchCategories(next.research_categories, getSourceResearchDefaults(next.question_type, next.question)),
+        status: next.status,
+        answer_draft: next.answer_draft || '',
+        confidence: next.confidence || 'low',
+        evidence_summary: next.evidence_summary || '',
+        missing_information: next.missing_information || '',
+        recommended_next_action: next.recommended_next_action || '',
+        needs_more_info_prompt: next.needs_more_info_prompt || '',
+        online_search_requested: Boolean(next.online_search_requested),
+        online_search_performed: Boolean(next.online_search_performed),
+        internal_memory_used: Boolean(next.internal_memory_used),
+        official_sources_used: Boolean(next.official_sources_used),
+        supplier_sources_used: Boolean(next.supplier_sources_used),
+        source_quality: next.source_quality || getPrimarySourceQuality(normalizeResearchCategories(next.research_categories, getSourceResearchDefaults(next.question_type, next.question))),
+        answer_status: next.answer_status || next.status,
+        source_priority: next.source_priority || '',
+        verified_for_memory: Boolean(next.verified_for_memory),
+        ...(statusChanged && verifying ? { reviewed_by: currentUserId, reviewed_at: new Date().toISOString() } : {}),
+        ...(statusChanged && next.status === 'needs_review' ? { reviewed_by: null, reviewed_at: null } : {}),
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .update(patch)
+        .eq('id', task.id)
+        .select()
+        .single()
+
+      if (error) throw error
+      updateLocalAgentResearchTask(task.id, data as AgentResearchTask)
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save research task.')
+    } finally {
+      setAgentResearchSavingId(null)
+    }
   }
 
   async function addManualSiteMediaFinding(request: WorkRequest, file?: StoredFile | null) {
@@ -5253,6 +6584,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       setRequests((prev) => [newRequest, ...prev])
       void savePropertyAgentOutputs(newRequest, buildPropertyAgentDrafts(newRequest))
+      if (hasAdminConsoleAccess) {
+        void autoInterpretEvidenceForRequests([newRequest])
+      }
       setSuccessMessage('Request submitted. Shelter Prep will review and follow up.')
       resetForm()
     } catch (error: any) {
@@ -5278,6 +6612,1057 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       console.error(error)
       alert(error?.message || 'Could not update lead status.')
       await loadRequestsFromSupabase()
+    }
+  }
+
+  function createRequestEditDraft(request: WorkRequest): RequestEditDraft {
+    return {
+      propertyAddress: request.propertyAddress || '',
+      bedrooms: request.propertyFacts?.bedrooms || '',
+      bathrooms: request.propertyFacts?.bathrooms || '',
+      squareFeet: request.propertyFacts?.squareFeet || '',
+      yearBuilt: request.propertyFacts?.yearBuilt || '',
+      propertyType: request.propertyFacts?.propertyType || '',
+      jurisdiction: request.propertyFacts?.jurisdiction || '',
+      workType: request.workType || '',
+      description: request.description || '',
+      status: request.status,
+      urgency: request.urgency || 'Standard',
+      occupancy: request.occupancy || 'Unknown',
+      scopeInterpretation: request.scopeInterpretation || '',
+      missingInformation: request.missingInformation || '',
+      internalNotes: request.internalNotes || '',
+      agentFacingNotes: request.agentFacingNotes || '',
+      contractorFacingNotes: request.contractorFacingNotes || '',
+    }
+  }
+
+  function startEditingRequest(request: WorkRequest) {
+    if (!hasAdminConsoleAccess) return
+    setEditingRequestId(request.id)
+    setRequestEditDrafts((prev) => ({ ...prev, [request.id]: createRequestEditDraft(request) }))
+  }
+
+  function updateRequestEditDraft(requestId: string, changes: Partial<RequestEditDraft>) {
+    setRequestEditDrafts((prev) => ({
+      ...prev,
+      [requestId]: {
+        ...(prev[requestId] || createRequestEditDraft(requests.find((request) => request.id === requestId) || {
+          id: requestId,
+          createdAt: '',
+          requesterName: '',
+          email: '',
+          phone: '',
+          workType: '',
+          propertyAddress: '',
+          city: '',
+          state: '',
+          zip: '',
+          urgency: 'Standard',
+          occupancy: 'Unknown',
+          timeline: '',
+          description: '',
+          photos: [],
+          documents: [],
+          status: 'new',
+        })),
+        ...changes,
+      },
+    }))
+  }
+
+  function buildPropertyFactsForRequest(
+    request: WorkRequest,
+    draft: RequestEditDraft,
+    extraFacts: Record<string, unknown> = {}
+  ): PropertyFacts & Record<string, unknown> {
+    const currentFacts = {
+      ...emptyPropertyFacts(),
+      ...(request.propertyFacts || {}),
+    } as PropertyFacts & Record<string, unknown>
+
+    return {
+      ...currentFacts,
+      bedrooms: draft.bedrooms,
+      bathrooms: draft.bathrooms,
+      squareFeet: draft.squareFeet,
+      yearBuilt: draft.yearBuilt,
+      propertyType: draft.propertyType,
+      jurisdiction: draft.jurisdiction,
+      verified: currentFacts.verified ?? true,
+      operationalRecord: {
+        workType: draft.workType,
+        description: draft.description,
+        urgency: draft.urgency,
+        occupancy: draft.occupancy,
+        scopeInterpretation: draft.scopeInterpretation,
+        missingInformation: draft.missingInformation,
+        internalNotes: draft.internalNotes,
+        agentFacingNotes: draft.agentFacingNotes,
+        contractorFacingNotes: draft.contractorFacingNotes,
+      },
+      inspectionIntelligence: request.inspectionIntelligence || null,
+      inspectionProcessingStatus: request.inspectionProcessingStatus || 'uploaded',
+      inspectionExtractionSummary: request.inspectionExtractionSummary || '',
+      inspectionExtractionMessage: request.inspectionExtractionMessage || '',
+      adminNotes: request.adminNotes || [],
+      ...extraFacts,
+    }
+  }
+
+  async function saveRequestEdits(request: WorkRequest) {
+    if (!hasAdminConsoleAccess) {
+      alert('Sign in as admin/owner before editing protected property records.')
+      return
+    }
+
+    const draft = requestEditDrafts[request.id] || createRequestEditDraft(request)
+    setRequestSavingId(request.id)
+
+    const propertyFactsPatch = buildPropertyFactsForRequest(request, draft)
+    const updatedRequest: WorkRequest = {
+      ...request,
+      propertyAddress: draft.propertyAddress,
+      workType: draft.workType,
+      description: draft.description,
+      status: draft.status,
+      urgency: draft.urgency,
+      occupancy: draft.occupancy,
+      propertyFacts: propertyFactsPatch,
+      scopeInterpretation: draft.scopeInterpretation,
+      missingInformation: draft.missingInformation,
+      internalNotes: draft.internalNotes,
+      agentFacingNotes: draft.agentFacingNotes,
+      contractorFacingNotes: draft.contractorFacingNotes,
+    }
+
+    try {
+      setRequests((prev) => prev.map((item) => (item.id === request.id ? updatedRequest : item)))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          address: draft.propertyAddress,
+          description: draft.description,
+          status: draft.status,
+          property_facts: propertyFactsPatch,
+          property_verified: true,
+          property_jurisdiction: draft.jurisdiction,
+          property_type: draft.propertyType,
+        })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      await persistScopeInterpretation(request, draft)
+      setEditingRequestId(null)
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save property/request edits.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setRequestSavingId(null)
+    }
+  }
+
+  async function persistScopeInterpretation(request: WorkRequest, draft: RequestEditDraft) {
+    try {
+      await supabase.from('scope_interpretations').insert({
+        lead_id: asNullableUuid(request.id),
+        property_id: getLinkedPropertyId(request),
+        scope_interpretation: draft.scopeInterpretation,
+        missing_information: draft.missingInformation,
+        internal_notes: draft.internalNotes,
+        agent_facing_notes: draft.agentFacingNotes,
+        contractor_facing_notes: draft.contractorFacingNotes,
+        human_review_status: 'needs_review',
+      })
+    } catch (error) {
+      console.warn('scope_interpretations table unavailable; saved scope notes on lead property_facts.', error)
+    }
+  }
+
+  function updateAdminNoteDraft(requestId: string, changes: Partial<AdminNoteDraft>) {
+    setAdminNoteDrafts((prev) => ({
+      ...prev,
+      [requestId]: {
+        noteType: prev[requestId]?.noteType || 'internal',
+        body: prev[requestId]?.body || '',
+        ...changes,
+      },
+    }))
+  }
+
+  async function saveAdminNote(request: WorkRequest) {
+    if (!hasAdminConsoleAccess) {
+      alert('Sign in as admin/owner before adding admin notes.')
+      return
+    }
+
+    const draft = adminNoteDrafts[request.id] || { noteType: 'internal' as AdminNoteType, body: '' }
+    if (!draft.body.trim()) return
+
+    const now = new Date().toISOString()
+    const nextNote: AdminNote = {
+      id: makeId(),
+      body: draft.body.trim(),
+      noteType: draft.noteType,
+      createdAt: now,
+      authorLabel: currentUserRole === 'owner' ? 'Owner' : currentUserRole === 'admin' ? 'Admin' : 'Admin reviewer',
+    }
+    const nextNotes = [nextNote, ...(request.adminNotes || [])]
+    const draftForFacts = requestEditDrafts[request.id] || createRequestEditDraft(request)
+    const propertyFactsPatch = buildPropertyFactsForRequest(
+      { ...request, adminNotes: nextNotes },
+      draftForFacts,
+      { adminNotes: nextNotes }
+    )
+
+    setRequestSavingId(request.id)
+    try {
+      setRequests((prev) => prev.map((item) => (
+        item.id === request.id ? { ...item, adminNotes: nextNotes, propertyFacts: propertyFactsPatch } : item
+      )))
+      setAdminNoteDrafts((prev) => ({ ...prev, [request.id]: { noteType: draft.noteType, body: '' } }))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({ property_facts: propertyFactsPatch })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      try {
+        await supabase.from('admin_notes').insert({
+          lead_id: asNullableUuid(request.id),
+          property_id: getLinkedPropertyId(request),
+          note_type: draft.noteType,
+          body: nextNote.body,
+          author_label: nextNote.authorLabel,
+        })
+      } catch (noteError) {
+        console.warn('admin_notes table unavailable; saved note on lead property_facts.', noteError)
+      }
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save admin note.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setRequestSavingId(null)
+    }
+  }
+
+  async function updateAdminNote(request: WorkRequest, noteId: string, changes: Partial<AdminNote>) {
+    if (!hasAdminConsoleAccess) return
+
+    const nextNotes = (request.adminNotes || []).map((note) =>
+      note.id === noteId ? { ...note, ...changes, updatedAt: new Date().toISOString() } : note
+    )
+    const draftForFacts = requestEditDrafts[request.id] || createRequestEditDraft(request)
+    const propertyFactsPatch = buildPropertyFactsForRequest(
+      { ...request, adminNotes: nextNotes },
+      draftForFacts,
+      { adminNotes: nextNotes }
+    )
+
+    setRequestSavingId(request.id)
+    try {
+      setRequests((prev) => prev.map((item) => (
+        item.id === request.id ? { ...item, adminNotes: nextNotes, propertyFacts: propertyFactsPatch } : item
+      )))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({ property_facts: propertyFactsPatch })
+        .eq('id', request.id)
+
+      if (error) throw error
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not update admin note.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setRequestSavingId(null)
+    }
+  }
+
+  function isPdfEvidence(file: StoredFile) {
+    return /\.pdf$/i.test(file.name || file.path || '') || /application\/pdf/i.test(file.path || '')
+  }
+
+  function isImageEvidence(file: StoredFile) {
+    return file.type === 'photo' || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name || file.path || '')
+  }
+
+  function getEvidenceKey(file: StoredFile, suffix = '') {
+    return `${file.id || file.path || file.name}${suffix ? `:${suffix}` : ''}`
+  }
+
+  function getEvidenceFindingsForFile(request: WorkRequest, file: StoredFile) {
+    const sourceId = file.id || ''
+    const fileNeedle = `${file.name} ${file.path}`.toLowerCase()
+    return (siteMediaFindingsByRequest[request.id] || []).filter((finding) => {
+      if (isRejectedFinding(finding)) return false
+      const sourceMatch = Boolean(sourceId && finding.source_file_id === sourceId)
+      const noteMatch = fileNeedle && finding.admin_notes?.toLowerCase().includes(file.name.toLowerCase())
+      return sourceMatch || noteMatch
+    })
+  }
+
+  function getEvidenceInterpretationMessage(status: EvidenceInspectionStatus, findingsCount: number) {
+    if (status === 'failed') return 'Interpretation failed. Upload clearer evidence or manually add findings.'
+    if (status === 'uploaded') return 'Not interpreted yet.'
+    if (status === 'queued_for_interpretation' && findingsCount === 0) return 'No findings drafted yet. Run Inspect this file or mark Needs More Info.'
+    if (status === 'interpreting') return 'Interpreting evidence...'
+    if (findingsCount === 0) return 'No findings drafted yet. Run Inspect this file or mark Needs More Info.'
+    return `${findingsCount} AI Draft finding${findingsCount === 1 ? '' : 's'} linked to this evidence.`
+  }
+
+  function getEvidenceType(file: StoredFile, mode: 'full_pdf' | 'page' | 'range' | 'image' | 'file' = 'file'): EvidenceType {
+    const lower = `${file.name} ${file.path}`.toLowerCase()
+    if (mode === 'page' || mode === 'range') return 'inspection_page'
+    if (isImageEvidence(file)) return lower.includes('screenshot') ? 'screenshot' : 'photo'
+    if (lower.includes('invoice')) return 'invoice'
+    if (lower.includes('disclosure')) return 'seller_disclosure'
+    if (isPdfEvidence(file)) return 'full_inspection_report'
+    return 'manual'
+  }
+
+  function getEvidenceResearchDraft(file: StoredFile): EvidenceResearchDraft {
+    const key = getEvidenceKey(file)
+    return evidenceResearchDraftsByKey[key] || {
+      question: '',
+      question_type: 'property-specific',
+      research_scope: 'Uploaded files only',
+      research_categories: ['Property history'],
+    }
+  }
+
+  function updateEvidenceResearchDraft(file: StoredFile, changes: Partial<EvidenceResearchDraft>) {
+    const key = getEvidenceKey(file)
+    setEvidenceResearchDraftsByKey((prev) => ({
+      ...prev,
+      [key]: {
+        question: prev[key]?.question || '',
+        question_type: prev[key]?.question_type || 'property-specific',
+        research_scope: prev[key]?.research_scope || 'Uploaded files only',
+        research_categories: prev[key]?.research_categories || ['Property history'],
+        ...changes,
+      },
+    }))
+  }
+
+  function parsePageRange(input: string) {
+    const clean = input.trim()
+    const range = clean.match(/^(\d+)\s*-\s*(\d+)$/)
+    if (range) {
+      const start = Math.max(1, Number(range[1]))
+      const end = Math.max(start, Number(range[2]))
+      return { label: `pages ${start}-${end}`, pageNumber: null as number | null, pageRange: `${start}-${end}` }
+    }
+    const page = Math.max(1, Number(clean.replace(/[^\d]/g, '') || 1))
+    return { label: `page ${page}`, pageNumber: page, pageRange: null as string | null }
+  }
+
+  function estimatePdfPageCount(raw: string) {
+    const matches = raw.match(/\/Type\s*\/Page\b/g)
+    if (matches?.length) return matches.length
+    return null
+  }
+
+  async function extractStoredPdfEvidenceText(file: StoredFile, pageLabel = '') {
+    const signedUrl = await resolveStoredFileUrl(file)
+    const response = await fetch(signedUrl)
+    if (!response.ok) throw new Error(`Could not download PDF for evidence inspection (${response.status}).`)
+    const blob = await response.blob()
+    const raw = await blob.slice(0, Math.min(blob.size, INSPECTION_FRONT_PAGE_MAX_BYTES)).text()
+    const literalStrings = Array.from(raw.matchAll(/\(([^()]{3,})\)/g))
+      .map((match) => match[1])
+      .join(' ')
+    const arrayStrings = Array.from(raw.matchAll(/\[((?:\s*\([^()]{2,}\)\s*){2,})\]/g))
+      .map((match) => Array.from(match[1].matchAll(/\(([^()]{2,})\)/g)).map((item) => item[1]).join(' '))
+      .join(' ')
+    const pageCount = estimatePdfPageCount(raw)
+    const text = normalizeInspectionReportText(`${literalStrings} ${arrayStrings} ${raw.slice(0, 12000)}`).slice(0, 24000)
+    const warning = [
+      pageLabel ? `Requested ${pageLabel}.` : '',
+      pageCount ? `Estimated PDF page count: ${pageCount}.` : 'Page count could not be confirmed.',
+      'Partial extraction only. Some findings may be missing.',
+      text.length < 120 ? 'Low readable text. Try inspecting page images or upload clearer pages.' : '',
+    ].filter(Boolean).join(' ')
+
+    return { text, pageCount, warning, payloadBytes: Math.min(blob.size, INSPECTION_FRONT_PAGE_MAX_BYTES) }
+  }
+
+  function getInspectionStatusLabel(status?: InspectionProcessingStatus) {
+    const labels: Record<InspectionProcessingStatus, string> = {
+      uploaded: 'Uploaded',
+      extracting_pdf: 'Extracting PDF',
+      inspection_review_drafted: 'Inspection Review Drafted',
+      needs_human_review: 'Needs Human Review',
+      human_verified: 'Human Verified',
+      extraction_failed: 'Extraction Failed',
+    }
+    return labels[status || 'uploaded']
+  }
+
+  function buildInspectionDraftFromExtractedText(params: {
+    fileName: string
+    text: string
+    payloadBytes: number
+    request?: WorkRequest
+  }): InspectionReportDraft {
+    const address = extractInspectionAddress(params.text)
+    const clientName = firstMatch(params.text, [
+      /(?:Client|Customer|Prepared\s+For|Report\s+Prepared\s+For)\s*:?\s*([A-Z][A-Za-z .'-]{2,80})/i,
+    ])
+    const inspectorCombined = firstMatch(params.text, [
+      /(?:Inspector|Inspected\s+By)\s*:?\s*([A-Z][A-Za-z .'-]{2,80}(?:\s*\/\s*[A-Z][A-Za-z0-9 .,&'-]{2,100})?)/i,
+    ])
+    const companyFromInspector = inspectorCombined.includes('/')
+      ? inspectorCombined.split('/').slice(1).join('/').trim()
+      : ''
+    const inspectorName = inspectorCombined.includes('/')
+      ? inspectorCombined.split('/')[0].trim()
+      : inspectorCombined
+    const inspectorCompany = companyFromInspector || firstMatch(params.text, [
+      /(?:Company|Inspection\s+Company)\s*:?\s*([A-Z][A-Za-z0-9 .,&'-]{2,100})/i,
+      /\b([A-Z][A-Za-z0-9 .,&'-]{2,80}\s+(?:Home\s+Inspections|Inspections|Inspection\s+Services|Inspection\s+LLC|Inspections\s+LLC))\b/,
+    ])
+    const reportType = firstMatch(params.text, [
+      /\b(Home\s+Inspection\s+Report|Property\s+Inspection\s+Report|Inspection\s+Report|Pre[-\s]?Listing\s+Inspection|Buyer\s+Inspection)\b/i,
+    ]) || 'Inspection report'
+    const inspectionDate = extractInspectionDate(params.text)
+    const summaryItems = extractInspectionFindings(params.text)
+    const missingInfo = [
+      !address.propertyAddress && !params.request?.propertyAddress ? 'Confirm property address.' : '',
+      !inspectionDate ? 'inspection date' : '',
+      !clientName ? 'client/customer name' : '',
+      !inspectorName && !inspectorCompany ? 'inspector name/company' : '',
+      !summaryItems.length ? 'inspection summary findings' : '',
+    ].filter(Boolean)
+    const intelligence = buildInspectionIntelligenceDraft({
+      fileName: params.fileName,
+      reportType,
+      propertyAddress: address.propertyAddress || params.request?.propertyAddress || '',
+      city: address.city || params.request?.city || '',
+      state: address.state || params.request?.state || '',
+      inspectionDate,
+      inspectorName,
+      inspectorCompany,
+      findings: summaryItems,
+      missingInfo,
+      propertyId: params.request?.propertyId || null,
+    })
+
+    return {
+      fileName: params.fileName,
+      frontPagePayloadBytes: params.payloadBytes,
+      propertyAddress: address.propertyAddress || params.request?.propertyAddress || '',
+      city: address.city || params.request?.city || '',
+      state: address.state || params.request?.state || '',
+      inspectionDate,
+      clientName,
+      inspectorName,
+      inspectorCompany,
+      reportType,
+      summaryItems,
+      missingInfo,
+      intelligence,
+      status: missingInfo.length ? 'Needs Review' : 'AI Draft',
+    }
+  }
+
+  async function persistInspectionExtraction(params: {
+    request: WorkRequest
+    file: StoredFile
+    status: InspectionProcessingStatus
+    extractedText?: string
+    extractionSummary: string
+    payloadBytes?: number
+  }) {
+    try {
+      await supabase.from('inspection_extractions').insert({
+        lead_id: asNullableUuid(params.request.id),
+        property_id: getLinkedPropertyId(params.request),
+        source_file_id: asNullableUuid(params.file.id || ''),
+        file_name: params.file.name,
+        status: params.status,
+        payload_bytes: params.payloadBytes || null,
+        extracted_text: params.extractedText?.slice(0, 24000) || null,
+        extraction_summary: params.extractionSummary,
+        human_review_status: params.status === 'extraction_failed' ? 'needs_review' : 'ai_draft',
+      })
+    } catch (error) {
+      console.warn('inspection_extractions table unavailable; saved extraction on lead property_facts.', error)
+    }
+  }
+
+  async function saveInspectionStateToLead(
+    request: WorkRequest,
+    updates: Partial<WorkRequest>,
+    extraFacts: Record<string, unknown> = {}
+  ) {
+    const nextRequest = { ...request, ...updates }
+    const propertyFactsPatch = {
+      ...emptyPropertyFacts(),
+      ...(request.propertyFacts || {}),
+      inspectionIntelligence: nextRequest.inspectionIntelligence || null,
+      inspectionProcessingStatus: nextRequest.inspectionProcessingStatus || 'uploaded',
+      inspectionExtractionSummary: nextRequest.inspectionExtractionSummary || '',
+      inspectionExtractionMessage: nextRequest.inspectionExtractionMessage || '',
+      operationalRecord: {
+        ...getOperationalRecord((request.propertyFacts || {}) as Record<string, any>),
+        scopeInterpretation: nextRequest.scopeInterpretation || '',
+        missingInformation: nextRequest.missingInformation || '',
+        internalNotes: nextRequest.internalNotes || '',
+        agentFacingNotes: nextRequest.agentFacingNotes || '',
+        contractorFacingNotes: nextRequest.contractorFacingNotes || '',
+      },
+      adminNotes: nextRequest.adminNotes || [],
+      ...extraFacts,
+    }
+
+    setRequests((prev) => prev.map((item) => (
+      item.id === request.id ? { ...nextRequest, propertyFacts: propertyFactsPatch } : item
+    )))
+
+    const leadPatch: Record<string, unknown> = { property_facts: propertyFactsPatch }
+    if (nextRequest.propertyAddress) leadPatch.address = nextRequest.propertyAddress
+    if (nextRequest.city) leadPatch.city = nextRequest.city
+    if (nextRequest.state) leadPatch.state = nextRequest.state
+    if (nextRequest.zip) leadPatch.zip = nextRequest.zip
+
+    const { error } = await supabase
+      .from('leads')
+      .update(leadPatch)
+      .eq('id', request.id)
+
+    if (error) throw error
+  }
+
+  async function processInspectionPdf(request: WorkRequest, file: StoredFile) {
+    if (!hasAdminConsoleAccess) {
+      alert('Sign in as admin/owner before processing inspection PDFs.')
+      return
+    }
+
+    setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extracting_pdf' }))
+    await saveInspectionStateToLead(request, {
+      inspectionProcessingStatus: 'extracting_pdf',
+      inspectionExtractionMessage: `Extracting PDF text from ${file.name}.`,
+    })
+
+    try {
+      const signedUrl = await resolveStoredFileUrl(file)
+      const response = await fetch(signedUrl)
+      if (!response.ok) throw new Error(`Could not download PDF for extraction (${response.status}).`)
+      const blob = await response.blob()
+      const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
+      const { text, payloadBytes } = await readInspectionPdfText(pdfFile)
+      const extractedText = text.trim()
+
+      if (!extractedText || extractedText.length < 20) {
+        throw new Error('PDF text could not be extracted. Upload clearer PDF, images, or manually add findings.')
+      }
+
+      const draft = buildInspectionDraftFromExtractedText({
+        fileName: file.name,
+        text: extractedText,
+        payloadBytes,
+        request,
+      })
+      const status: InspectionProcessingStatus = draft.intelligence.repairItems.length
+        ? 'needs_human_review'
+        : 'inspection_review_drafted'
+      const extractionSummary = draft.intelligence.executiveSummary
+
+      await saveInspectionStateToLead(request, {
+        propertyAddress: draft.propertyAddress || request.propertyAddress,
+        city: draft.city || request.city,
+        state: draft.state || request.state,
+        inspectionIntelligence: draft.intelligence,
+        inspectionProcessingStatus: status,
+        inspectionExtractionSummary: extractionSummary,
+        inspectionExtractionMessage: draft.missingInfo.length
+          ? `Missing Info: ${draft.missingInfo.join(', ')}`
+          : 'Inspection Review Drafted. Admin review required.',
+      })
+      await persistInspectionExtraction({
+        request,
+        file,
+        status,
+        extractedText,
+        extractionSummary,
+        payloadBytes,
+      })
+      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: status }))
+    } catch (error: any) {
+      const message = error?.message || 'PDF text could not be extracted. Upload clearer PDF, images, or manually add findings.'
+      await saveInspectionStateToLead(request, {
+        inspectionProcessingStatus: 'extraction_failed',
+        inspectionExtractionMessage: message,
+      })
+      await persistInspectionExtraction({
+        request,
+        file,
+        status: 'extraction_failed',
+        extractionSummary: message,
+      })
+      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extraction_failed' }))
+      alert(message)
+    }
+  }
+
+  async function processInspectionPdfsForRequest(request: WorkRequest) {
+    const pdfs = request.documents.filter(isPdfEvidence)
+    if (!pdfs.length) {
+      alert('No uploaded PDF evidence is attached to this request.')
+      return
+    }
+
+    await processInspectionPdf(request, pdfs[0])
+  }
+
+  async function runFirstPassEvidenceInterpretation(request: WorkRequest, files = getUniqueUploadedFiles(request)) {
+    if (!hasAdminConsoleAccess || !files.length) return
+
+    const pdf = files.find(isPdfEvidence)
+    if (pdf) {
+      await saveInspectionStateToLead(request, {
+        inspectionProcessingStatus: 'extracting_pdf',
+        inspectionExtractionMessage: 'Media uploaded. Interpretation pending.',
+      })
+      await processInspectionPdf(request, pdf)
+      return
+    }
+
+    const findings = files.slice(0, 6).map((file) => {
+      const category = getEvidenceCategory(file.name, '', file.type)
+      if (category === 'photo') {
+        return `${file.name}: uploaded photo evidence needs repair review, trade routing, missing information, and human verification before scope or pricing.`
+      }
+      if (category === 'video') {
+        return `${file.name}: uploaded video evidence needs repair review, trade routing, missing information, and human verification before scope or pricing.`
+      }
+      return `${file.name}: uploaded document evidence needs repair review, trade routing, missing information, and human verification before scope or pricing.`
+    })
+
+    const intelligence = buildInspectionIntelligenceDraft({
+      fileName: files[0]?.name || `uploaded-evidence-${request.id}`,
+      reportType: 'Uploaded evidence review',
+      propertyAddress: request.propertyAddress,
+      city: request.city,
+      state: request.state,
+      inspectionDate: '',
+      inspectorName: '',
+      inspectorCompany: '',
+      findings,
+      missingInfo: ['Review uploaded evidence and confirm exact work area, trade, quantity, and source file.'],
+      propertyId: request.propertyId || getRequestPropertyId(request),
+    })
+
+    await saveInspectionStateToLead(request, {
+      inspectionIntelligence: intelligence,
+      inspectionProcessingStatus: 'needs_human_review',
+      inspectionExtractionSummary: intelligence.executiveSummary,
+      inspectionExtractionMessage: 'First-pass media interpretation drafted work groups. Needs Human Review.',
+    })
+  }
+
+  async function persistEvidenceItem(params: {
+    request: WorkRequest
+    file: StoredFile
+    mode: 'full_pdf' | 'page' | 'range' | 'image' | 'file'
+    status: EvidenceInspectionStatus
+    pageNumber?: number | null
+    pageRange?: string | null
+    extractedText?: string
+    extractionWarning?: string
+  }) {
+    try {
+      await supabase.from('evidence_items').insert({
+        property_id: getLinkedPropertyId(params.request),
+        lead_id: asNullableUuid(params.request.id),
+        file_id: asNullableUuid(params.file.id || ''),
+        source_file_id: asNullableUuid(params.file.id || ''),
+        storage_bucket: params.file.bucket || REQUEST_FILES_BUCKET,
+        storage_path: params.file.path || '',
+        file_name: params.file.name,
+        file_type: params.file.type,
+        mime_type: null,
+        evidence_type: getEvidenceType(params.file, params.mode),
+        page_number: params.pageNumber || null,
+        page_range: params.pageRange || null,
+        inspection_status: params.status,
+        extraction_status: params.extractedText ? 'extracted' : params.status === 'failed' ? 'failed' : 'not_extracted',
+        extracted_text: params.extractedText?.slice(0, 24000) || null,
+        extracted_text_char_count: params.extractedText?.length || 0,
+        extraction_warning: params.extractionWarning || null,
+      })
+    } catch (error) {
+      console.warn('evidence_items table unavailable; evidence inspection finding still saved in property_media_findings.', error)
+    }
+  }
+
+  async function createEvidenceFinding(params: {
+    request: WorkRequest
+    file: StoredFile
+    observation: string
+    findingType: string
+    confidence: PropertyMediaConfidence
+    fieldConsequence: string
+    estimateImpact: string
+    accessNotes?: string
+    safetyNotes?: string
+    adminNotes: string
+  }) {
+    const analysis = await ensureSiteMediaAnalysis(params.request, params.file)
+    const record = {
+      property_media_analysis_id: analysis.id,
+      property_id: analysis.property_id ?? getLinkedPropertyId(params.request),
+      lead_id: analysis.lead_id ?? asNullableUuid(params.request.id),
+      finding_type: params.findingType,
+      observation: params.observation,
+      field_consequence: params.fieldConsequence,
+      estimate_impact: params.estimateImpact,
+      access_notes: params.accessNotes || '',
+      safety_notes: params.safetyNotes || '',
+      confidence: params.confidence,
+      source_file_id: analysis.source_file_id ?? asNullableUuid(params.file.id || ''),
+      review_status: 'needs_review' as PropertyMediaReviewStatus,
+      admin_notes: params.adminNotes,
+    }
+
+    const { data, error } = await supabase
+      .from('property_media_findings')
+      .insert(record)
+      .select()
+      .single()
+
+    if (error) throw error
+    const saved = data as PropertyMediaFinding
+    setSiteMediaFindingsByRequest((prev) => ({
+      ...prev,
+      [params.request.id]: [saved, ...(prev[params.request.id] || [])],
+    }))
+    return saved
+  }
+
+  async function inspectEvidenceFile(
+    request: WorkRequest,
+    file: StoredFile,
+    mode: 'full_pdf' | 'page' | 'range' | 'image' | 'file' = 'file',
+    pageInput = ''
+  ) {
+    if (!hasAdminConsoleAccess) {
+      alert('Sign in as admin/owner before inspecting evidence.')
+      return
+    }
+
+    const page = mode === 'page' || mode === 'range' ? parsePageRange(pageInput || '1') : { label: '', pageNumber: null, pageRange: null }
+    const evidenceKey = getEvidenceKey(file, page.label || mode)
+    setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'interpreting' }))
+
+    try {
+      if (isPdfEvidence(file)) {
+        const { text, warning, pageCount } = await extractStoredPdfEvidenceText(file, page.label)
+        const findings = extractInspectionFindings(text)
+        const sourceLabel = `${file.name}${page.label ? ` - ${page.label}` : mode === 'full_pdf' ? ' - full PDF' : ''}`
+
+        await persistEvidenceItem({
+          request,
+          file,
+          mode,
+          status: findings.length ? 'needs_admin_review' : 'interpretation_drafted',
+          pageNumber: page.pageNumber,
+          pageRange: page.pageRange,
+          extractedText: text,
+          extractionWarning: warning,
+        })
+
+        if (!findings.length) {
+          await createEvidenceFinding({
+            request,
+            file,
+            findingType: 'inspection_context',
+            observation: `${sourceLabel}: no clear findings were extracted from readable text. ${warning}`,
+            fieldConsequence: 'Needs human review of this evidence object before assuming the page has no findings.',
+            estimateImpact: 'No pricing impact should be inferred until a clearer page/image or manual finding is reviewed.',
+            confidence: text.length < 120 ? 'low' : 'medium',
+            adminNotes: `Evidence-Level Inspection Intelligence. Source: ${sourceLabel}. ${warning}`,
+          })
+        } else {
+          for (const finding of findings) {
+            await createEvidenceFinding({
+              request,
+              file,
+              findingType: /safety|hazard|sprinkler|fire|electrical/i.test(finding) ? 'safety' : 'inspection_context',
+              observation: `${sourceLabel}: ${finding}`,
+              fieldConsequence: 'AI Draft evidence finding from uploaded PDF text. Needs verification against the actual page/image and inspection context.',
+              estimateImpact: 'May affect scope, trade routing, and repair-vs-credit discussion after admin review.',
+              safetyNotes: /safety|hazard|sprinkler|fire|electrical/i.test(finding) ? 'Possible safety concern. Needs qualified review.' : '',
+              confidence: text.length < 120 ? 'low' : 'medium',
+              adminNotes: `Source file/page: ${sourceLabel}. ${warning}${pageCount ? ` Page count estimate: ${pageCount}.` : ''}`,
+            })
+          }
+        }
+
+        setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'needs_admin_review' }))
+        return
+      }
+
+      if (isImageEvidence(file)) {
+        await persistEvidenceItem({
+          request,
+          file,
+          mode: 'image',
+          status: 'needs_admin_review',
+          extractionWarning: 'Image evidence inspection created a visual-review draft. Hidden conditions are not inferred as fact.',
+        })
+        await createEvidenceFinding({
+          request,
+          file,
+          findingType: 'inspection_context',
+          observation: `${file.name}: uploaded image evidence needs visual review. It appears to show property/media context, but visible conditions must be verified by admin before scope or pricing decisions.`,
+          fieldConsequence: 'Possible visual evidence for scope, access, safety, material, or condition review. Needs human verification.',
+          estimateImpact: 'Use as an estimate note only after admin labels the visible condition and confirms trade relevance.',
+          accessNotes: 'Review access, staging, surrounding surfaces, and photo angle before relying on this image.',
+          safetyNotes: 'Do not infer hidden damage. Use possible/appears language until verified.',
+          confidence: 'low',
+          adminNotes: `Evidence-Level Inspection Intelligence. Source image: ${file.name}. AI Draft visual observation only.`,
+        })
+        setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'needs_admin_review' }))
+        return
+      }
+
+      await createEvidenceFinding({
+        request,
+        file,
+        findingType: 'inspection_context',
+        observation: `${file.name}: uploaded evidence file is linked for manual inspection.`,
+        fieldConsequence: 'Manual evidence review required.',
+        estimateImpact: 'No estimate impact until admin reviews the file.',
+        confidence: 'low',
+        adminNotes: `Evidence-Level Inspection Intelligence. Source file: ${file.name}.`,
+      })
+      setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'needs_admin_review' }))
+    } catch (error: any) {
+      console.error(error)
+      await persistEvidenceItem({
+        request,
+        file,
+        mode,
+        status: 'failed',
+        pageNumber: page.pageNumber,
+        pageRange: page.pageRange,
+        extractionWarning: error?.message || 'Evidence inspection failed.',
+      })
+      setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'failed' }))
+      alert(error?.message || 'Could not inspect this evidence file.')
+    }
+  }
+
+  async function updateInspectionFinding(
+    request: WorkRequest,
+    itemId: string,
+    changes: Partial<InspectionRepairItemDraft>
+  ) {
+    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
+
+    const nextIntelligence: InspectionIntelligenceDraft = {
+      ...request.inspectionIntelligence,
+      humanReviewStatus: 'needs_review',
+      repairItems: request.inspectionIntelligence.repairItems.map((item) =>
+        item.id === itemId ? { ...item, ...changes } : item
+      ),
+    }
+
+    const nextStatus: InspectionProcessingStatus = nextIntelligence.repairItems.every((item) => item.status === 'approved' || item.status === 'rejected')
+      ? 'human_verified'
+      : 'needs_human_review'
+
+    setInspectionFindingSavingId(itemId)
+    try {
+      await saveInspectionStateToLead(request, {
+        inspectionIntelligence: nextIntelligence,
+        inspectionProcessingStatus: nextStatus,
+        inspectionExtractionMessage: nextStatus === 'human_verified'
+          ? 'Human Verified'
+          : 'Needs Human Review',
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save inspection finding review.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setInspectionFindingSavingId(null)
+    }
+  }
+
+  async function updateInspectionBundle(
+    request: WorkRequest,
+    bundleId: string,
+    changes: Partial<InspectionRepairBundleDraft>
+  ) {
+    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
+
+    const updateBundles = (bundles: InspectionRepairBundleDraft[] = []) =>
+      bundles.map((bundle) =>
+        bundle.id === bundleId ? { ...bundle, ...changes } : bundle
+      )
+    const existingWorkGroups = request.inspectionIntelligence.workGroups || request.inspectionIntelligence.repairBundles || []
+    const nextIntelligence: InspectionIntelligenceDraft = {
+      ...request.inspectionIntelligence,
+      humanReviewStatus: 'needs_review',
+      repairBundles: updateBundles(request.inspectionIntelligence.repairBundles),
+      workGroups: updateBundles(existingWorkGroups),
+    }
+    const activeGroups = (nextIntelligence.workGroups || nextIntelligence.repairBundles || [])
+      .filter((bundle) => bundle.status !== 'rejected')
+    const nextStatus: InspectionProcessingStatus = activeGroups.length > 0 && activeGroups.every((bundle) => isHumanVerifiedStatus(bundle.status))
+      ? 'human_verified'
+      : 'needs_human_review'
+
+    setInspectionFindingSavingId(bundleId)
+    try {
+      await saveInspectionStateToLead(request, {
+        inspectionIntelligence: nextIntelligence,
+        inspectionProcessingStatus: nextStatus,
+        inspectionExtractionMessage: nextStatus === 'human_verified' ? 'Human Verified' : 'Needs Human Review',
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not save work group review.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setInspectionFindingSavingId(null)
+    }
+  }
+
+  async function generateInspectionWorkGroups(request: WorkRequest) {
+    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
+
+    const intelligence = request.inspectionIntelligence
+    const propertyId = request.propertyId || getRequestPropertyId(request)
+    const workGroups = isBerlinAveRequest(request)
+      ? buildBerlinAveWorkGroups(intelligence.id || `inspection-${request.id}`, propertyId)
+      : buildRepairBundles(intelligence.repairItems || [], propertyId)
+
+    if (!workGroups.length) {
+      alert('No readable inspection findings were available to generate work groups.')
+      return
+    }
+
+    const nextIntelligence: InspectionIntelligenceDraft = {
+      ...intelligence,
+      humanReviewStatus: 'needs_review',
+      repairBundles: workGroups,
+      workGroups,
+      tradeScopes: workGroups.map((bundle) => `${bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`),
+      priorityRoadmap: workGroups.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.risk_explanation}`),
+      estimateLow: workGroups.reduce((sum, bundle) => sum + bundle.estimate_low, 0),
+      estimateHigh: workGroups.reduce((sum, bundle) => sum + bundle.estimate_high, 0),
+    }
+
+    setInspectionFindingSavingId(`work-groups-${request.id}`)
+    try {
+      await saveInspectionStateToLead(request, {
+        inspectionIntelligence: nextIntelligence,
+        inspectionProcessingStatus: 'needs_human_review',
+        inspectionExtractionMessage: 'Work groups generated from findings. Needs Human Review.',
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not generate work groups from findings.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setInspectionFindingSavingId(null)
+    }
+  }
+
+  async function requestResearchForWorkGroup(
+    request: WorkRequest,
+    group: InspectionRepairBundleDraft,
+    status: InspectionDraftStatus = 'research_requested'
+  ) {
+    if (!canEditOperationalMemory(memoryActorRole)) {
+      alert('You do not have permission to request research.')
+      return
+    }
+
+    const prompt = window.prompt(
+      'What should the agent try to prove or find?',
+      status === 'needs_more_info'
+        ? `Find missing evidence needed to verify ${group.title}.`
+        : `Research source context for ${group.title}: ${group.recommended_next_action || group.summary}`
+    )
+    if (!prompt?.trim()) return
+
+    const files = getUniqueUploadedFiles(request)
+    const linkedFile = files.find((file) => group.source_page && group.source_page.toLowerCase().includes(file.name.toLowerCase())) || files[0]
+    const categories = normalizeResearchCategories(
+      (group.resource_categories || []).filter((category): category is AgentResearchCategory =>
+        AGENT_RESEARCH_CATEGORIES.includes(category as AgentResearchCategory)
+      ),
+      getSourceResearchDefaults(group.safety_concern ? 'safety' : 'property-specific', `${group.title} ${group.evidence_summary} ${group.recommended_next_action}`)
+    )
+    const scope: AgentResearchScope = categories.some((category) => ['Building code / jurisdiction', 'Safety guidance', 'Permit / inspection requirements'].includes(category))
+      ? 'Official/code resources'
+      : 'Uploaded files + property data'
+
+    setInspectionFindingSavingId(group.id)
+    setAgentResearchSavingId(`work-group-${group.id}`)
+    try {
+      const record = {
+        property_id: getLinkedPropertyId(request),
+        lead_id: asNullableUuid(request.id),
+        finding_id: null,
+        source_file_id: asNullableUuid(linkedFile?.id || ''),
+        evidence_id: `work-group:${group.id}`,
+        question: prompt.trim(),
+        question_type: group.safety_concern ? 'safety' as AgentResearchQuestionType : 'property-specific' as AgentResearchQuestionType,
+        research_scope: scope,
+        research_categories: categories,
+        status: 'queued' as AgentResearchTaskStatus,
+        confidence: 'low' as PropertyMediaConfidence,
+        needs_more_info_prompt: prompt.trim(),
+        missing_information: prompt.trim(),
+        recommended_next_action: 'Run Research, then admin must review sources and draft answer before verification.',
+        online_search_requested: researchCategoriesRequestOnline(categories, scope),
+        online_search_performed: false,
+        internal_memory_used: false,
+        official_sources_used: false,
+        supplier_sources_used: false,
+        source_quality: getPrimarySourceQuality(categories),
+        answer_status: 'needs_review',
+        source_priority: 'linked work group -> source evidence file/page/image -> extracted text -> property record -> admin notes -> allowed source categories',
+        verified_for_memory: false,
+        created_by: currentUserId,
+      }
+
+      const { data, error } = await supabase
+        .from('agent_research_tasks')
+        .insert(record)
+        .select()
+        .single()
+
+      if (error) throw error
+      const saved = data as AgentResearchTask
+      setAgentResearchTasksByRequest((prev) => ({
+        ...prev,
+        [request.id]: [saved, ...(prev[request.id] || [])],
+      }))
+      setSourceResearchMessage(request.id, `Research task created for ${group.title}. Drafting source-backed answer...`)
+      await updateInspectionBundle(request, group.id, { status })
+      await runWorkGroupResearchTask(request, group, saved)
+    } catch (error: any) {
+      console.error('[Work Group Research] Supabase insert/select error:', error)
+      setSourceResearchMessage(request.id, `Supabase insert/select error: ${error?.message || 'Could not create work group research task.'}`)
+      alert(error?.message || 'Could not create work group research task.')
+    } finally {
+      setInspectionFindingSavingId(null)
+      setAgentResearchSavingId(null)
     }
   }
 
@@ -10065,6 +12450,35 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     })
   }, [requests, filter, search])
 
+  const addressGroupedRequests = useMemo(() => {
+    const groups = new Map<string, WorkRequest[]>()
+    filteredRequests.forEach((request) => {
+      const addressKey = (request.propertyAddress || `${request.city} ${request.state}` || request.id).trim().toLowerCase()
+      const current = groups.get(addressKey) || []
+      groups.set(addressKey, [...current, request])
+    })
+
+    return Array.from(groups.values()).map((group) => {
+      const primary = group
+        .slice()
+        .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))[0]
+      const mergedPhotos = group.flatMap((request) => request.photos || [])
+      const mergedDocuments = group.flatMap((request) => request.documents || [])
+      const mergedNotes = group.flatMap((request) => request.adminNotes || [])
+      const needsAttention = group.find((request) => request.status === 'needs_info' || request.status === 'pending_approval')
+      return {
+        ...primary,
+        status: needsAttention?.status || primary.status,
+        photos: mergedPhotos,
+        documents: mergedDocuments,
+        adminNotes: mergedNotes,
+        description: group.length > 1
+          ? `${primary.description || 'Property work'} (${group.length} records grouped at this address)`
+          : primary.description,
+      }
+    })
+  }, [filteredRequests])
+
   useEffect(() => {
     if (!hasAdminConsoleAccess || (activeTab !== 'dashboard' && activeTab !== 'properties')) return
 
@@ -10128,32 +12542,17 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     'estimate_ready',
   ]
 
-  const activePropertyCount = filteredRequests.filter((request) => request.status !== 'estimate_ready').length
-  const needsReviewRequests = filteredRequests.filter((request) => request.status === 'needs_info' || request.status === 'pending_approval')
-  const readyForActionRequests = filteredRequests.filter((request) => request.status === 'pending_approval' || request.status === 'estimate_ready')
-  const recentlyUpdatedRequests = [...filteredRequests]
+  const activePropertyCount = addressGroupedRequests.filter((request) => request.status !== 'estimate_ready').length
+  const needsReviewRequests = addressGroupedRequests.filter((request) => request.status === 'needs_info' || request.status === 'pending_approval')
+  const readyForActionRequests = addressGroupedRequests.filter((request) => request.status === 'pending_approval' || request.status === 'estimate_ready')
+  const recentlyUpdatedRequests = [...addressGroupedRequests]
     .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))
     .slice(0, 4)
   const dashboardSections = [
     {
-      title: 'Active Properties',
-      hint: 'Open work that still needs review, scope, routing, or follow-up.',
-      items: filteredRequests.filter((request) => request.status !== 'estimate_ready'),
-    },
-    {
-      title: 'Needs Review',
-      hint: 'Properties waiting on missing info, repair review, or human approval.',
-      items: needsReviewRequests,
-    },
-    {
-      title: 'Ready for Action',
-      hint: 'Scopes ready to package, route, report, or close.',
-      items: readyForActionRequests,
-    },
-    {
-      title: 'Recently Updated',
-      hint: 'Latest property records by saved timestamp.',
-      items: recentlyUpdatedRequests,
+      title: 'Properties by Address',
+      hint: 'Each property address is one work group. Open only what needs the next decision.',
+      items: addressGroupedRequests,
     },
   ]
 
@@ -10244,8 +12643,437 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     }
   }
 
+  function isRejectedResearchTask(task: AgentResearchTask) {
+    return task.status === 'rejected'
+  }
+
+  function isRejectedFinding(finding: PropertyMediaFinding) {
+    return finding.review_status === 'rejected' || finding.review_status === 'deprecated'
+  }
+
+  function getActiveFindings(request: WorkRequest) {
+    return (siteMediaFindingsByRequest[request.id] || []).filter((finding) => !isRejectedFinding(finding))
+  }
+
+  function getArchivedFindings(request: WorkRequest) {
+    return (siteMediaFindingsByRequest[request.id] || []).filter(isRejectedFinding)
+  }
+
+  function getActiveResearchTasks(request: WorkRequest) {
+    return (agentResearchTasksByRequest[request.id] || []).filter((task) => !isRejectedResearchTask(task))
+  }
+
+  function getArchivedResearchTasks(request: WorkRequest) {
+    return (agentResearchTasksByRequest[request.id] || []).filter(isRejectedResearchTask)
+  }
+
+  function isBerlinAveRequest(request: WorkRequest) {
+    const text = [
+      request.propertyAddress,
+      request.city,
+      request.state,
+      request.inspectionIntelligence?.propertyAddress,
+      request.inspectionIntelligence?.city,
+      request.inspectionIntelligence?.fileName,
+      request.inspectionIntelligence?.repairItems?.map((item) => item.source_text).join(' '),
+    ].filter(Boolean).join(' ')
+    return /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(text)
+  }
+
+  function getInspectionWorkGroups(request: WorkRequest) {
+    const intelligence = request.inspectionIntelligence
+    if (!intelligence) return []
+
+    const persistedGroups = (intelligence.workGroups || intelligence.repairBundles || []) as InspectionRepairBundleDraft[]
+    if (persistedGroups.length > 0) return persistedGroups.filter((bundle) => bundle.status !== 'rejected')
+
+    if (isBerlinAveRequest(request)) {
+      return buildBerlinAveWorkGroups(intelligence.id || `inspection-${request.id}`, request.propertyId || getRequestPropertyId(request))
+    }
+
+    if (intelligence.repairItems?.length) {
+      return buildRepairBundles(intelligence.repairItems, request.propertyId || getRequestPropertyId(request))
+        .filter((bundle) => bundle.status !== 'rejected')
+    }
+
+    return []
+  }
+
+  function getArchivedInspectionWorkGroups(request: WorkRequest) {
+    const intelligence = request.inspectionIntelligence
+    if (!intelligence) return []
+    return ((intelligence.workGroups || intelligence.repairBundles || []) as InspectionRepairBundleDraft[])
+      .filter((bundle) => bundle.status === 'rejected')
+  }
+
+  function hasInspectionFindingsWithoutWorkGroups(request: WorkRequest) {
+    return Boolean(request.inspectionIntelligence?.repairItems?.length) && getInspectionWorkGroups(request).length === 0
+  }
+
+  function getNeedsReviewCount(request: WorkRequest) {
+    const findings = getActiveFindings(request).filter((finding) =>
+      ['ai_draft', 'needs_review', 'needs_more_info', 'research_requested', 'research_drafted'].includes(finding.review_status)
+    )
+    const tasks = getActiveResearchTasks(request).filter((task) =>
+      ['draft', 'queued', 'researching', 'answered', 'needs_review'].includes(task.status)
+    )
+    const workGroups = getInspectionWorkGroups(request).filter((bundle) =>
+      ['ai_draft', 'needs_review', 'needs_more_info', 'research_requested'].includes(bundle.status)
+    )
+    return findings.length + tasks.length + workGroups.length
+  }
+
+  function getRequestEvidenceCount(request: WorkRequest) {
+    return getUniqueUploadedFiles(request).length
+  }
+
+  function getUniqueUploadedFiles(request: WorkRequest) {
+    const uniqueFiles = new Map<string, StoredFile>()
+    ;[...request.photos, ...request.documents].forEach((file) => {
+      const key = (file.path || file.url || file.id || file.name).toLowerCase()
+      if (!uniqueFiles.has(key)) uniqueFiles.set(key, file)
+    })
+    return Array.from(uniqueFiles.values())
+  }
+
+  function getResearchAnswerSummary(task: AgentResearchTask) {
+    const raw = task.answer_draft || task.recommended_next_action || task.missing_information || 'No answer drafted yet.'
+    return raw.length > 170 ? `${raw.slice(0, 167)}...` : raw
+  }
+
+  function getResearchNextStep(task: AgentResearchTask) {
+    if (task.status === 'queued' || task.status === 'draft') return 'Run research'
+    if (task.answer_draft && task.status !== 'human_verified') return 'Review draft'
+    if (task.status === 'human_verified') return 'Human verified'
+    return task.recommended_next_action || 'Needs review'
+  }
+
+  function getOperationalStatusStyle(status: string) {
+    if (['human_verified', 'approved', 'estimate_ready'].includes(status)) return styles.badge
+    if (['rejected', 'failed', 'extraction_failed'].includes(status)) return styles.badgeDanger
+    return styles.badgeMuted
+  }
+
+  function renderResearchCategoryControls(
+    selected: AgentResearchCategory[],
+    onChange: (next: AgentResearchCategory[]) => void
+  ) {
+    return (
+      <div style={styles.checkboxGrid}>
+        {AGENT_RESEARCH_CATEGORIES.map((category) => (
+          <label key={category} style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={selected.includes(category)}
+              onChange={() => onChange(toggleResearchCategory(selected, category))}
+            />
+            <span>{category}</span>
+          </label>
+        ))}
+      </div>
+    )
+  }
+
+  function renderWorkGroupResearchResources(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    const task = getBestWorkGroupResearchTask(request, group)
+    const sources = task ? agentResearchSourcesByTask[task.id] || [] : []
+
+    if (!task) {
+      return (
+        <p style={styles.small}>Source research not yet performed.</p>
+      )
+    }
+
+    const bestResourceNames = sources.slice(0, 3).map((source) => source.source_title).join(', ')
+
+    return (
+      <>
+        <div style={styles.noticeBox}>
+          <strong>Research Draft</strong>
+          <p style={styles.small}>
+            <strong>What we know:</strong> {task.evidence_summary || group.evidence_summary || group.summary}
+          </p>
+          <p style={styles.small}>
+            <strong>Best resources:</strong> {bestResourceNames || 'No source rows saved yet.'}
+          </p>
+          <p style={styles.small}>
+            <strong>Next 3 steps:</strong> {task.recommended_next_action || 'Run Research, then review the draft before use.'}
+          </p>
+          {task.answer_draft && <p style={styles.small}>{task.answer_draft}</p>}
+          <span style={styles.badgeMuted}>{getLearningDisplayName(task.status)}</span>
+        </div>
+        {sources.length > 0 && (
+          <ul style={styles.smallList}>
+            {sources.map((source) => (
+              <li key={source.id}>
+                {source.source_url ? (
+                  <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                ) : (
+                  <span>{source.source_title}</span>
+                )}
+                {' '}({source.source_quality || 'unknown'}, {source.source_category || source.source_type})
+                {source.source_publisher && <> - {source.source_publisher}</>}
+                {(source.relevance_note || source.source_excerpt || source.excerpt) && (
+                  <>
+                    <br />
+                    <span style={styles.small}>{source.relevance_note || source.source_excerpt || source.excerpt}</span>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Details</summary>
+          <p style={styles.small}>Online source search requested: {task.online_search_requested ? 'Yes' : 'No'}</p>
+          <p style={styles.small}>Live online source search performed: {task.online_search_performed ? 'Yes' : 'No'}</p>
+          <p style={styles.small}>Official sources used: {task.official_sources_used ? 'Yes' : 'No'}</p>
+          <p style={styles.small}>Supplier/material sources used: {task.supplier_sources_used ? 'Yes' : 'No'}</p>
+          <p style={styles.small}>Internal memory used: {task.internal_memory_used ? 'Yes' : 'No'}</p>
+          {task.online_search_requested && !task.online_search_performed && (
+            <p style={styles.small}>Live online source search not performed.</p>
+          )}
+          {hasAdminConsoleAccess && (
+            <div style={styles.buttonRow}>
+              <button
+                type="button"
+                style={styles.outlineButton}
+                disabled={agentResearchSavingId === task.id}
+                onClick={() => saveAgentResearchTask(task)}
+              >
+                Save Answer
+              </button>
+              <button
+                type="button"
+                style={styles.outlineButton}
+                disabled={agentResearchSavingId === task.id || task.status === 'human_verified'}
+                onClick={() => saveAgentResearchTask(task, { status: 'human_verified' })}
+              >
+                Human Verify
+              </button>
+              <button
+                type="button"
+                style={styles.outlineButton}
+                disabled={agentResearchSavingId === task.id || task.status === 'rejected'}
+                onClick={() => saveAgentResearchTask(task, { status: 'rejected' })}
+              >
+                Reject
+              </button>
+            </div>
+          )}
+        </details>
+      </>
+    )
+  }
+
+  function renderAddressWorkGroups(request: WorkRequest) {
+    const workGroups = getInspectionWorkGroups(request)
+    const archivedGroups = getArchivedInspectionWorkGroups(request)
+    const hasFindingsWithoutGroups = hasInspectionFindingsWithoutWorkGroups(request)
+    const evidenceCount = getUniqueUploadedFiles(request).length
+    const hasInspectionEvidence = Boolean(request.inspectionIntelligence || evidenceCount)
+    const interpretationFailed = request.inspectionProcessingStatus === 'extraction_failed'
+
+    if (!workGroups.length && !hasFindingsWithoutGroups && !hasInspectionEvidence) return null
+
+    return (
+      <details open={workGroups.length > 0 || hasFindingsWithoutGroups} style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Work Groups ({workGroups.length})</summary>
+        {workGroups.length === 0 ? (
+          <div style={styles.noticeBox}>
+            <p style={styles.small}>
+              {hasFindingsWithoutGroups
+                ? 'Findings found. Generate work groups.'
+                : interpretationFailed
+                  ? 'Media could not be interpreted. Run interpretation manually or add a finding.'
+                  : 'Media uploaded. Interpretation pending.'}
+            </p>
+            {hasFindingsWithoutGroups && hasAdminConsoleAccess && (
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={inspectionFindingSavingId === `work-groups-${request.id}`}
+                onClick={() => generateInspectionWorkGroups(request)}
+              >
+                {inspectionFindingSavingId === `work-groups-${request.id}` ? 'Generating...' : 'Generate Work Groups'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={styles.inspectionTaskGrid}>
+            {workGroups.map((group) => (
+              <div key={group.id} style={styles.inspectionTaskCard}>
+                <div style={styles.buttonRow}>
+                  <div style={{ flex: 1 }}>
+                    <strong>{group.title}</strong>
+                    <p style={styles.small}>{group.evidence_summary || group.summary}</p>
+                  </div>
+                  <span style={group.priority === 'Critical' ? styles.badgeDanger : styles.badgeMuted}>{group.priority}</span>
+                </div>
+                <p style={styles.small}>Trade: {group.recommended_trade}</p>
+                <p style={styles.small}>Next action: {group.recommended_next_action || 'Review before use.'}</p>
+                <div style={styles.buttonRow}>
+                  <span style={styles.badgeMuted}>{getLearningDisplayName(group.status)}</span>
+                  {group.safety_concern && <span style={styles.badgeMuted}>Safety concern</span>}
+                </div>
+
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Review</summary>
+                  {hasAdminConsoleAccess ? (
+                    <>
+                      <input
+                        style={styles.input}
+                        defaultValue={group.title}
+                        placeholder="Work group title"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { title: event.target.value })}
+                      />
+	                      <div style={styles.grid3}>
+                        <input
+                          style={styles.input}
+                          defaultValue={group.recommended_trade}
+                          placeholder="Trade"
+                          onBlur={(event) => updateInspectionBundle(request, group.id, { recommended_trade: event.target.value })}
+                        />
+                        <select
+                          style={styles.input}
+                          defaultValue={group.priority}
+                          onChange={(event) => updateInspectionBundle(request, group.id, { priority: event.target.value })}
+                        >
+                          {['Critical', 'High', 'Medium', 'Low', 'Needs review'].map((value) => (
+                            <option key={value} value={value}>{value}</option>
+                          ))}
+                        </select>
+                        <select
+                          style={styles.input}
+                          defaultValue={group.severity || 'Needs review'}
+                          onChange={(event) => updateInspectionBundle(request, group.id, { severity: event.target.value })}
+                        >
+                          {['High', 'Medium', 'Low', 'Needs review'].map((value) => (
+                            <option key={value} value={value}>{value}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div style={styles.grid3}>
+                        <select
+                          style={styles.input}
+                          defaultValue={group.status}
+                          onChange={(event) => updateInspectionBundle(request, group.id, { status: event.target.value as InspectionDraftStatus })}
+                        >
+                          {['ai_draft', 'needs_review', 'needs_more_info', 'research_requested', 'human_verified', 'rejected'].map((value) => (
+                            <option key={value} value={value}>{getLearningDisplayName(value)}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={inspectionFindingSavingId === group.id || isHumanVerifiedStatus(group.status)}
+                          onClick={() => updateInspectionBundle(request, group.id, { status: 'human_verified' })}
+                        >
+                          Human Verify
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={inspectionFindingSavingId === group.id || group.status === 'rejected'}
+                          onClick={() => updateInspectionBundle(request, group.id, { status: 'rejected' })}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={group.evidence_summary || ''}
+                        placeholder="Evidence summary"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { evidence_summary: event.target.value })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={group.recommended_next_action || ''}
+                        placeholder="Next action"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { recommended_next_action: event.target.value })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={(group.missing_information || []).join('\n')}
+                        placeholder="Missing information"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { missing_information: event.target.value.split('\n').filter(Boolean) })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={(group.resource_categories || []).join('\n')}
+                        placeholder="Resource categories"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { resource_categories: event.target.value.split('\n').filter(Boolean) })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={group.estimate_note || ''}
+                        placeholder="Estimate note"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { estimate_note: event.target.value })}
+                      />
+                      <textarea
+                        style={{ ...styles.input, minHeight: 70 }}
+                        defaultValue={group.contractor_scope_note || ''}
+                        placeholder="Contractor scope note"
+                        onBlur={(event) => updateInspectionBundle(request, group.id, { contractor_scope_note: event.target.value })}
+                      />
+                      <div style={styles.buttonRow}>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={inspectionFindingSavingId === group.id || group.status === 'needs_more_info'}
+                          onClick={() => requestResearchForWorkGroup(request, group, 'needs_more_info')}
+                        >
+                          Needs More Info
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={inspectionFindingSavingId === group.id || agentResearchSavingId === `work-group-${group.id}`}
+                          onClick={() => requestResearchForWorkGroup(request, group, 'research_requested')}
+                        >
+                          Research Needed
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                  <p style={styles.small}>Area: {group.work_area || group.system_category}</p>
+                  <p style={styles.small}>Severity: {group.severity || 'Needs review'}</p>
+                  <p style={styles.small}>Source: {group.source_page || 'Inspection source needs review'}</p>
+                  <p style={styles.small}>Source text: {group.source_text || group.summary}</p>
+                  {((group.resource_categories || []).length > 0 || getWorkGroupResearchTasks(request, group).length > 0) && (
+                    <details style={styles.moreActions}>
+                      <summary style={styles.moreActionsSummary}>Resources</summary>
+                      {(group.resource_categories || []).length > 0 && (
+                        <ul style={styles.smallList}>
+                          {(group.resource_categories || []).map((category, index) => (
+                            <li key={`${group.id}-resource-${index}`}>{category}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {renderWorkGroupResearchResources(request, group)}
+                    </details>
+                  )}
+                </details>
+              </div>
+            ))}
+          </div>
+        )}
+        {archivedGroups.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Rejected / Archived ({archivedGroups.length})</summary>
+            <ul style={styles.smallList}>
+              {archivedGroups.map((group) => (
+                <li key={`archived-work-group-${group.id}`}>{group.title}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </details>
+    )
+  }
+
   function renderUploadedEvidence(request: WorkRequest) {
-    const uploadedFiles = [...request.photos, ...request.documents]
+    const uploadedFiles = getUniqueUploadedFiles(request)
 
     return (
       <section style={styles.mediaPanel}>
@@ -10261,9 +13089,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           <button
             type="button"
             style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-            onClick={loadRequestsFromSupabase}
+            onClick={() => loadRequestsFromSupabase(true)}
           >
-            Refresh files
+            Refresh files + interpret
           </button>
         </div>
 
@@ -10274,8 +13102,15 @@ This will hide it from the dashboard without deleting linked estimates, files, m
             {uploadedFiles.map((file) => {
               const category = getEvidenceCategory(file.name, '', file.type)
               const isPhoto = category === 'photo'
+              const isPdf = isPdfEvidence(file)
               const previewUrl = file.previewUrl || file.url || ''
               const status: UploadEvidenceStatus = file.url || file.path ? 'uploaded' : 'selected'
+              const evidenceKey = getEvidenceKey(file)
+              const primaryInspectionKey = getEvidenceKey(file, isPdf ? 'full_pdf' : isPhoto ? 'image' : 'file')
+              const linkedFindings = getEvidenceFindingsForFile(request, file)
+              const inspectionStatus = evidenceInspectionStatusByKey[primaryInspectionKey] || evidenceInspectionStatusByKey[evidenceKey] || (linkedFindings.length ? 'needs_admin_review' : 'uploaded')
+              const pageDraft = evidencePageDraftsByKey[evidenceKey] || '1'
+              const researchDraft = getEvidenceResearchDraft(file)
 
               return (
                 <div key={file.id || file.path || file.name} style={styles.mediaItem}>
@@ -10298,14 +13133,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
                   <div style={styles.mediaMeta}>
                     <span style={styles.fileName}>{file.name}</span>
-                    <span style={styles.small}>File type: {getEvidenceTypeLabel(category)}</span>
-                    <span style={styles.small}>Upload category: {category}</span>
-                    <span style={styles.small}>Upload status: {status}</span>
-                    <span style={styles.small}>Attached request: {request.id}</span>
-                    <span style={styles.small}>Attached property: {request.propertyId || getRequestPropertyId(request) || 'Not linked yet'}</span>
-                    <span style={styles.small}>Uploaded: {formatUploadedAt(file.createdAt)}</span>
-                    <span style={status === 'uploaded' ? styles.badge : styles.badgeMuted}>{status}</span>
-                    <span style={styles.badgeMuted}>{category}</span>
+                    <span style={styles.small}>{getEvidenceTypeLabel(category)}</span>
+                    <span style={getOperationalStatusStyle(inspectionStatus)}>
+                      {inspectionStatus === 'uploaded' ? 'Not interpreted' : inspectionStatus.replace(/_/g, ' ')}
+                    </span>
+                    <span style={inspectionStatus === 'failed' ? styles.smallDanger : styles.small}>
+                      {getEvidenceInterpretationMessage(inspectionStatus, linkedFindings.length)}
+                    </span>
                   </div>
 
                   <div style={styles.mediaActions}>
@@ -10313,29 +13147,148 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <>
                         <button
                           type="button"
-                          style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-                          onClick={() => openRequestFile(file)}
+                          style={linkedFindings.length ? styles.primaryButton : styles.outlineButton}
+                          disabled={!hasAdminConsoleAccess || evidenceInspectionStatusByKey[primaryInspectionKey] === 'interpreting'}
+                          onClick={() => inspectEvidenceFile(request, file, isPdf ? 'full_pdf' : isPhoto ? 'image' : 'file')}
                         >
-                          {isPhoto ? 'Open preview' : 'Open file'}
-                        </button>
-                        <button
-                          type="button"
-                          style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-                          onClick={() => openRequestFile(file, true)}
-                        >
-                          Download
+                          {linkedFindings.length ? 'Review Findings' : isPhoto ? 'Inspect image' : 'Inspect this file'}
                         </button>
                       </>
                     ) : (
                       <span style={styles.small}>Open/download available after upload.</span>
                     )}
-                    <button
-                      type="button"
-                      style={isCompact ? { ...styles.linkButton, ...styles.mobileLinkButton } : styles.linkButton}
-                      onClick={() => savePhotoFieldMemory(request, file)}
-                    >
-                      Learn from this
-                    </button>
+                  </div>
+
+                  <details style={styles.moreActions}>
+                    <summary style={styles.moreActionsSummary}>Details</summary>
+                    <div style={styles.compactMetaGrid}>
+                      <span>Upload status: {status}</span>
+                      <span>Category: {category}</span>
+                      <span>Request: {request.id}</span>
+                      <span>Property: {request.propertyId || getRequestPropertyId(request) || 'Not linked yet'}</span>
+                      <span>Uploaded: {formatUploadedAt(file.createdAt)}</span>
+                    </div>
+                    <div style={styles.buttonRow}>
+                      {(file.url || file.path) && (
+                        <>
+                          <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file)}>
+                            {isPhoto ? 'Open preview' : 'Open file'}
+                          </button>
+                          <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file, true)}>
+                            Download
+                          </button>
+                        </>
+                      )}
+                      {hasAdminConsoleAccess && (
+                        <button type="button" style={styles.linkButton} onClick={() => addManualSiteMediaFinding(request, file)}>
+                          Add finding
+                        </button>
+                      )}
+                      {hasAdminConsoleAccess && (
+                        <button
+                          type="button"
+                          style={styles.linkButton}
+                          onClick={() => updateEvidenceResearchDraft(file, {
+                            question: researchDraft.question || `Research this evidence file: ${file.name}`,
+                            research_scope: 'Uploaded files + property data',
+                            research_categories: getSourceResearchDefaults('property-specific', file.name),
+                          })}
+                        >
+                          Ask Agent to Research
+                        </button>
+                      )}
+                      <button type="button" style={styles.linkButton} onClick={() => savePhotoFieldMemory(request, file)}>
+                        Learn from this
+                      </button>
+                    </div>
+                    {isPdf && (
+                      <div style={styles.buttonRow}>
+                        <button type="button" style={styles.linkButton} disabled={!hasAdminConsoleAccess} onClick={() => inspectEvidenceFile(request, file, 'full_pdf')}>
+                          Inspect full PDF
+                        </button>
+                        <input
+                          style={{ ...styles.input, minWidth: 120, marginBottom: 0 }}
+                          value={pageDraft}
+                          placeholder="Page or range"
+                          onChange={(event) => setEvidencePageDraftsByKey((prev) => ({ ...prev, [evidenceKey]: event.target.value }))}
+                        />
+                        <button type="button" style={styles.linkButton} disabled={!hasAdminConsoleAccess} onClick={() => inspectEvidenceFile(request, file, 'page', pageDraft)}>
+                          Inspect selected page
+                        </button>
+                        <button type="button" style={styles.linkButton} disabled={!hasAdminConsoleAccess} onClick={() => inspectEvidenceFile(request, file, 'range', pageDraft)}>
+                          Inspect page range
+                        </button>
+                      </div>
+                    )}
+                  </details>
+
+                  {hasAdminConsoleAccess && (
+                    <details open={Boolean(researchDraft.question)} style={styles.moreActions}>
+                      <summary style={styles.moreActionsSummary}>Add research question</summary>
+                      <textarea
+                        style={{ ...styles.input, minHeight: 68 }}
+                        value={researchDraft.question}
+                        placeholder="Question about this evidence file/page/image"
+                        onChange={(event) => updateEvidenceResearchDraft(file, { question: event.target.value })}
+                      />
+                      <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                        <select
+                          style={styles.input}
+                          value={researchDraft.research_scope}
+                          onChange={(event) => updateEvidenceResearchDraft(file, { research_scope: event.target.value as AgentResearchScope })}
+                        >
+                          {AGENT_RESEARCH_SCOPES.map((scope) => (
+                            <option key={scope} value={scope}>{scope}</option>
+                          ))}
+                        </select>
+                        <select
+                          style={styles.input}
+                          value={researchDraft.question_type}
+                          onChange={(event) => updateEvidenceResearchDraft(file, { question_type: event.target.value as AgentResearchQuestionType })}
+                        >
+                          {AGENT_RESEARCH_QUESTION_TYPES.map((type) => (
+                            <option key={type} value={type}>{type}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <p style={styles.small}>Research categories</p>
+                      {renderResearchCategoryControls(
+                        researchDraft.research_categories,
+                        (next) => updateEvidenceResearchDraft(file, { research_categories: next })
+                      )}
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={agentResearchSavingId === `evidence-${evidenceKey}` || !researchDraft.question.trim()}
+                        onClick={() => addEvidenceResearchTask(request, file)}
+                      >
+                        Add Research Question
+                      </button>
+                    </details>
+                  )}
+                  <div style={styles.noticeBox}>
+                    <strong>AI Draft findings for this evidence</strong>
+                    {linkedFindings.length === 0 ? (
+                      <p style={styles.small}>
+                        {inspectionStatus === 'uploaded'
+                          ? 'Not interpreted yet.'
+                          : inspectionStatus === 'failed'
+                            ? 'Interpretation failed. Upload clearer evidence or manually add findings.'
+                            : 'No findings drafted yet. Run Inspect this file or mark Needs More Info.'}
+                      </p>
+                    ) : (
+                      <ul style={styles.smallList}>
+                        {linkedFindings.map((finding) => (
+                          <li key={finding.id}>
+                            <strong>{finding.finding_type}</strong> - {finding.observation}
+                            <br />
+                            <span style={styles.small}>
+                              {getLearningDisplayName(finding.review_status)}; {finding.confidence} confidence. {finding.field_consequence}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               )
@@ -10498,19 +13451,92 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     )
   }
 
-  function renderInspectionIntelligence(intelligence?: InspectionIntelligenceDraft | null) {
+  function renderInspectionIntelligence(intelligence?: InspectionIntelligenceDraft | null, request?: WorkRequest) {
     return (
       <InspectionIntelligencePanel
         intelligence={intelligence}
         styles={styles}
         money={money}
         getStatusLabel={getLearningDisplayName}
+        canEdit={hasAdminConsoleAccess && Boolean(request)}
+        savingFindingId={inspectionFindingSavingId}
+        onUpdateFinding={request ? (itemId, changes) => updateInspectionFinding(request, itemId, changes) : undefined}
+        onUpdateBundle={request ? (bundleId, changes) => updateInspectionBundle(request, bundleId, changes) : undefined}
       />
     )
   }
 
+  function renderInspectionProcessing(request: WorkRequest) {
+    const pdfs = request.documents.filter(isPdfEvidence)
+    const status = pdfProcessingByRequest[request.id] || request.inspectionProcessingStatus || (pdfs.length ? 'uploaded' : undefined)
+    if (!pdfs.length && !request.inspectionIntelligence && !request.inspectionExtractionMessage) return null
+
+    return (
+      <section style={styles.inspectionTaskPanel}>
+        <div style={styles.buttonRow}>
+          <div style={{ flex: 1 }}>
+            <strong>Inspection Intelligence</strong>
+            <p style={styles.small}>
+              {pdfs.length
+                ? `${pdfs.length} PDF evidence file${pdfs.length === 1 ? '' : 's'} attached.`
+                : 'No inspection PDF evidence is attached yet.'}
+            </p>
+          </div>
+          <span style={status === 'extraction_failed' ? styles.badgeDanger : status === 'human_verified' ? styles.badge : styles.badgeMuted}>
+            {getInspectionStatusLabel(status)}
+          </span>
+        </div>
+
+        {request.inspectionExtractionMessage && (
+          <div style={status === 'extraction_failed' ? { ...styles.noticeBox, background: '#fde8df', borderColor: '#e5b4a3', color: '#8a2f12' } : styles.noticeBox}>
+            {request.inspectionExtractionMessage}
+          </div>
+        )}
+
+        {request.inspectionExtractionSummary && (
+          <p style={styles.small}>{request.inspectionExtractionSummary}</p>
+        )}
+
+        {hasAdminConsoleAccess && (
+          <div style={styles.buttonRow}>
+            <button
+              type="button"
+              style={styles.outlineButton}
+              disabled={pdfProcessingByRequest[request.id] === 'extracting_pdf'}
+              onClick={() => processInspectionPdfsForRequest(request)}
+            >
+              {pdfProcessingByRequest[request.id] === 'extracting_pdf' ? 'Extracting PDF...' : 'Inspect Uploaded PDF'}
+            </button>
+            <button
+              type="button"
+              style={styles.linkButton}
+              disabled={pdfProcessingByRequest[request.id] === 'extracting_pdf'}
+              onClick={async () => {
+                await loadRequestsFromSupabase()
+                const latest = requests.find((item) => item.id === request.id) || request
+                if ((latest.documents || request.documents).some(isPdfEvidence)) {
+                  await processInspectionPdfsForRequest(latest)
+                }
+              }}
+            >
+              Refresh Files + Re-check
+            </button>
+          </div>
+        )}
+
+        {status === 'extraction_failed' && (
+          <p style={styles.small}>
+            PDF text could not be extracted. Upload clearer PDF, images, or manually add findings.
+          </p>
+        )}
+      </section>
+    )
+  }
+
   function renderSiteMediaIntelligence(request: WorkRequest) {
-    const findings = siteMediaFindingsByRequest[request.id] || []
+    const allFindings = siteMediaFindingsByRequest[request.id] || []
+    const findings = allFindings.filter((finding) => !isRejectedFinding(finding))
+    const archivedFindings = allFindings.filter(isRejectedFinding)
     const approvedFindings = getApprovedSiteMediaFindings(request)
     const uploadedFiles = [...request.photos, ...request.documents]
     const canEditSiteMedia = hasSupabaseSession && canEditOperationalMemory(currentUserRole)
@@ -10546,39 +13572,39 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           )}
         </div>
 
-        <div style={styles.noticeBox}>
-          AI/media analysis is never final. Roof size, pitch, slope, and access assumptions need onsite verification unless reliable source data exists.
-        </div>
+        <p style={styles.small}>AI/media analysis remains draft until a human verifies it.</p>
 
-        <strong>Media sources reviewed</strong>
-        {uploadedFiles.length === 0 ? (
-          <div style={styles.empty}>No uploaded property media is attached to this lead yet.</div>
-        ) : (
-          <div style={styles.siteMediaSourceList}>
-            {uploadedFiles.map((file) => (
-              <div
-                key={file.id || file.path || file.name}
-                style={isCompact ? { ...styles.siteMediaSourceRow, gridTemplateColumns: '1fr' } : styles.siteMediaSourceRow}
-              >
-                <span style={styles.fileName}>{file.name}</span>
-                <span style={styles.badgeMuted}>{file.type}</span>
-                <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file)}>
-                  Open
-                </button>
-                {canEditSiteMedia && (
-                  <button
-                    type="button"
-                    style={styles.linkButton}
-                    disabled={siteMediaSavingId === `new-${request.id}`}
-                    onClick={() => addManualSiteMediaFinding(request, file)}
-                  >
-                    Add finding
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Media sources ({uploadedFiles.length})</summary>
+          {uploadedFiles.length === 0 ? (
+            <div style={styles.empty}>No uploaded property media is attached to this lead yet.</div>
+          ) : (
+            <div style={styles.siteMediaSourceList}>
+              {uploadedFiles.map((file) => (
+                <div
+                  key={file.id || file.path || file.name}
+                  style={isCompact ? { ...styles.siteMediaSourceRow, gridTemplateColumns: '1fr' } : styles.siteMediaSourceRow}
+                >
+                  <span style={styles.fileName}>{file.name}</span>
+                  <span style={styles.badgeMuted}>{file.type}</span>
+                  <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file)}>
+                    Open
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+                  {canEditSiteMedia && (
+                    <button
+                      type="button"
+                      style={styles.linkButton}
+                      disabled={siteMediaSavingId === `new-${request.id}`}
+                      onClick={() => addManualSiteMediaFinding(request, file)}
+                    >
+                      Add finding
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </details>
 
         {approvedFindings.length > 0 && (
           <div style={styles.aiBox}>
@@ -10593,23 +13619,26 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           </div>
         )}
 
-        <strong>Media findings</strong>
+        <strong>Evidence Findings</strong>
         {findings.length === 0 ? (
           <div style={styles.empty}>
-            No Site Media Intelligence findings yet. Add a manual finding from uploaded media to capture access, safety, terrain, obstruction, or estimate notes.
+            No findings need review.
           </div>
         ) : (
           <div style={styles.siteMediaFindingGrid}>
             {findings.map((finding) => (
               <div key={finding.id} style={styles.siteMediaFindingCard}>
                 <div style={styles.badgeRow}>
-                  <span style={finding.review_status === 'rejected' ? styles.badgeDanger : styles.badge}>
+                  <span style={getOperationalStatusStyle(finding.review_status)}>
                     {getLearningDisplayName(finding.review_status)}
                   </span>
-                  <span style={styles.badgeMuted}>{finding.confidence} confidence</span>
                   <span style={styles.badgeMuted}>{getSiteMediaSourceFileLabel(request, finding.source_file_id)}</span>
                 </div>
 
+                <p style={styles.small}>{finding.observation}</p>
+
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Show details</summary>
                 <div style={isCompact ? styles.mobileStack : styles.grid3}>
                   <select
                     style={styles.input}
@@ -10701,6 +13730,245 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                   onChange={(event) => updateLocalSiteMediaFinding(finding.id, { admin_notes: event.target.value })}
                 />
 
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Research Questions</summary>
+                  {canEditSiteMedia && (() => {
+                    const draft = getAgentResearchDraft(finding)
+                    return (
+                      <div style={styles.noticeBox}>
+                        <button
+                          type="button"
+                          style={styles.linkButton}
+                          onClick={() => updateAgentResearchDraft(finding.id, {
+                            question: `Research this finding: ${finding.observation}`,
+                            question_type: finding.finding_type === 'safety' ? 'safety' : 'property-specific',
+                            research_scope: 'Uploaded files + property data',
+                            research_categories: getSourceResearchDefaults(finding.finding_type === 'safety' ? 'safety' : 'property-specific', finding.observation),
+                          })}
+                        >
+                          Research this finding
+                        </button>
+                        <textarea
+                          style={{ ...styles.input, minHeight: 72 }}
+                          value={draft.question}
+                          placeholder="Add research question"
+                          onChange={(event) => updateAgentResearchDraft(finding.id, { question: event.target.value })}
+                        />
+                        <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                          <select
+                            style={styles.input}
+                            value={draft.research_scope}
+                            onChange={(event) => updateAgentResearchDraft(finding.id, { research_scope: event.target.value as AgentResearchScope })}
+                          >
+                            {AGENT_RESEARCH_SCOPES.map((scope) => (
+                              <option key={scope} value={scope}>{scope}</option>
+                            ))}
+                          </select>
+                          <select
+                            style={styles.input}
+                            value={draft.question_type}
+                            onChange={(event) => updateAgentResearchDraft(finding.id, { question_type: event.target.value as AgentResearchQuestionType })}
+                          >
+                            {AGENT_RESEARCH_QUESTION_TYPES.map((type) => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <p style={styles.small}>Research categories</p>
+                        {renderResearchCategoryControls(
+                          draft.research_categories,
+                          (next) => updateAgentResearchDraft(finding.id, { research_categories: next })
+                        )}
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={agentResearchSavingId === `new-${finding.id}` || !draft.question.trim()}
+                          onClick={() => addAgentResearchTask(request, finding)}
+                        >
+                          Add Research Question
+                        </button>
+                      </div>
+                    )
+                  })()}
+
+                  {(agentResearchTasksByFinding[finding.id] || []).length === 0 ? (
+                    <p style={styles.small}>No research questions yet.</p>
+                  ) : (
+                    <div style={styles.inspectionTaskGrid}>
+                      {(agentResearchTasksByFinding[finding.id] || []).map((task) => {
+                        const sources = agentResearchSourcesByTask[task.id] || []
+                        return (
+                          <div key={task.id} style={styles.inspectionTaskCard}>
+                            <div style={styles.badgeRow}>
+                              <span style={task.status === 'rejected' ? styles.badgeDanger : task.status === 'human_verified' ? styles.badge : styles.badgeMuted}>
+                                {getLearningDisplayName(task.status)}
+                              </span>
+                              <span style={styles.badgeMuted}>{task.confidence || 'low'} confidence</span>
+                              <span style={styles.badgeMuted}>{task.question_type}</span>
+                              {task.source_quality && <span style={styles.badgeMuted}>{task.source_quality}</span>}
+                            </div>
+
+                            {canEditSiteMedia ? (
+                              <>
+                                <textarea
+                                  style={{ ...styles.input, minHeight: 66 }}
+                                  defaultValue={task.question}
+                                  onBlur={(event) => saveAgentResearchTask(task, { question: event.target.value })}
+                                />
+                                <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                                  <select
+                                    style={styles.input}
+                                    value={task.research_scope}
+                                    onChange={(event) => saveAgentResearchTask(task, { research_scope: event.target.value as AgentResearchScope })}
+                                  >
+                                    {AGENT_RESEARCH_SCOPES.map((scope) => (
+                                      <option key={scope} value={scope}>{scope}</option>
+                                    ))}
+                                  </select>
+                                  <select
+                                    style={styles.input}
+                                    value={task.question_type}
+                                    onChange={(event) => saveAgentResearchTask(task, { question_type: event.target.value as AgentResearchQuestionType })}
+                                  >
+                                    {AGENT_RESEARCH_QUESTION_TYPES.map((type) => (
+                                      <option key={type} value={type}>{type}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <p style={styles.small}>Research categories</p>
+                                {renderResearchCategoryControls(
+                                  normalizeResearchCategories(task.research_categories, getSourceResearchDefaults(task.question_type, task.question)),
+                                  (next) => saveAgentResearchTask(task, {
+                                    research_categories: next,
+                                    online_search_requested: researchCategoriesRequestOnline(next, task.research_scope),
+                                    source_quality: getPrimarySourceQuality(next),
+                                  })
+                                )}
+                              </>
+                            ) : (
+                              <p style={styles.small}>{task.question}</p>
+                            )}
+
+                            {task.answer_draft && (
+                              <details open style={styles.moreActions}>
+                                <summary style={styles.moreActionsSummary}>Draft answer</summary>
+                                <textarea
+                                  style={{ ...styles.input, minHeight: 92 }}
+                                  defaultValue={task.answer_draft || ''}
+                                  disabled={!canEditSiteMedia}
+                                  onBlur={(event) => saveAgentResearchTask(task, { answer_draft: event.target.value })}
+                                />
+                                <p style={styles.small}>
+                                  <strong>Evidence found:</strong> {task.evidence_summary || 'No strong evidence found.'}
+                                </p>
+                                <p style={styles.small}>
+                                  <strong>Missing information:</strong> {task.missing_information || 'None listed.'}
+                                </p>
+                                <p style={styles.small}>
+                                  <strong>Recommended next action:</strong> {task.recommended_next_action || 'Needs admin review.'}
+                                </p>
+                                <p style={styles.small}>
+                                  <strong>Online search performed:</strong> {task.online_search_performed ? 'Yes' : 'No'}
+                                  {' '}<strong>Internal memory used:</strong> {task.internal_memory_used ? 'Yes' : 'No'}
+                                </p>
+                                <p style={styles.small}>
+                                  <strong>Official sources used:</strong> {task.official_sources_used ? 'Yes' : 'No'}
+                                  {' '}<strong>Supplier/material sources used:</strong> {task.supplier_sources_used ? 'Yes' : 'No'}
+                                </p>
+                                {task.online_search_requested && !task.online_search_performed && (
+                                  <p style={styles.small}>
+                                    Online research was requested, but no live source search has been performed yet. Use uploaded/property context only or connect Source Research backend.
+                                  </p>
+                                )}
+                                {task.source_priority && (
+                                  <p style={styles.small}>
+                                    <strong>Source priority:</strong> {task.source_priority}
+                                  </p>
+                                )}
+                                <strong>Sources</strong>
+                                {sources.length === 0 ? (
+                                  <p style={styles.small}>No source rows saved for this answer.</p>
+                                ) : (
+                                  <ul style={styles.smallList}>
+                                    {sources.map((source) => (
+                                      <li key={source.id}>
+                                        {source.source_url ? (
+                                          <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                                        ) : (
+                                          <span>{source.source_title}</span>
+                                        )}
+                                        {' '}({source.source_type}, {source.confidence || 'low'} confidence)
+                                        {source.source_quality && <> - {source.source_quality}</>}
+                                        {source.excerpt && (
+                                          <>
+                                            <br />
+                                            <span style={styles.small}>{source.excerpt}</span>
+                                          </>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </details>
+                            )}
+
+                            <div style={styles.buttonRow}>
+                              {canEditSiteMedia && (
+                                <>
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={agentResearchSavingId === task.id}
+                                    onClick={() => runAgentResearchTask(request, finding, task)}
+                                  >
+                                    {agentResearchSavingId === task.id && task.status === 'researching' ? 'Researching...' : 'Run Research'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={agentResearchSavingId === task.id}
+                                    onClick={() => saveAgentResearchTask(task)}
+                                  >
+                                    Save Answer
+                                  </button>
+                                </>
+                              )}
+                              {canApproveSiteMedia && (
+                                <>
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={agentResearchSavingId === task.id || task.status === 'human_verified'}
+                                    onClick={() => saveAgentResearchTask(task, { status: 'human_verified' })}
+                                  >
+                                    Human Verify
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={agentResearchSavingId === task.id || task.status === 'rejected'}
+                                    onClick={() => saveAgentResearchTask(task, { status: 'rejected' })}
+                                  >
+                                    Reject
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={agentResearchSavingId === task.id || task.status === 'needs_review'}
+                                    onClick={() => saveAgentResearchTask(task, { status: 'needs_review' })}
+                                  >
+                                    Mark Needs Review
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </details>
+
                 <div style={styles.buttonRow}>
                   {canEditSiteMedia && (
                     <button
@@ -10741,17 +14009,54 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       <button
                         type="button"
                         style={styles.outlineButton}
+                        disabled={siteMediaSavingId === finding.id || finding.review_status === 'needs_more_info'}
+                        onClick={() => markFindingNeedsMoreInfo(request, finding)}
+                      >
+                        Needs More Info
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
+                        disabled={siteMediaSavingId === finding.id}
+                        onClick={() => markFindingNeedsMoreInfo(request, finding)}
+                      >
+                        Ask Agent to Research
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.outlineButton}
                         disabled={siteMediaSavingId === finding.id || finding.review_status === 'human_verified'}
                         onClick={() => saveSiteMediaFinding(finding, { review_status: 'human_verified' })}
                       >
                         Mark Human Verified
                       </button>
+                      {isHumanVerifiedStatus(finding.review_status) && (
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          disabled={siteMediaSavingId === finding.id}
+                          onClick={() => saveVerifiedFindingToMemory(request, finding)}
+                        >
+                          Save to Memory if Verified
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
+                </details>
               </div>
             ))}
           </div>
+        )}
+        {archivedFindings.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Rejected / Archived ({archivedFindings.length})</summary>
+            <ul style={styles.smallList}>
+              {archivedFindings.map((finding) => (
+                <li key={`archived-finding-${finding.id}`}>{finding.observation}</li>
+              ))}
+            </ul>
+          </details>
         )}
       </section>
     )
@@ -12196,8 +15501,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     <span>Ready</span>
                   </div>
                   <div style={styles.dashboardMetricCard}>
-                    <strong>{filteredRequests.length}</strong>
-                    <span>Total Open</span>
+                    <strong>{addressGroupedRequests.length}</strong>
+                    <span>Address Groups</span>
                   </div>
                 </div>
               )}
@@ -12333,23 +15638,443 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       const profileLoading = Boolean(propertyProfileLoadingByLeadId[request.id])
                       const profileError = propertyProfileErrorsByLeadId[request.id]
                       const workflow = getPropertyWorkflow(request)
+                      const isEditingRequest = editingRequestId === request.id
+                      const editDraft = requestEditDrafts[request.id] || createRequestEditDraft(request)
+                      const noteDraft = adminNoteDrafts[request.id] || { noteType: 'internal' as AdminNoteType, body: '' }
+                      const evidenceCount = getRequestEvidenceCount(request)
+                      const needsReviewCount = getNeedsReviewCount(request)
+                      const activeFindingCount = getActiveFindings(request).length
+                      const activeResearchCount = getActiveResearchTasks(request).length
+                      const workGroupCount = getInspectionWorkGroups(request).length
 
                       return (
 	                      <div key={request.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
-	                        <strong style={isCompact ? styles.mobileRequestTitle : undefined}>{request.propertyAddress}</strong>
-                        <div style={styles.badgeRow}>
-                          <span style={styles.badge}>{STATUS_META[request.status].label}</span>
-                          <span style={styles.badgeMuted}>{workflow.stage}</span>
+                        <div style={styles.propertyCardHeader}>
+                          <div style={{ flex: 1 }}>
+	                          <strong style={isCompact ? { ...styles.mobileRequestTitle, flex: 1 } : { flex: 1 }}>{request.propertyAddress || 'Property address needed'}</strong>
+                            <p style={styles.small}>{request.description || 'No request summary yet.'}</p>
+                          </div>
+                          {hasAdminConsoleAccess && (
+                            <button
+                              type="button"
+                              style={styles.outlineButton}
+                              onClick={() => (isEditingRequest ? setEditingRequestId(null) : startEditingRequest(request))}
+                            >
+                              {isEditingRequest ? 'Close Edit' : 'Edit'}
+                            </button>
+                          )}
                         </div>
-                        <p style={styles.small}>
-                          {request.city}, {request.state} {request.zip}
-                        </p>
-                        <p style={styles.small}>
-                          {request.requesterName} • {request.email}
-                        </p>
-                        <p>{request.description}</p>
+                        <div style={styles.badgeRow}>
+                          <span style={getOperationalStatusStyle(request.status)}>{STATUS_META[request.status].label}</span>
+                          <span style={styles.badgeMuted}>{workflow.stage}</span>
+                          <span style={styles.badgeMuted}>{workGroupCount} work groups</span>
+                          <span style={styles.badgeMuted}>{evidenceCount} evidence</span>
+                          <span style={needsReviewCount ? styles.badgeMuted : styles.badge}>{needsReviewCount} needs review</span>
+                        </div>
+
+                        <section style={styles.nextActionPanel}>
+                          <strong>{workflow.title}</strong>
+                          <p style={styles.small}>{workflow.body}</p>
+                          <button
+                            type="button"
+                            style={styles.primaryButton}
+                            disabled={workflow.disabled}
+                            onClick={workflow.onPrimary}
+                          >
+                            {workflow.buttonLabel}
+                          </button>
+                        </section>
+
+                        {renderAddressWorkGroups(request)}
+
+                        {isEditingRequest && hasAdminConsoleAccess && (
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>Edit operational record</summary>
+                            <div style={styles.grid2}>
+                              <input
+                                style={styles.input}
+                                value={editDraft.propertyAddress}
+                                placeholder="Property address"
+                                onChange={(event) => updateRequestEditDraft(request.id, { propertyAddress: event.target.value })}
+                              />
+                              <select
+                                style={styles.input}
+                                value={editDraft.status}
+                                onChange={(event) => updateRequestEditDraft(request.id, { status: event.target.value as RequestStatus })}
+                              >
+                                {columns.map((next) => (
+                                  <option key={next} value={next}>{STATUS_META[next].label}</option>
+                                ))}
+                              </select>
+                              <input
+                                style={styles.input}
+                                value={editDraft.workType}
+                                placeholder="Request title / work type"
+                                onChange={(event) => updateRequestEditDraft(request.id, { workType: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.urgency}
+                                placeholder="Urgency"
+                                onChange={(event) => updateRequestEditDraft(request.id, { urgency: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.occupancy}
+                                placeholder="Occupancy"
+                                onChange={(event) => updateRequestEditDraft(request.id, { occupancy: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.propertyType}
+                                placeholder="Property type"
+                                onChange={(event) => updateRequestEditDraft(request.id, { propertyType: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.jurisdiction}
+                                placeholder="Jurisdiction"
+                                onChange={(event) => updateRequestEditDraft(request.id, { jurisdiction: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.bedrooms}
+                                placeholder="Beds"
+                                onChange={(event) => updateRequestEditDraft(request.id, { bedrooms: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.bathrooms}
+                                placeholder="Baths"
+                                onChange={(event) => updateRequestEditDraft(request.id, { bathrooms: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.squareFeet}
+                                placeholder="Square footage"
+                                onChange={(event) => updateRequestEditDraft(request.id, { squareFeet: event.target.value })}
+                              />
+                              <input
+                                style={styles.input}
+                                value={editDraft.yearBuilt}
+                                placeholder="Year built"
+                                onChange={(event) => updateRequestEditDraft(request.id, { yearBuilt: event.target.value })}
+                              />
+                            </div>
+                            <textarea
+                              style={{ ...styles.input, minHeight: 92 }}
+                              value={editDraft.description}
+                              placeholder="Request title / description"
+                              onChange={(event) => updateRequestEditDraft(request.id, { description: event.target.value })}
+                            />
+                            <textarea
+                              style={{ ...styles.input, minHeight: 82 }}
+                              value={editDraft.scopeInterpretation}
+                              placeholder="Scope interpretation"
+                              onChange={(event) => updateRequestEditDraft(request.id, { scopeInterpretation: event.target.value })}
+                            />
+                            <textarea
+                              style={{ ...styles.input, minHeight: 82 }}
+                              value={editDraft.missingInformation}
+                              placeholder="Missing information"
+                              onChange={(event) => updateRequestEditDraft(request.id, { missingInformation: event.target.value })}
+                            />
+                            <div style={styles.grid3}>
+                              <textarea
+                                style={{ ...styles.input, minHeight: 82 }}
+                                value={editDraft.internalNotes}
+                                placeholder="Internal notes"
+                                onChange={(event) => updateRequestEditDraft(request.id, { internalNotes: event.target.value })}
+                              />
+                              <textarea
+                                style={{ ...styles.input, minHeight: 82 }}
+                                value={editDraft.agentFacingNotes}
+                                placeholder="Agent-facing notes"
+                                onChange={(event) => updateRequestEditDraft(request.id, { agentFacingNotes: event.target.value })}
+                              />
+                              <textarea
+                                style={{ ...styles.input, minHeight: 82 }}
+                                value={editDraft.contractorFacingNotes}
+                                placeholder="Contractor-facing notes"
+                                onChange={(event) => updateRequestEditDraft(request.id, { contractorFacingNotes: event.target.value })}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              style={styles.primaryButton}
+                              disabled={requestSavingId === request.id}
+                              onClick={() => saveRequestEdits(request)}
+                            >
+                              {requestSavingId === request.id ? 'Saving...' : 'Save Operational Record'}
+                            </button>
+                          </details>
+                        )}
+
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>Notes ({request.adminNotes?.length || 0})</summary>
+                        <section style={styles.noticeBox}>
+                          <strong>Admin Notes</strong>
+                          {request.adminNotes?.length ? (
+                            <ul style={styles.smallList}>
+                              {request.adminNotes.slice(0, 4).map((note) => (
+                                <li key={note.id}>
+                                  <div style={styles.grid2}>
+                                    <select
+                                      style={styles.input}
+                                      value={note.noteType}
+                                      disabled={!hasAdminConsoleAccess || requestSavingId === request.id}
+                                      onChange={(event) => updateAdminNote(request, note.id, { noteType: event.target.value as AdminNoteType })}
+                                    >
+                                      <option value="internal">Internal</option>
+                                      <option value="agent-facing">Agent-facing</option>
+                                      <option value="contractor-facing">Contractor-facing</option>
+                                    </select>
+                                    <span style={styles.small}>
+                                      {note.authorLabel || 'Admin'} - {new Date(note.createdAt).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <textarea
+                                    style={{ ...styles.input, minHeight: 64 }}
+                                    defaultValue={note.body}
+                                    disabled={!hasAdminConsoleAccess || requestSavingId === request.id}
+                                    onBlur={(event) => updateAdminNote(request, note.id, { body: event.target.value })}
+                                  />
+                                  {hasAdminConsoleAccess && (
+                                    <button
+                                      type="button"
+                                      style={styles.outlineButton}
+                                      disabled={requestSavingId === request.id}
+                                      onClick={() => openNoteResearchSetup(note)}
+                                    >
+                                      Ask Agent to Research
+                                    </button>
+                                  )}
+                                  {hasAdminConsoleAccess && openNoteResearchByNote[note.id] && (() => {
+                                    const draft = getNoteResearchDraft(note)
+                                    return (
+                                      <div style={styles.noticeBox}>
+                                        <strong>Source Research Setup</strong>
+                                        <textarea
+                                          style={{ ...styles.input, minHeight: 76 }}
+                                          value={draft.question}
+                                          placeholder="What should the agent find?"
+                                          onChange={(event) => updateNoteResearchDraft(note.id, { question: event.target.value })}
+                                        />
+                                        <div style={isCompact ? styles.mobileStack : styles.grid2}>
+                                          <select
+                                            style={styles.input}
+                                            value={draft.research_scope}
+                                            onChange={(event) => updateNoteResearchDraft(note.id, { research_scope: event.target.value as AgentResearchScope })}
+                                          >
+                                            {AGENT_RESEARCH_SCOPES.map((scope) => (
+                                              <option key={scope} value={scope}>{scope}</option>
+                                            ))}
+                                          </select>
+                                          <select
+                                            style={styles.input}
+                                            value={draft.question_type}
+                                            onChange={(event) => updateNoteResearchDraft(note.id, { question_type: event.target.value as AgentResearchQuestionType })}
+                                          >
+                                            {AGENT_RESEARCH_QUESTION_TYPES.map((type) => (
+                                              <option key={type} value={type}>{type}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <p style={styles.small}>Research categories</p>
+                                        {renderResearchCategoryControls(
+                                          draft.research_categories,
+                                          (next) => updateNoteResearchDraft(note.id, { research_categories: next })
+                                        )}
+                                        <div style={styles.buttonRow}>
+                                          <button
+                                            type="button"
+                                            style={styles.outlineButton}
+                                            disabled={agentResearchSavingId === `note-${note.id}` || !draft.question.trim()}
+                                            onClick={() => askAgentToResearchAdminNote(request, note)}
+                                          >
+                                            {agentResearchSavingId === `note-${note.id}` ? 'Running Research...' : 'Run Research'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            style={styles.outlineButton}
+                                            disabled={agentResearchSavingId === `note-${note.id}`}
+                                            onClick={() => setOpenNoteResearchByNote((prev) => ({ ...prev, [note.id]: false }))}
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )
+                                  })()}
+                                  <br />
+                                  {note.updatedAt && <span style={styles.small}>Edited {new Date(note.updatedAt).toLocaleString()}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p style={styles.small}>No admin notes yet.</p>
+                          )}
+
+                          {hasAdminConsoleAccess && (
+                            <>
+                              <div style={styles.grid2}>
+                                <select
+                                  style={styles.input}
+                                  value={noteDraft.noteType}
+                                  onChange={(event) => updateAdminNoteDraft(request.id, { noteType: event.target.value as AdminNoteType })}
+                                >
+                                  <option value="internal">Internal</option>
+                                  <option value="agent-facing">Agent-facing</option>
+                                  <option value="contractor-facing">Contractor-facing</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  style={styles.outlineButton}
+                                  disabled={requestSavingId === request.id || !noteDraft.body.trim()}
+                                  onClick={() => saveAdminNote(request)}
+                                >
+                                  Add Note
+                                </button>
+                              </div>
+                              <textarea
+                                style={{ ...styles.input, minHeight: 72 }}
+                                value={noteDraft.body}
+                                placeholder="Add admin note"
+                                onChange={(event) => updateAdminNoteDraft(request.id, { body: event.target.value })}
+                              />
+                            </>
+                          )}
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>
+                              Research Tasks ({getActiveResearchTasks(request).length})
+                            </summary>
+                            {sourceResearchMessagesByRequest[request.id] && (
+                              <p style={styles.small}>{sourceResearchMessagesByRequest[request.id]}</p>
+                            )}
+                            {getActiveResearchTasks(request).length === 0 ? (
+                              <p style={styles.small}>No active research tasks.</p>
+                            ) : (
+                              <div style={styles.inspectionTaskGrid}>
+                                {getActiveResearchTasks(request).map((task) => {
+                                  const sources = agentResearchSourcesByTask[task.id] || []
+                                  return (
+                                    <div key={task.id} style={styles.inspectionTaskCard}>
+                                      <div style={styles.badgeRow}>
+                                        <span style={getOperationalStatusStyle(task.status)}>
+                                          {getLearningDisplayName(task.status)}
+                                        </span>
+                                      </div>
+                                      <strong>{task.question}</strong>
+                                      <p style={styles.small}>
+                                        {getResearchAnswerSummary(task)}
+                                      </p>
+                                      <p style={styles.small}>Next action: {getResearchNextStep(task)}</p>
+                                      <details style={styles.moreActions}>
+                                        <summary style={styles.moreActionsSummary}>Show details</summary>
+                                        <div style={styles.noticeBox}>
+                                          <p style={styles.small}>
+                                            <strong>Draft answer:</strong> {task.answer_draft || 'No draft answer yet. Click Run Research.'}
+                                          </p>
+                                          <p style={styles.small}>
+                                            <strong>Categories:</strong> {normalizeResearchCategories(task.research_categories, getSourceResearchDefaults(task.question_type, task.question)).join(', ')}
+                                          </p>
+                                          <p style={styles.small}>
+                                            <strong>Evidence summary:</strong> {task.evidence_summary || 'No evidence summary drafted yet.'}
+                                          </p>
+                                          <p style={styles.small}>
+                                            <strong>Missing information:</strong> {task.missing_information || 'No missing information listed yet.'}
+                                          </p>
+                                          <p style={styles.small}>
+                                            <strong>Recommended next action:</strong> {task.recommended_next_action || 'Run research, then review before use.'}
+                                          </p>
+                                          <p style={styles.small}>
+                                            <strong>Online source search requested:</strong> {task.online_search_requested ? 'Yes' : 'No'}
+                                            {' '}
+                                            <strong>Live source search performed:</strong> {task.online_search_performed ? 'Yes' : 'No'}
+                                            {' '}<strong>Official sources:</strong> {task.official_sources_used ? 'Used' : 'Not used'}
+                                            {' '}<strong>Supplier/material sources:</strong> {task.supplier_sources_used ? 'Used' : 'Not used'}
+                                            {' '}<strong>Internal memory:</strong> {task.internal_memory_used ? 'Used' : 'Not used'}
+                                          </p>
+                                          {task.online_search_requested && !task.online_search_performed && (
+                                            <p style={styles.small}>
+                                              Online research was requested, but no live source search has been performed yet. This draft uses uploaded/property/admin-note context only.
+                                            </p>
+                                          )}
+                                          {sources.length > 0 && (
+                                            <ul style={styles.smallList}>
+                                              {sources.map((source) => (
+                                                <li key={source.id}>
+                                                  {source.source_url ? (
+                                                    <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                                                  ) : (
+                                                    <span>{source.source_title}</span>
+                                                  )}
+                                                  {' '}({source.source_type}, {source.source_quality || 'unknown'})
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                          {sources.length === 0 && <p style={styles.small}>Source list: no source rows saved yet.</p>}
+                                        </div>
+                                      </details>
+                                      <div style={styles.buttonRow}>
+                                        {(task.status === 'queued' || task.status === 'draft' || !task.answer_draft) && (
+                                          <button
+                                            type="button"
+                                            style={styles.primaryButton}
+                                            disabled={agentResearchSavingId === task.id}
+                                            onClick={() => runRequestAgentResearchTask(request, task)}
+                                          >
+                                            {agentResearchSavingId === task.id && task.status === 'researching' ? 'Researching...' : 'Run Research'}
+                                          </button>
+                                        )}
+                                        {canApproveOperationalMemory(memoryActorRole) && (
+                                          <>
+                                            {task.answer_draft && task.status !== 'human_verified' && (
+                                              <button
+                                                type="button"
+                                                style={styles.primaryButton}
+                                                disabled={agentResearchSavingId === task.id}
+                                                onClick={() => saveAgentResearchTask(task, { status: 'human_verified' })}
+                                              >
+                                                Human Verify
+                                              </button>
+                                            )}
+                                            {task.status !== 'rejected' && (
+                                              <button
+                                                type="button"
+                                                style={styles.outlineButton}
+                                                disabled={agentResearchSavingId === task.id}
+                                                onClick={() => saveAgentResearchTask(task, { status: 'rejected' })}
+                                              >
+                                                Reject
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            {getArchivedResearchTasks(request).length > 0 && (
+                              <details style={styles.moreActions}>
+                                <summary style={styles.moreActionsSummary}>Rejected / Archived ({getArchivedResearchTasks(request).length})</summary>
+                                <ul style={styles.smallList}>
+                                  {getArchivedResearchTasks(request).map((task) => (
+                                    <li key={`archived-task-${task.id}`}>{task.question}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </details>
+                        </section>
+                        </details>
 
                         {request.propertyFacts && (
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>Property</summary>
 	                          <div style={isCompact ? { ...styles.propertyProfileCard, ...styles.mobilePropertyProfileCard } : styles.propertyProfileCard}>
 	                            <strong>Verified Property Profile</strong>
 	                            <div style={isCompact ? { ...styles.compactFactGrid, ...styles.mobileCompactFactGrid } : styles.compactFactGrid}>
@@ -12393,41 +16118,94 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                               ))}
                             </div>
                           </div>
+                          </details>
                         )}
 
-                        {renderUploadedEvidence(request)}
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>Uploaded Evidence ({evidenceCount})</summary>
+                          {renderUploadedEvidence(request)}
+                        </details>
 	
-	                        {renderInspectionIntelligence(request.inspectionIntelligence)}
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>Scope Interpretation</summary>
+                          {request.scopeInterpretation || request.missingInformation ? (
+                            <div style={styles.noticeBox}>
+                              {request.scopeInterpretation && <p style={styles.small}>{request.scopeInterpretation}</p>}
+                              {request.missingInformation && <p style={styles.small}>Missing: {request.missingInformation}</p>}
+                            </div>
+                          ) : (
+                            <p style={styles.small}>No scope interpretation yet.</p>
+                          )}
+                          {renderInspectionProcessing(request)}
+                        </details>
 
-	                        {renderSiteMediaIntelligence(request)}
+                        {activeFindingCount > 0 && (
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>Evidence Findings ({activeFindingCount})</summary>
+	                          {renderSiteMediaIntelligence(request)}
+                          </details>
+                        )}
 
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>Research Tasks ({activeResearchCount})</summary>
+                          {activeResearchCount === 0 ? (
+                            <p style={styles.small}>No active research tasks.</p>
+                          ) : (
+                            <div style={styles.inspectionTaskGrid}>
+                              {getActiveResearchTasks(request).map((task) => (
+                                <div key={`property-research-${task.id}`} style={styles.inspectionTaskCard}>
+                                  <div style={styles.badgeRow}>
+                                    <span style={getOperationalStatusStyle(task.status)}>{getLearningDisplayName(task.status)}</span>
+                                  </div>
+                                  <strong>{task.question}</strong>
+                                  <p style={styles.small}>{getResearchAnswerSummary(task)}</p>
+                                  <p style={styles.small}>Next action: {getResearchNextStep(task)}</p>
+                                  <details style={styles.moreActions}>
+                                    <summary style={styles.moreActionsSummary}>Show details</summary>
+                                    <p style={styles.small}>{task.evidence_summary || 'No evidence summary drafted yet.'}</p>
+                                    <p style={styles.small}>{task.missing_information || 'No missing information listed.'}</p>
+                                    <p style={styles.small}>{task.recommended_next_action || 'Review before use.'}</p>
+                                  </details>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </details>
+
+                        <details style={styles.moreActions}>
+                          <summary style={styles.moreActionsSummary}>History / Archived</summary>
 	                        {renderPropertyWorkflowCard(request)}
+                        </details>
 
-                        <select
-                          style={styles.input}
-                          value={request.status}
-                          onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}
-                        >
-                          {columns.map((next) => (
-                            <option key={next} value={next}>
-                              {STATUS_META[next].label}
-                            </option>
-                          ))}
-                        </select>
-
-                        <button
-                          type="button"
-                          style={{
-                            ...styles.outlineButton,
-                            width: '100%',
-                            borderColor: '#c9a9a9',
-                            color: '#8a2f2f',
-                            marginTop: 10,
-                          }}
-                          onClick={() => archiveLead(request)}
-                        >
-                          Archive Lead
-                        </button>
+                        {hasAdminConsoleAccess && (
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>History / Advanced</summary>
+                            <select
+                              style={styles.input}
+                              value={request.status}
+                              onChange={(e) => updateStatus(request.id, e.target.value as RequestStatus)}
+                            >
+                              {columns.map((next) => (
+                                <option key={next} value={next}>
+                                  {STATUS_META[next].label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.outlineButton,
+                                width: '100%',
+                                borderColor: '#c9a9a9',
+                                color: '#8a2f2f',
+                                marginTop: 10,
+                              }}
+                              onClick={() => archiveLead(request)}
+                            >
+                              Archive Lead
+                            </button>
+                          </details>
+                        )}
                       </div>
                       )
                     })}
@@ -16372,6 +20150,25 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap',
     alignItems: 'center',
   },
+  checkboxGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+    gap: 8,
+    margin: '8px 0 12px',
+  },
+  checkboxLabel: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'flex-start',
+    fontSize: 13,
+    lineHeight: 1.35,
+    color: '#173425',
+  },
+  smallDanger: {
+    fontSize: 13,
+    lineHeight: 1.45,
+    color: '#8a2f2f',
+  },
   warningBox: {
     border: '1px solid #d9b35f',
     background: '#fff8e8',
@@ -17221,12 +21018,28 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#5f6f63',
   },
   requestCard: {
-    background: 'white',
-    border: '1px solid #d7dfd3',
+    background: '#fffdfa',
+    border: '1px solid #e3e0d8',
     borderRadius: 8,
-    padding: 16,
-    marginBottom: 14,
+    padding: 18,
+    marginBottom: 16,
     maxWidth: 920,
+  },
+  propertyCardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 14,
+    flexWrap: 'wrap',
+  },
+  nextActionPanel: {
+    background: '#f7f6f1',
+    borderRadius: 8,
+    padding: 14,
+    marginTop: 12,
+    marginBottom: 8,
+    display: 'grid',
+    gap: 8,
   },
   mobileRequestCard: {
     borderRadius: 8,
@@ -17274,12 +21087,12 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   mediaPanel: {
-    background: '#fbfcfa',
-    border: '1px solid #d7dfd3',
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 14,
-    marginBottom: 14,
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 8,
+    padding: 0,
+    marginTop: 10,
+    marginBottom: 10,
   },
   mediaPanelHeader: {
     display: 'flex',
@@ -17291,7 +21104,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   mediaGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
+    gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
     gap: 12,
   },
   mediaItem: {
@@ -17299,10 +21112,18 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: '72px minmax(0, 1fr)',
     gap: 12,
     alignItems: 'start',
-    background: 'white',
-    border: '1px solid #edf1ea',
+    background: '#fffdfa',
+    border: '1px solid #e8e4dc',
     borderRadius: 12,
     padding: 10,
+  },
+  compactMetaGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 8,
+    color: '#5f625b',
+    fontSize: 13,
+    lineHeight: 1.4,
   },
   thumbnailButton: {
     border: 'none',
@@ -17449,8 +21270,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     minHeight: 30,
     borderRadius: 8,
-    background: '#e7f3e5',
-    color: '#0f542d',
+    background: '#e8efe4',
+    color: '#274331',
     padding: '6px 10px',
     fontSize: 12,
     fontWeight: 900,
@@ -17461,8 +21282,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     minHeight: 30,
     borderRadius: 8,
-    background: '#f4f1ec',
-    color: '#5f6f63',
+    background: '#f1eee8',
+    color: '#5f625b',
     padding: '6px 10px',
     fontSize: 12,
     fontWeight: 800,
@@ -17473,35 +21294,35 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     minHeight: 30,
     borderRadius: 8,
-    background: '#fde8df',
-    color: '#8a2f12',
+    background: '#f1e3dc',
+    color: '#7a3b2d',
     padding: '6px 10px',
     fontSize: 12,
     fontWeight: 900,
     textTransform: 'capitalize',
   },
   noticeBox: {
-    background: '#fff8e8',
-    border: '1px solid #ecd9a7',
-    borderRadius: 12,
+    background: '#f8f5ee',
+    border: '1px solid #e5dfd3',
+    borderRadius: 8,
     padding: 10,
     marginTop: 10,
     marginBottom: 10,
-    color: '#6f4f14',
+    color: '#3d423b',
     fontSize: 12,
     lineHeight: 1.45,
   },
   aiBox: {
-    background: '#e7f3e5',
-    border: '1px solid #d7dfd3',
-    borderRadius: 14,
+    background: '#f7f6f1',
+    border: '1px solid #e5dfd3',
+    borderRadius: 8,
     padding: 12,
     marginTop: 12,
   },
   inspectionTaskPanel: {
-    background: '#fbfcfa',
-    border: '1px solid #d7dfd3',
-    borderRadius: 14,
+    background: '#fffdfa',
+    border: '1px solid #e5dfd3',
+    borderRadius: 8,
     padding: 14,
     marginTop: 14,
     marginBottom: 14,
@@ -17511,17 +21332,17 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
   },
   inspectionTaskCard: {
-    background: '#ffffff',
-    border: '1px solid #d7dfd3',
-    borderRadius: 14,
+    background: '#fffdfa',
+    border: '1px solid #e8e4dc',
+    borderRadius: 8,
     padding: 14,
     display: 'grid',
     gap: 12,
   },
   siteMediaPanel: {
-    background: '#fbfcfa',
-    border: '1px solid #d7dfd3',
-    borderRadius: 14,
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 8,
     padding: 14,
     marginTop: 14,
     marginBottom: 14,
@@ -17546,9 +21367,9 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 8,
   },
   siteMediaFindingCard: {
-    background: 'white',
-    border: '1px solid #d7dfd3',
-    borderRadius: 12,
+    background: '#fffdfa',
+    border: '1px solid #e8e4dc',
+    borderRadius: 8,
     padding: 14,
   },
   divider: {
