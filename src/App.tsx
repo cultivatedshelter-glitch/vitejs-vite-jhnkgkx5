@@ -148,7 +148,11 @@ type WorkRequest = {
   status: RequestStatus
   archived?: boolean
   archivedAt?: string
+  archivedBy?: string
   archiveReason?: string
+  deletedAt?: string
+  deletedBy?: string
+  deletionReason?: string
   aiEstimate?: AiEstimate
   inspectionIntelligence?: InspectionIntelligenceDraft | null
   inspectionProcessingStatus?: InspectionProcessingStatus
@@ -160,6 +164,7 @@ type WorkRequest = {
   internalNotes?: string
   agentFacingNotes?: string
   contractorFacingNotes?: string
+  groupedRequests?: WorkRequest[]
 }
 
 type PropertyAgentName =
@@ -3922,7 +3927,11 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     status: normalizeRequestStatus(row.status),
     archived: Boolean(row.archived),
     archivedAt: row.archived_at || '',
+    archivedBy: row.archived_by || '',
     archiveReason: row.archive_reason || '',
+    deletedAt: row.deleted_at || '',
+    deletedBy: row.deleted_by || '',
+    deletionReason: row.deletion_reason || '',
     inspectionIntelligence: rowPropertyFacts.inspectionIntelligence || null,
     inspectionProcessingStatus: normalizeInspectionProcessingStatus(rowPropertyFacts.inspectionProcessingStatus),
     inspectionExtractionSummary: rowPropertyFacts.inspectionExtractionSummary || '',
@@ -3958,6 +3967,8 @@ export default function App() {
   const [archivedSearch, setArchivedSearch] = useState('')
   const [archivedLoading, setArchivedLoading] = useState(false)
   const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [projectQueueFilter, setProjectQueueFilter] = useState<'active' | 'archived' | 'all'>('active')
+  const [projectCleanupId, setProjectCleanupId] = useState<string | null>(null)
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null)
   const [requestEditDrafts, setRequestEditDrafts] = useState<Record<string, RequestEditDraft>>({})
   const [requestSavingId, setRequestSavingId] = useState<string | null>(null)
@@ -4266,7 +4277,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
     if (canAccessSourceLessonAgent && activeTab === 'fieldLessons') loadSourceLessons()
     if ((hasAdminConsoleAccess || currentUserRole === 'contractor') && (activeTab === 'dashboard' || activeTab === 'properties')) loadContractorAssignments()
-  }, [hasAdminConsoleAccess, canAccessSourceLessonAgent, isAdmin, activeTab, currentUserRole])
+    if (hasAdminConsoleAccess && (activeTab === 'dashboard' || activeTab === 'properties') && projectQueueFilter !== 'active') loadArchivedRequestsFromSupabase()
+  }, [hasAdminConsoleAccess, canAccessSourceLessonAgent, isAdmin, activeTab, currentUserRole, projectQueueFilter])
 
   useEffect(() => {
     if (!appliedLaborRate) return
@@ -5073,6 +5085,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         .update({
           archived: false,
           archived_at: null,
+          archived_by: null,
           archive_reason: null,
         })
         .eq('id', request.id)
@@ -5087,6 +5100,153 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       await loadArchivedRequestsFromSupabase()
     } finally {
       setRestoringId(null)
+    }
+  }
+
+  function getProjectRequests(request: WorkRequest) {
+    return request.groupedRequests?.length ? request.groupedRequests : [request]
+  }
+
+  function getProjectRequestIds(request: WorkRequest) {
+    return getProjectRequests(request).map((item) => item.id).filter(Boolean)
+  }
+
+  function getProjectPropertyIds(request: WorkRequest) {
+    return Array.from(new Set(getProjectRequests(request)
+      .map((item) => getRequestPropertyId(item))
+      .filter((id): id is string | number => id !== null && id !== undefined && String(id) !== '')))
+  }
+
+  async function archiveProject(request: WorkRequest) {
+    if (!hasAdminConsoleAccess) return
+
+    const ids = getProjectRequestIds(request)
+    const confirmed = window.confirm(
+      `Archive this project?\n\n${request.propertyAddress || 'Untitled project'}\n\nIt will leave the active queue but remain available under Archived Projects.`
+    )
+    if (!confirmed || ids.length === 0) return
+
+    setProjectCleanupId(request.id)
+    try {
+      setRequests((prev) => prev.filter((item) => !ids.includes(item.id)))
+
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          archived: true,
+          archived_at: new Date().toISOString(),
+          archived_by: currentUserId || null,
+          archive_reason: 'Archived from Property Work Queue',
+        })
+        .in('id', ids)
+
+      if (error) throw error
+
+      await loadArchivedRequestsFromSupabase()
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not archive project.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setProjectCleanupId(null)
+    }
+  }
+
+  async function permanentlyDeleteProject(request: WorkRequest) {
+    if (!hasAdminConsoleAccess || !canApproveOperationalMemory(memoryActorRole)) {
+      alert('Only admin or owner can permanently delete projects.')
+      return
+    }
+
+    const typed = window.prompt(`Type DELETE to permanently delete this project.\n\n${request.propertyAddress || 'Untitled project'}`)
+    if (typed !== 'DELETE') return
+
+    const reason = window.prompt('Deletion reason is required.')
+    if (!reason?.trim()) {
+      alert('Deletion reason is required. Project was not deleted.')
+      return
+    }
+
+    const deleteFilesToo = window.prompt('Optional: type Delete files too to remove uploaded storage files as well.') === 'Delete files too'
+    const ids = getProjectRequestIds(request)
+    const propertyIds = getProjectPropertyIds(request)
+    const files = getProjectRequests(request).flatMap((item) => getUniqueUploadedFiles(item))
+    const now = new Date().toISOString()
+
+    setProjectCleanupId(request.id)
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          archived: true,
+          archived_at: now,
+          archived_by: currentUserId || null,
+          deleted_at: now,
+          deleted_by: currentUserId || null,
+          deletion_reason: reason.trim(),
+        })
+        .in('id', ids)
+
+      if (error) throw error
+
+      if (propertyIds.length) {
+        const { error: propertyError } = await supabase
+          .from('properties')
+          .update({
+            archived_at: now,
+            archived_by: currentUserId || null,
+            deleted_at: now,
+            deleted_by: currentUserId || null,
+            deletion_reason: reason.trim(),
+          })
+          .in('id', propertyIds.map((id) => String(id)))
+
+        if (propertyError) console.warn('Property soft delete metadata was not saved.', propertyError)
+      }
+
+      const { error: workRequestError } = await supabase
+        .from('work_requests')
+        .update({
+          archived_at: now,
+          archived_by: currentUserId || null,
+          deleted_at: now,
+          deleted_by: currentUserId || null,
+          deletion_reason: reason.trim(),
+        })
+        .in('lead_id', ids)
+
+      if (workRequestError) console.warn('Work request soft delete metadata was not saved.', workRequestError)
+
+      if (deleteFilesToo && files.length) {
+        const filesByBucket = files.reduce<Record<string, string[]>>((acc, file) => {
+          const path = file.path || storagePathFromPublicUrl(file.url || '', file.bucket || REQUEST_FILES_BUCKET)
+          if (!path) return acc
+          const bucket = file.bucket || REQUEST_FILES_BUCKET
+          acc[bucket] = [...(acc[bucket] || []), path]
+          return acc
+        }, {})
+
+        for (const [bucket, paths] of Object.entries(filesByBucket)) {
+          const { error: storageError } = await supabase.storage.from(bucket).remove(Array.from(new Set(paths)))
+          if (storageError) console.warn('Some storage files could not be removed.', storageError)
+        }
+
+        const fileIds = files.map((file) => file.id).filter(Boolean)
+        if (fileIds.length) {
+          const { error: fileDeleteError } = await supabase.from('files').delete().in('id', fileIds)
+          if (fileDeleteError) console.warn('Some file rows could not be deleted.', fileDeleteError)
+        }
+      }
+
+      setRequests((prev) => prev.filter((item) => !ids.includes(item.id)))
+      setArchivedRequests((prev) => prev.filter((item) => !ids.includes(item.id)))
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not delete project.')
+      await loadRequestsFromSupabase()
+      await loadArchivedRequestsFromSupabase()
+    } finally {
+      setProjectCleanupId(null)
     }
   }
 
@@ -7669,51 +7829,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   async function archiveLead(request: WorkRequest) {
-    const confirmed = window.confirm(
-      `Archive this lead?
-
-${request.propertyAddress || 'Untitled lead'}
-
-This will hide it from the dashboard without deleting linked estimates, files, messages, or research.`
-    )
-
-    if (!confirmed) return
-
-    try {
-      setRequests((prev) => prev.filter((item) => item.id !== request.id))
-
-      const { error } = await supabase
-        .from('leads')
-        .update({
-          archived: true,
-          archived_at: new Date().toISOString(),
-        })
-        .eq('id', request.id)
-
-      if (error) throw error
-
-      if (activeTab === 'archived') {
-        await loadArchivedRequestsFromSupabase()
-      }
-
-      if (selectedEstimateRequest?.id === request.id) {
-        setSelectedEstimateRequest(null)
-        setEstimateItems([])
-        setEstimateResearchRows([])
-        setEstimateIntelligence(null)
-        setJobExecutionSteps([])
-        setAiResearchDrafts([])
-        setPropertyAgentOutputsByRequest((prev) => {
-          const next = { ...prev }
-          delete next[request.id]
-          return next
-        })
-      }
-    } catch (error: any) {
-      console.error(error)
-      alert(error?.message || 'Could not archive lead.')
-      await loadRequestsFromSupabase()
-    }
+    await archiveProject(request)
   }
 
   async function runAiEstimate(request: WorkRequest) {
@@ -12432,6 +12548,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
       if (r.archived) return false
+      if (r.deletedAt) return false
 
       const matchesFilter = filter === 'all' || r.status === filter
       const text = [
@@ -12474,12 +12591,63 @@ This will hide it from the dashboard without deleting linked estimates, files, m
         photos: mergedPhotos,
         documents: mergedDocuments,
         adminNotes: mergedNotes,
+        groupedRequests: group,
         description: group.length > 1
           ? `${primary.description || 'Property work'} (${group.length} records grouped at this address)`
           : primary.description,
       }
     })
   }, [filteredRequests])
+
+  const filteredArchivedRequests = useMemo(() => {
+    return archivedRequests.filter((r) => {
+      if (r.deletedAt) return false
+      const text = [
+        r.requesterName,
+        r.email,
+        r.phone,
+        r.propertyAddress,
+        r.city,
+        r.state,
+        r.zip,
+        r.workType,
+        r.description,
+        r.archiveReason,
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return text.includes(archivedSearch.toLowerCase())
+    })
+  }, [archivedRequests, archivedSearch])
+
+  const addressGroupedArchivedRequests = useMemo(() => {
+    const groups = new Map<string, WorkRequest[]>()
+    filteredArchivedRequests.forEach((request) => {
+      const addressKey = (request.propertyAddress || `${request.city} ${request.state}` || request.id).trim().toLowerCase()
+      const current = groups.get(addressKey) || []
+      groups.set(addressKey, [...current, request])
+    })
+
+    return Array.from(groups.values()).map((group) => {
+      const primary = group
+        .slice()
+        .sort((a, b) => Date.parse(b.archivedAt || b.createdAt || '') - Date.parse(a.archivedAt || a.createdAt || ''))[0]
+      return {
+        ...primary,
+        photos: group.flatMap((request) => request.photos || []),
+        documents: group.flatMap((request) => request.documents || []),
+        adminNotes: group.flatMap((request) => request.adminNotes || []),
+        groupedRequests: group,
+      }
+    })
+  }, [filteredArchivedRequests])
+
+  const visibleAddressGroupedRequests = projectQueueFilter === 'archived'
+    ? addressGroupedArchivedRequests
+    : projectQueueFilter === 'all'
+      ? [...addressGroupedRequests, ...addressGroupedArchivedRequests]
+      : addressGroupedRequests
 
   useEffect(() => {
     if (!hasAdminConsoleAccess || (activeTab !== 'dashboard' && activeTab !== 'properties')) return
@@ -12508,27 +12676,6 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     siteMediaFindingsByRequest,
   ])
 
-  const filteredArchivedRequests = useMemo(() => {
-    return archivedRequests.filter((r) => {
-      const text = [
-        r.requesterName,
-        r.email,
-        r.phone,
-        r.propertyAddress,
-        r.city,
-        r.state,
-        r.zip,
-        r.workType,
-        r.description,
-        r.archiveReason,
-      ]
-        .join(' ')
-        .toLowerCase()
-
-      return text.includes(archivedSearch.toLowerCase())
-    })
-  }, [archivedRequests, archivedSearch])
-
   const sellerPrepSelectedRequest = useMemo(() => {
     return requests.find((request) => request.id === sellerPrepSelectedId) || requests[0] || null
   }, [requests, sellerPrepSelectedId])
@@ -12554,7 +12701,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     {
       title: 'Properties by Address',
       hint: 'Each property address is one work group. Open only what needs the next decision.',
-      items: addressGroupedRequests,
+      items: visibleAddressGroupedRequests,
     },
   ]
 
@@ -12616,8 +12763,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
     if (missingInfo) {
       return {
         stage: 'Intake',
-        title: 'Missing information needed',
-        body: 'A few details are needed before this job can move forward.',
+        title: 'Missing info needed',
+        body: 'Missing info needed · Create request',
         buttonLabel: messageSavingId === request.id ? 'Creating...' : 'Create Info Request',
         onPrimary: () => generateMissingInfoRequest(request),
         disabled: messageSavingId === request.id,
@@ -12988,7 +13135,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 </div>
 
                 <details style={styles.moreActions}>
-                  <summary style={styles.moreActionsSummary}>Review</summary>
+                  <summary style={styles.moreActionsSummary}>Edit Details</summary>
                   {hasAdminConsoleAccess ? (
                     <>
                       <input
@@ -15603,6 +15750,18 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       </option>
                     ))}
                   </select>
+
+                  {hasAdminConsoleAccess && (
+                    <select
+                      style={styles.input}
+                      value={projectQueueFilter}
+                      onChange={(event) => setProjectQueueFilter(event.target.value as 'active' | 'archived' | 'all')}
+                    >
+                      <option value="active">Active Projects</option>
+                      <option value="archived">Archived Projects</option>
+                      <option value="all">All Projects</option>
+                    </select>
+                  )}
                 </div>
               )}
             </section>
@@ -15719,6 +15878,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                       const activeFindingCount = getActiveFindings(request).length
                       const activeResearchCount = getActiveResearchTasks(request).length
                       const workGroupCount = getInspectionWorkGroups(request).length
+                      const isArchivedProject = Boolean(request.archived)
 
                       return (
 	                      <div key={request.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
@@ -15728,20 +15888,57 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                             <p style={styles.small}>{request.description || 'No request summary yet.'}</p>
                           </div>
                           {hasAdminConsoleAccess && (
-                            <button
-                              type="button"
-                              style={styles.outlineButton}
-                              onClick={() => (isEditingRequest ? setEditingRequestId(null) : startEditingRequest(request))}
-                            >
-                              {isEditingRequest ? 'Close Edit' : 'Edit'}
-                            </button>
+                            <details style={styles.moreActions}>
+                              <summary style={styles.moreActionsSummary}>More</summary>
+                              <div style={styles.buttonRow}>
+                                <button
+                                  type="button"
+                                  style={styles.linkButton}
+                                  onClick={() => (isEditingRequest ? setEditingRequestId(null) : startEditingRequest(request))}
+                                >
+                                  {isEditingRequest ? 'Close Edit' : 'Edit'}
+                                </button>
+                                {isArchivedProject ? (
+                                  <button
+                                    type="button"
+                                    style={styles.linkButton}
+                                    disabled={restoringId === request.id}
+                                    onClick={() => restoreArchivedLead(request)}
+                                  >
+                                    Restore
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    style={styles.linkButton}
+                                    disabled={projectCleanupId === request.id}
+                                    onClick={() => archiveProject(request)}
+                                  >
+                                    Archive
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  style={styles.linkButton}
+                                  onClick={() => permanentlyDeleteProject(request)}
+                                  disabled={projectCleanupId === request.id}
+                                >
+                                  Delete permanently
+                                </button>
+                                <button
+                                  type="button"
+                                  style={styles.linkButton}
+                                  onClick={() => setSelectedEstimateRequest(request)}
+                                >
+                                  View history
+                                </button>
+                              </div>
+                            </details>
                           )}
                         </div>
                         <div style={styles.badgeRow}>
                           <span style={getOperationalStatusStyle(request.status)}>{STATUS_META[request.status].label}</span>
-                          <span style={styles.badgeMuted}>{workflow.stage}</span>
                           <span style={styles.badgeMuted}>{workGroupCount} work groups</span>
-                          <span style={styles.badgeMuted}>{evidenceCount} evidence</span>
                           <span style={needsReviewCount ? styles.badgeMuted : styles.badge}>{needsReviewCount} needs review</span>
                         </div>
 
@@ -15754,7 +15951,7 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                             disabled={workflow.disabled}
                             onClick={workflow.onPrimary}
                           >
-                            {workflow.buttonLabel}
+                            Review
                           </button>
                         </section>
 
@@ -16219,11 +16416,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                           </details>
                         )}
 
-                        <details style={styles.moreActions}>
-                          <summary style={styles.moreActionsSummary}>Research Tasks ({activeResearchCount})</summary>
-                          {activeResearchCount === 0 ? (
-                            <p style={styles.small}>No active research tasks.</p>
-                          ) : (
+                        {activeResearchCount > 0 && (
+                          <details style={styles.moreActions}>
+                            <summary style={styles.moreActionsSummary}>Research Tasks ({activeResearchCount})</summary>
                             <div style={styles.inspectionTaskGrid}>
                               {getActiveResearchTasks(request).map((task) => (
                                 <div key={`property-research-${task.id}`} style={styles.inspectionTaskCard}>
@@ -16242,8 +16437,8 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                                 </div>
                               ))}
                             </div>
-                          )}
-                        </details>
+                          </details>
+                        )}
 
                         <details style={styles.moreActions}>
                           <summary style={styles.moreActionsSummary}>History / Archived</summary>
@@ -16264,19 +16459,6 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                                 </option>
                               ))}
                             </select>
-                            <button
-                              type="button"
-                              style={{
-                                ...styles.outlineButton,
-                                width: '100%',
-                                borderColor: '#c9a9a9',
-                                color: '#8a2f2f',
-                                marginTop: 10,
-                              }}
-                              onClick={() => archiveLead(request)}
-                            >
-                              Archive Lead
-                            </button>
                           </details>
                         )}
                       </div>
@@ -16286,6 +16468,35 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                 )
               })}
             </section>
+            {hasAdminConsoleAccess && projectQueueFilter === 'active' && (
+              <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
+                <details style={styles.moreActions}>
+                  <summary style={styles.moreActionsSummary}>Archived Projects ({filteredArchivedRequests.length})</summary>
+                  <button
+                    type="button"
+                    style={styles.linkButton}
+                    disabled={archivedLoading}
+                    onClick={loadArchivedRequestsFromSupabase}
+                  >
+                    {archivedLoading ? 'Loading...' : 'Refresh archived projects'}
+                  </button>
+                  {filteredArchivedRequests.length === 0 ? (
+                    <p style={styles.small}>Archived projects are hidden.</p>
+                  ) : (
+                    <ul style={styles.smallList}>
+                      {filteredArchivedRequests.slice(0, 8).map((request) => (
+                        <li key={`archived-inline-${request.id}`}>
+                          {request.propertyAddress || 'Untitled project'} -{' '}
+                          <button type="button" style={styles.linkButton} disabled={restoringId === request.id} onClick={() => restoreArchivedLead(request)}>
+                            Restore
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </details>
+              </section>
+            )}
           </>
         )}
 
@@ -16354,9 +16565,9 @@ This will hide it from the dashboard without deleting linked estimates, files, m
           <section style={styles.card}>
             <div style={styles.buttonRow}>
               <div style={{ flex: 1 }}>
-                <h2>Archived Leads</h2>
+                <h2>Archived Projects</h2>
                 <p style={styles.muted}>
-                  Archived leads are hidden from the Dashboard, but their files, estimates,
+                  Archived projects are hidden from the Dashboard, but their files, estimates,
                   messages, and research stay saved in Supabase.
                 </p>
               </div>
@@ -16373,13 +16584,13 @@ This will hide it from the dashboard without deleting linked estimates, files, m
 
             <input
               style={styles.input}
-              placeholder="Search archived leads"
+              placeholder="Search archived projects"
               value={archivedSearch}
               onChange={(e) => setArchivedSearch(e.target.value)}
             />
 
             {filteredArchivedRequests.length === 0 ? (
-              <div style={styles.empty}>No archived leads found.</div>
+              <div style={styles.empty}>No archived projects found.</div>
             ) : (
               <div style={styles.fileGrid}>
                 {filteredArchivedRequests.map((request) => (
@@ -16416,6 +16627,17 @@ This will hide it from the dashboard without deleting linked estimates, files, m
                     >
                       {restoringId === request.id ? 'Restoring...' : 'Restore to Dashboard'}
                     </button>
+                    <details style={styles.moreActions}>
+                      <summary style={styles.moreActionsSummary}>More</summary>
+                      <button
+                        type="button"
+                        style={styles.linkButton}
+                        disabled={projectCleanupId === request.id}
+                        onClick={() => permanentlyDeleteProject(request)}
+                      >
+                        Delete permanently
+                      </button>
+                    </details>
                   </div>
                 ))}
               </div>
