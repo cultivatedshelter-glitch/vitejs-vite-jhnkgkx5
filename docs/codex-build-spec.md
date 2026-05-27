@@ -19,6 +19,28 @@ Build rules:
 - Do not add flashy new modules when an existing property card, reveal section, or admin control can carry the work.
 - Do not expand the roadmap while implementing narrow reliability or workflow improvements.
 
+## Design Philosophy: Rams-Inspired Operational Minimalism
+
+Shelter Prep should feel useful, quiet, durable, and obvious. It should not feel flashy, decorative, trendy, or over-designed.
+
+Implementation rules:
+
+- Good design is useful: every element must support intake, review, evidence, estimating, routing, memory, or follow-up.
+- Good design is understandable: every screen should answer what this is, what matters, and what the user should do next.
+- Good design is unobtrusive: use restrained layouts, calm spacing, quiet typography, neutral surfaces, strong alignment, and minimal color.
+- Good design is honest: label AI outputs by status and never make draft intelligence feel like final truth.
+- Good design is thorough down to the last detail: file evidence, timestamps, statuses, source links, and human review states must be inspectable.
+- Good design is as little design as possible: avoid decorative UI unless it improves comprehension.
+- Prioritize function over decoration.
+- Reduce visual noise.
+- Use restrained spacing, typography, and color.
+- Make system status obvious.
+- Clearly label AI Draft, Needs Review, Human Verified, Deprecated, and Rejected states wherever operational judgment or memory appears.
+- Avoid gradients, flashy cards, excessive shadows, and decorative motion.
+- Make every screen answer: what is this, what matters, and what should I do next?
+
+Operational memory and field lessons must read like durable records, not marketing content. Use clear labels such as AI Draft, Needs Review, Human Verified, Deprecated, and Rejected. The app should feel like a serious field tool for property operations.
+
 ## UX Direction
 
 - Keep the UI calm, property-centered, and mobile-first.
@@ -125,6 +147,146 @@ AI authority rules:
 - AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment.
 - Inspection Intelligence outputs must remain AI Draft until human reviewed.
 - Pricing, repair approval, scope approval, and contractor dispatch require human review.
+
+### Material Compatibility + Field Finish Memory
+
+Material Compatibility + Field Finish Memory records field-tested lessons about how a product behaved on a substrate under real site conditions. Build this as operational memory, not generic product advice and not a broad recommendation engine.
+
+The first implementation should stay small and property-centered. Store lessons locally against the property/room/evidence first. Only promote them to reusable memory after human verification.
+
+Required data model fields for future entries:
+
+- property_id.
+- room_or_area.
+- substrate.
+- product_name.
+- product_type.
+- prep_method.
+- dilution_ratio.
+- application_tool.
+- application_pattern.
+- lighting_condition.
+- observed_issue.
+- correction_method.
+- final_outcome.
+- risk_level.
+- confidence.
+- verification_status.
+- human_notes.
+- before_photos.
+- after_photos.
+
+Supported verification statuses:
+
+- AI Draft.
+- Needs Review.
+- Human Verified.
+- Deprecated.
+- Rejected.
+
+Required safeguards:
+
+- Do not treat AI observation as final truth.
+- Do not create universal recommendations from one job.
+- Keep new observations local to the property/room until reviewed.
+- Require human notes and evidence before promotion to reusable memory.
+- Keep before and after photos attached where available.
+- Capture uncertainty, drying time, lighting condition, and limits of applicability.
+
+Example record:
+
+- property_id: current property.
+- room_or_area: Stairwell / narrow circulation walls.
+- substrate: Clean new drywall.
+- product_name: James Alexander Limewash Paint.
+- product_type: Limewash paint / mineral finish.
+- prep_method: Diluted limewash first coat used as bonding/base coat.
+- dilution_ratio: Approximately 15-25% water for unifying pass.
+- application_tool: Large block brush or wide masonry brush.
+- application_pattern: Full wall planes, top-to-bottom, broad X movement, long feather arcs, light pressure; avoid scrubbing or spot chasing.
+- lighting_condition: Narrow stairwell/tunnel geometry with strong grazing light.
+- observed_issue: Grazing light amplified drywall seams, patch transitions, uneven absorption, and localized touchup contrast.
+- correction_method: Apply one broad diluted unifying pass across full wall planes instead of isolated touchups.
+- final_outcome: Needs confirmation after drying.
+- risk_level: Medium finish-risk in narrow/grazing-light areas.
+- confidence: Needs review until dry outcome is confirmed.
+- verification_status: Needs Review.
+- human_notes: Preserve soft mineral movement; reduce contrast without flattening into standard beige drywall paint.
+- before_photos: Attach stairwell/seam/patch photos where available.
+- after_photos: Attach dry final-condition photos before promotion.
+
+### Deck Build Field Intelligence
+
+Deck Build Field Intelligence captures real jobsite deck build lessons as operational memory. It should help Shelter Prep remember terrain, drainage, access, framing logic, fastener compatibility, sequencing friction, and maintenance implications. It is not a structural approval system and must not reduce deck builds to only square footage or material quantity.
+
+Example project:
+
+Low-elevation, garden-integrated deck build in a dense Pacific Northwest landscape with mature landscaping/root zones, irregular terrain, shaded moisture exposure, limited material staging/access, an existing nearby deck/house transition, gravel drainage layer, concrete deck/pier blocks, pressure-treated framing, segmented joist layout, dense blocking, and hot-dipped galvanized Simpson connector nails.
+
+Core field lesson:
+
+A low-elevation garden deck is a terrain-adaptive, drainage-sensitive, landscape-integrated framing system.
+
+Required data model fields for future Deck Field Intelligence entries:
+
+- property_id.
+- project_id.
+- area_or_zone.
+- deck_type.
+- elevation_type.
+- site_conditions.
+- soil_or_base_condition.
+- drainage_strategy.
+- landscape_constraints.
+- access_constraints.
+- framing_material.
+- footing_or_support_type.
+- joist_layout_notes.
+- blocking_strategy.
+- fastener_type.
+- connector_type.
+- corrosion_protection.
+- observed_risks.
+- mitigation_notes.
+- sequencing_notes.
+- material_handling_notes.
+- human_notes.
+- before_photos.
+- progress_photos.
+- after_photos.
+- confidence.
+- verification_status.
+
+Supported verification statuses:
+
+- AI Draft.
+- Needs Review.
+- Human Verified.
+- Contractor Verified.
+- Completed / Actual Confirmed.
+- Rejected.
+- Deprecated.
+
+For low-elevation decks in shaded or wet Pacific Northwest environments, flag these review items:
+
+- Drainage under deck.
+- Airflow under framing.
+- Ground contact risk.
+- Pier/block settlement risk.
+- Lateral stiffness/racking risk.
+- Fastener compatibility with treated lumber.
+- Root/landscape protection.
+- Material handling/access constraints.
+- Future inspection/maintenance access.
+
+Required safeguards:
+
+- Do not create a universal structural recommendation from one photo set.
+- Do not say a deck is structurally approved from photos alone.
+- AI may identify visible field conditions and risks.
+- Human/contractor review is required for structural approval.
+- Treat this as field intelligence and job memory, not final engineering.
+- Keep photo-derived deck intelligence in AI Draft or Needs Review until reviewed.
 
 ## Definition of Done
 
