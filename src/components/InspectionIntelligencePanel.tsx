@@ -15,6 +15,24 @@ type InspectionIntelligencePanelProps = {
   onUpdateBundle?: (bundleId: string, changes: Partial<InspectionRepairBundleDraft>) => void
 }
 
+function safeArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : []
+}
+
+function normalizeIntelligence(intelligence: InspectionIntelligenceDraft): InspectionIntelligenceDraft {
+  return {
+    ...intelligence,
+    repairItems: safeArray(intelligence.repairItems),
+    repairBundles: safeArray(intelligence.repairBundles),
+    workGroups: safeArray(intelligence.workGroups),
+    tradeScopes: safeArray(intelligence.tradeScopes),
+    priorityRoadmap: safeArray(intelligence.priorityRoadmap),
+    buyerCreditCandidates: safeArray(intelligence.buyerCreditCandidates),
+    missingInformationQuestions: safeArray(intelligence.missingInformationQuestions),
+    contractorReadyScopes: safeArray(intelligence.contractorReadyScopes),
+  }
+}
+
 export function ReviewStatusBadge({
   status,
   styles,
@@ -37,6 +55,7 @@ function ReviewPacketSummary({
   styles: Styles
 }) {
   if (!packet) return null
+  const missingInfo = safeArray(packet.missing_info)
   const laneLabel = packet.review_lane === 'extended' ? 'Extended' : packet.review_lane === 'deep' ? 'Deep' : 'Standard'
   const targetLabel = bundle.target_review_time_seconds && bundle.target_review_time_seconds >= 172800
     ? 'Target 1-2 business days'
@@ -55,7 +74,7 @@ function ReviewPacketSummary({
       {bundle.packet_warning && <p style={styles.small}>{bundle.packet_warning}</p>}
       {packet.review_lane === 'extended' && <p style={styles.small}>{bundle.extended_review_message || EXTENDED_REVIEW_CUSTOMER_MESSAGE}</p>}
       <p style={styles.small}><strong>What matters:</strong> {packet.what_matters}</p>
-      {packet.missing_info.length > 0 && <p style={styles.small}><strong>Missing info:</strong> {packet.missing_info.join(' ')}</p>}
+      {missingInfo.length > 0 && <p style={styles.small}><strong>Missing info:</strong> {missingInfo.join(' ')}</p>}
       <p style={styles.small}><strong>Next action:</strong> {packet.suggested_next_action}</p>
       <p style={styles.small}><strong>Sources:</strong> {packet.source_reference_count} short reference{packet.source_reference_count === 1 ? '' : 's'} available.</p>
     </div>
@@ -85,7 +104,8 @@ export function InspectionSummarySection({ intelligence, styles, getStatusLabel 
 }
 
 export function PriorityItemsSection({ intelligence, styles, getStatusLabel }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
-  const topRepairItems = intelligence.repairItems
+  const repairItems = safeArray(intelligence.repairItems)
+  const topRepairItems = repairItems
     .slice()
     .sort((a, b) => b.inspection_risk_score - a.inspection_risk_score)
     .slice(0, 4)
@@ -131,11 +151,11 @@ export function RepairFindingsSection({
   return (
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Repair findings</summary>
-      {intelligence.repairItems.length === 0 ? (
+      {safeArray(intelligence.repairItems).length === 0 ? (
         <div style={styles.empty}>No repair findings extracted yet.</div>
       ) : (
         <div style={styles.inspectionTaskGrid}>
-          {intelligence.repairItems.map((item) => (
+          {safeArray(intelligence.repairItems).map((item) => (
             <div key={item.id} style={styles.inspectionTaskCard}>
               <div style={styles.buttonRow}>
                 <div style={{ flex: 1 }}>
@@ -209,11 +229,11 @@ export function RepairBundlesSection({ intelligence, styles, money, getStatusLab
   return (
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Repair bundles</summary>
-      {intelligence.repairBundles.length === 0 ? (
+      {safeArray(intelligence.repairBundles).length === 0 ? (
         <div style={styles.empty}>No repair bundles created yet.</div>
       ) : (
         <div style={styles.inspectionTaskGrid}>
-          {intelligence.repairBundles.map((bundle) => (
+          {safeArray(intelligence.repairBundles).map((bundle) => (
             <div key={bundle.id} style={styles.inspectionTaskCard}>
               <div style={styles.buttonRow}>
                 <div style={{ flex: 1 }}>
@@ -242,8 +262,9 @@ export function AddressWorkGroupsSection({
   canEdit,
   onUpdateBundle,
 }: InspectionIntelligencePanelProps & { intelligence: InspectionIntelligenceDraft }) {
-  const activeBundles = intelligence.repairBundles.filter((bundle) => bundle.status !== 'rejected')
-  const archivedBundles = intelligence.repairBundles.filter((bundle) => bundle.status === 'rejected')
+  const repairBundles = safeArray(intelligence.repairBundles)
+  const activeBundles = repairBundles.filter((bundle) => bundle.status !== 'rejected')
+  const archivedBundles = repairBundles.filter((bundle) => bundle.status === 'rejected')
 
   if (activeBundles.length === 0) return <p style={styles.small}>No grouped repair work extracted yet.</p>
 
@@ -388,7 +409,7 @@ export function TradeScopesSection({ intelligence, styles }: { intelligence: Ins
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Trade scopes</summary>
       <ul style={styles.smallList}>
-        {intelligence.tradeScopes.map((scope, index) => (
+        {safeArray(intelligence.tradeScopes).map((scope, index) => (
           <li key={`${intelligence.id}-trade-${index}`}>{scope}</li>
         ))}
       </ul>
@@ -401,7 +422,7 @@ export function MissingInfoSection({ intelligence, styles }: { intelligence: Ins
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Missing information</summary>
       <ul style={styles.smallList}>
-        {intelligence.missingInformationQuestions.map((question, index) => (
+        {safeArray(intelligence.missingInformationQuestions).map((question, index) => (
           <li key={`${intelligence.id}-missing-${index}`}>{question}</li>
         ))}
       </ul>
@@ -430,11 +451,11 @@ export function SellerReportSection({ intelligence, styles }: { intelligence: In
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Seller report</summary>
       <p style={styles.small}>{intelligence.sellerPrepSummary}</p>
-      {intelligence.buyerCreditCandidates.length > 0 && (
+      {safeArray(intelligence.buyerCreditCandidates).length > 0 && (
         <>
           <strong>Buyer credit candidates</strong>
           <ul style={styles.smallList}>
-            {intelligence.buyerCreditCandidates.map((item, index) => (
+            {safeArray(intelligence.buyerCreditCandidates).map((item, index) => (
               <li key={`${intelligence.id}-credit-${index}`}>{item}</li>
             ))}
           </ul>
@@ -449,7 +470,7 @@ export function ContractorScopeSection({ intelligence, styles }: { intelligence:
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Contractor scope</summary>
       <ul style={styles.smallList}>
-        {intelligence.contractorReadyScopes.map((scope, index) => (
+        {safeArray(intelligence.contractorReadyScopes).map((scope, index) => (
           <li key={`${intelligence.id}-contractor-${index}`}>{scope}</li>
         ))}
       </ul>
@@ -469,14 +490,16 @@ export function InspectionIntelligencePanel({
   onUpdateBundle,
 }: InspectionIntelligencePanelProps) {
   if (!intelligence) return null
+  const safeIntelligence = normalizeIntelligence(intelligence)
+  const activeRepairBundles = safeIntelligence.repairBundles.filter((bundle) => bundle.status !== 'rejected')
 
   return (
     <section style={styles.inspectionTaskPanel}>
-      <InspectionSummarySection intelligence={intelligence} styles={styles} getStatusLabel={getStatusLabel} />
-      <details open={intelligence.repairBundles.length > 0} style={styles.moreActions}>
-        <summary style={styles.moreActionsSummary}>Work Groups ({intelligence.repairBundles.filter((bundle) => bundle.status !== 'rejected').length})</summary>
+      <InspectionSummarySection intelligence={safeIntelligence} styles={styles} getStatusLabel={getStatusLabel} />
+      <details open={safeIntelligence.repairBundles.length > 0} style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Work Groups ({activeRepairBundles.length})</summary>
         <AddressWorkGroupsSection
-          intelligence={intelligence}
+          intelligence={safeIntelligence}
           styles={styles}
           money={money}
           getStatusLabel={getStatusLabel}
@@ -486,9 +509,9 @@ export function InspectionIntelligencePanel({
           onUpdateBundle={onUpdateBundle}
         />
       </details>
-      {intelligence.repairItems.length > 0 && (
+      {safeIntelligence.repairItems.length > 0 && (
         <RepairFindingsSection
-          intelligence={intelligence}
+          intelligence={safeIntelligence}
           styles={styles}
           getStatusLabel={getStatusLabel}
           canEdit={canEdit}
@@ -496,11 +519,11 @@ export function InspectionIntelligencePanel({
           onUpdateFinding={onUpdateFinding}
         />
       )}
-      {intelligence.tradeScopes.length > 0 && <TradeScopesSection intelligence={intelligence} styles={styles} />}
-      {intelligence.missingInformationQuestions.length > 0 && <MissingInfoSection intelligence={intelligence} styles={styles} />}
-      {(intelligence.estimateLow > 0 || intelligence.estimateHigh > 0) && <EstimateDraftSection intelligence={intelligence} styles={styles} money={money} />}
-      {intelligence.sellerPrepSummary && <SellerReportSection intelligence={intelligence} styles={styles} />}
-      {intelligence.contractorReadyScopes.length > 0 && <ContractorScopeSection intelligence={intelligence} styles={styles} />}
+      {safeIntelligence.tradeScopes.length > 0 && <TradeScopesSection intelligence={safeIntelligence} styles={styles} />}
+      {safeIntelligence.missingInformationQuestions.length > 0 && <MissingInfoSection intelligence={safeIntelligence} styles={styles} />}
+      {(safeIntelligence.estimateLow > 0 || safeIntelligence.estimateHigh > 0) && <EstimateDraftSection intelligence={safeIntelligence} styles={styles} money={money} />}
+      {safeIntelligence.sellerPrepSummary && <SellerReportSection intelligence={safeIntelligence} styles={styles} />}
+      {safeIntelligence.contractorReadyScopes.length > 0 && <ContractorScopeSection intelligence={safeIntelligence} styles={styles} />}
     </section>
   )
 }

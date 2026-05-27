@@ -207,6 +207,48 @@ type PropertyAgentResult = {
 
 type PropertyAgentResultInsert = Omit<PropertyAgentResult, 'id' | 'created_at'>
 
+type RuntimeSafetyBoundaryProps = {
+  children: React.ReactNode
+  label: string
+}
+
+type RuntimeSafetyBoundaryState = {
+  error: Error | null
+}
+
+class RuntimeSafetyBoundary extends React.Component<RuntimeSafetyBoundaryProps, RuntimeSafetyBoundaryState> {
+  state: RuntimeSafetyBoundaryState = { error: null }
+
+  static getDerivedStateFromError(error: Error): RuntimeSafetyBoundaryState {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.warn(`${this.props.label} render failed; showing fallback instead of blanking the app.`, error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <section style={{
+          border: '1px solid #d8c6a1',
+          background: '#fff8e8',
+          borderRadius: 8,
+          padding: 16,
+          color: '#4a3a1f',
+        }}>
+          <strong>{this.props.label} needs a refresh.</strong>
+          <p style={{ margin: '8px 0 0', fontSize: 14 }}>
+            Optional project data could not be rendered. The rest of Shelter Prep is still available.
+          </p>
+        </section>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
 type AgentName =
   | 'design_agent'
   | 'estimator_agent'
@@ -1797,6 +1839,13 @@ const JOB_SCOPE_LOCAL_STORAGE_KEY = 'shelter-prep-job-execution-steps-v1'
 const JOB_PACKET_METADATA_LOCAL_STORAGE_KEY = 'shelter-prep-job-packets-v1'
 const AI_RESEARCH_DRAFT_LOCAL_STORAGE_KEY = 'shelter-prep-ai-research-drafts-v1'
 const PROPERTY_AGENT_OUTPUT_LOCAL_STORAGE_KEY = 'shelter-prep-property-agent-outputs-v1'
+let propertyAgentOutputsTableUnavailable = false
+let propertyAgentOutputsTableWarningShown = false
+let contractorAssignmentsWarningShown = false
+
+function safeArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : []
+}
 
 function getJobScopeStorageKey(requestId: string) {
   return `${JOB_SCOPE_LOCAL_STORAGE_KEY}:${requestId}`
@@ -1808,6 +1857,29 @@ function getAiResearchDraftStorageKey(requestId: string) {
 
 function getPropertyAgentOutputStorageKey(requestId: string) {
   return `${PROPERTY_AGENT_OUTPUT_LOCAL_STORAGE_KEY}:${requestId}`
+}
+
+function isMissingPropertyAgentOutputsTableError(error: unknown) {
+  const text = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error !== null
+      ? JSON.stringify(error)
+      : String(error || '')
+  return /property_intelligence_agent_outputs|schema cache|relation .* does not exist|table .* does not exist|404|not found/i.test(text)
+}
+
+function markPropertyAgentOutputsTableUnavailable(error: unknown) {
+  propertyAgentOutputsTableUnavailable = true
+  if (!propertyAgentOutputsTableWarningShown) {
+    propertyAgentOutputsTableWarningShown = true
+    console.info('Property intelligence agent output table unavailable; using local/empty state until schema repair is applied.', error)
+  }
+}
+
+function quietOptionalContractorAssignmentsWarning(error: unknown) {
+  if (contractorAssignmentsWarningShown) return
+  contractorAssignmentsWarningShown = true
+  console.info('Contractor assignments unavailable; showing an empty assignment state.', error)
 }
 
 function sortJobExecutionSteps(steps: JobExecutionStep[]) {
@@ -2098,6 +2170,8 @@ function buildJobExecutionSteps(request: WorkRequest, learnedRecords: JobExecuti
 function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
   const propertyId = getRequestPropertyId(request)
   const repairItemId = getDefaultRepairItemId(request, request.workType || request.description)
+  const requestPhotos = safeArray(request.photos)
+  const requestDocuments = safeArray(request.documents)
   const missingInfo = [
     ...getMissingInfoForAgentDraft(request),
     ...(!request.propertyFacts?.bedrooms ? ['bedrooms'] : []),
@@ -2115,8 +2189,8 @@ function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
     state: request.state,
     zip: request.zip,
     propertyFacts: request.propertyFacts,
-    photoCount: request.photos.length,
-    documentCount: request.documents.length,
+    photoCount: requestPhotos.length,
+    documentCount: requestDocuments.length,
   })
   const jobSteps = buildJobExecutionSteps(request).map((step) => ({
     title: step.title,
@@ -2157,16 +2231,16 @@ function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
     {
       ...base,
       agent_name: 'photo_agent',
-      input_summary: `${request.photos.length} photo(s), ${request.documents.length} document(s), ${request.description.slice(0, 120)}`,
+      input_summary: `${requestPhotos.length} photo(s), ${requestDocuments.length} document(s), ${request.description.slice(0, 120)}`,
       output_json: {
-        visible_repair_conditions: request.photos.length ? ['Uploaded visuals available for human/photo review.'] : [],
+        visible_repair_conditions: requestPhotos.length ? ['Uploaded visuals available for human/photo review.'] : [],
         room_area_classification: inferRoomOrArea(request),
         trade_category: intelligence.tradeBreakdown,
         likely_repair_items: intelligence.draftItems.slice(0, 4).map((item) => item.itemName),
       },
       assumptions: ['Photo analysis is limited to uploaded context and request text in this local draft.'],
-      confidence: request.photos.length ? 'medium_needs_visual_review' : 'low_missing_photos',
-      missing_info: request.photos.length ? [] : ['photos'],
+      confidence: requestPhotos.length ? 'medium_needs_visual_review' : 'low_missing_photos',
+      missing_info: requestPhotos.length ? [] : ['photos'],
       audit_notes: ['Missing angles, close-ups, and measurements may materially change scope.'],
     },
     {
@@ -2275,8 +2349,8 @@ function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
           ...intelligence.riskFlags,
           ...logisticsAudit.logistics_conflicts,
           ...logisticsAudit.hidden_labor_flags,
-          ...(!request.photos.length ? ['No photos uploaded.'] : []),
-          ...(!request.documents.length ? ['No documents uploaded.'] : []),
+          ...(!requestPhotos.length ? ['No photos uploaded.'] : []),
+          ...(!requestDocuments.length ? ['No documents uploaded.'] : []),
         ],
       },
       assumptions: ['Every agent output is an AI draft until human reviewed.'],
@@ -2312,7 +2386,7 @@ function buildPropertyAgentDrafts(request: WorkRequest): PropertyAgentResult[] {
 function getMissingInfoForAgentDraft(request: WorkRequest) {
   const items: string[] = []
   if (!request.propertyAddress || !request.city || !request.state || !request.zip) items.push('property address')
-  if (request.photos.length === 0) items.push('photos')
+  if (safeArray(request.photos).length === 0) items.push('photos')
   if (!request.timeline) items.push('deadline')
   if (!request.description || request.description.trim().length < 35) items.push('scope clarity')
   if (!request.occupancy || request.occupancy === 'Unknown') items.push('access/occupancy context')
@@ -3183,6 +3257,15 @@ function uniqueStoredFiles(files: StoredFile[]) {
   })
 }
 
+function isOptionalFileSchemaError(error: unknown) {
+  const text = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error !== null
+      ? JSON.stringify(error)
+      : String(error || '')
+  return /linked_property_id|linked_lead_id|linked_request_id|property_files|schema cache|column .* does not exist|relation .* does not exist|table .* does not exist/i.test(text)
+}
+
 async function attachFilesToRequests(items: WorkRequest[]) {
   const ids = items.map((item) => item.id).filter(Boolean)
   const propertyIds = items
@@ -3216,7 +3299,9 @@ async function attachFilesToRequests(items: WorkRequest[]) {
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.warn('Property-linked files could not be loaded; continuing with lead files.', error)
+      if (!isOptionalFileSchemaError(error)) {
+        console.warn('Property-linked files could not be loaded; continuing with lead files.', error)
+      }
     } else {
       fileRows.push(...(data || []))
     }
@@ -3228,7 +3313,9 @@ async function attachFilesToRequests(items: WorkRequest[]) {
       .order('created_at', { ascending: false })
 
     if (propertyFilesError) {
-      console.warn('property_files could not be loaded; continuing with files table rows.', propertyFilesError)
+      if (!isOptionalFileSchemaError(propertyFilesError)) {
+        console.warn('property_files could not be loaded; continuing with files table rows.', propertyFilesError)
+      }
     } else {
       fileRows.push(
         ...(propertyFileRows || []).map((row: any) => ({
@@ -3443,16 +3530,18 @@ function searchUrl(query: string) {
 }
 
 function classifyMaterialListComplexity(request: WorkRequest): MaterialComplexityClassification {
+  const requestPhotos = safeArray(request.photos)
+  const requestDocuments = safeArray(request.documents)
   const text = normalizeMaterialName([
     request.workType,
     request.description,
     request.timeline,
     request.urgency,
     request.occupancy,
-    request.photos.map((file) => file.name).join(' '),
-    request.documents.map((file) => file.name).join(' '),
+    requestPhotos.map((file) => file.name).join(' '),
+    requestDocuments.map((file) => file.name).join(' '),
   ].join(' '))
-  const mediaCount = request.photos.length + request.documents.length
+  const mediaCount = requestPhotos.length + requestDocuments.length
   const dimensionSignals = [
     /\d{1,5}\s*(sqft|sq ft|square feet|sf)/,
     /\d{1,4}\s*(linear feet|lf|feet|ft|inches|inch|in)/,
@@ -3816,7 +3905,8 @@ function splitInspectionInfo(value?: string | null) {
 }
 
 function requestHasInspectionContext(request: WorkRequest) {
-  const documentNames = request.documents.map((file) => file.name).join(' ')
+  const requestDocuments = safeArray(request.documents)
+  const documentNames = requestDocuments.map((file) => file.name).join(' ')
   const text = [
     request.workType,
     request.description,
@@ -3825,7 +3915,7 @@ function requestHasInspectionContext(request: WorkRequest) {
     documentNames,
   ].join(' ').toLowerCase()
   const hasInspectionWord = ['inspection', 'inspector', 'report', 'seller', 'buyer', 'sprinkler', 'fire suppression', 'fire marshal'].some((word) => text.includes(word))
-  const hasReportLikeDocument = request.documents.some((file) => /\.(pdf|doc|docx)$/i.test(file.name))
+  const hasReportLikeDocument = requestDocuments.some((file) => /\.(pdf|doc|docx)$/i.test(file.name))
   return hasInspectionWord || hasReportLikeDocument
 }
 
@@ -3960,6 +4050,32 @@ function getAdminNotesFromFacts(propertyFacts: Record<string, any>): AdminNote[]
     : []
 }
 
+function normalizeInspectionIntelligenceDraft(value: unknown): InspectionIntelligenceDraft | null {
+  if (!value || typeof value !== 'object') return null
+  const draft = value as InspectionIntelligenceDraft
+  return {
+    ...draft,
+    repairItems: safeArray(draft.repairItems),
+    repairBundles: safeArray(draft.repairBundles),
+    workGroups: safeArray(draft.workGroups),
+    tradeScopes: safeArray(draft.tradeScopes),
+    priorityRoadmap: safeArray(draft.priorityRoadmap),
+    buyerCreditCandidates: safeArray(draft.buyerCreditCandidates),
+    missingInformationQuestions: safeArray(draft.missingInformationQuestions),
+    contractorReadyScopes: safeArray(draft.contractorReadyScopes),
+  }
+}
+
+function normalizePropertyAgentResult(row: PropertyAgentResult): PropertyAgentResult {
+  return {
+    ...row,
+    output_json: row.output_json && typeof row.output_json === 'object' ? row.output_json : {},
+    assumptions: safeArray(row.assumptions),
+    missing_info: safeArray(row.missing_info),
+    audit_notes: safeArray(row.audit_notes),
+  }
+}
+
 function mapLeadRowToWorkRequest(row: any): WorkRequest {
   const rowPropertyFacts = row.property_facts && typeof row.property_facts === 'object'
     ? row.property_facts
@@ -4001,7 +4117,7 @@ function mapLeadRowToWorkRequest(row: any): WorkRequest {
     deletedAt: row.deleted_at || '',
     deletedBy: row.deleted_by || '',
     deletionReason: row.deletion_reason || '',
-    inspectionIntelligence: rowPropertyFacts.inspectionIntelligence || null,
+    inspectionIntelligence: normalizeInspectionIntelligenceDraft(rowPropertyFacts.inspectionIntelligence),
     inspectionProcessingStatus: normalizeInspectionProcessingStatus(rowPropertyFacts.inspectionProcessingStatus),
     inspectionExtractionSummary: rowPropertyFacts.inspectionExtractionSummary || '',
     inspectionExtractionMessage: rowPropertyFacts.inspectionExtractionMessage || '',
@@ -4883,7 +4999,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const items: string[] = []
 
     if (!request.propertyAddress || !request.city || !request.state || !request.zip) items.push('property address')
-    if (request.photos.length === 0 && !text.includes('photo') && !text.includes('picture')) items.push('photos')
+    if (safeArray(request.photos).length === 0 && !text.includes('photo') && !text.includes('picture')) items.push('photos')
     if (!request.timeline && !text.includes('deadline') && !text.includes('asap') && !text.includes('urgent')) items.push('deadline')
     if ((text.includes('inspection') || text.includes('buyer') || text.includes('seller') || text.includes('roof')) && !text.includes('report')) {
       items.push('inspection report')
@@ -5174,7 +5290,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function getProjectRequests(request: WorkRequest) {
-    return request.groupedRequests?.length ? request.groupedRequests : [request]
+    const groupedRequests = safeArray(request.groupedRequests)
+    return groupedRequests.length ? groupedRequests : [request]
   }
 
   function getProjectRequestIds(request: WorkRequest) {
@@ -5475,13 +5592,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function getSiteMediaSourceFileLabel(request: WorkRequest, sourceFileId?: string | null) {
     if (!sourceFileId) return 'Manual / no file linked'
-    const file = [...request.photos, ...request.documents].find((item) => item.id === sourceFileId)
+    const file = [...safeArray(request.photos), ...safeArray(request.documents)].find((item) => item.id === sourceFileId)
     return file?.name || 'Uploaded file'
   }
 
   function getApprovedSiteMediaFindings(request: WorkRequest | null | undefined) {
     if (!request) return []
-    return (siteMediaFindingsByRequest[request.id] || []).filter((finding) =>
+    return safeArray(siteMediaFindingsByRequest[request.id]).filter((finding) =>
       isHumanVerifiedStatus(finding.review_status)
     )
   }
@@ -5878,7 +5995,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function getResearchContextEvidence(request: WorkRequest, finding: PropertyMediaFinding, task: AgentResearchTask) {
     const lowerQuestion = task.question.toLowerCase()
-    const uploadedMatches = [...request.documents, ...request.photos]
+    const uploadedMatches = [...safeArray(request.documents), ...safeArray(request.photos)]
       .filter((file) => lowerQuestion.split(/\s+/).some((word) => word.length > 4 && file.name.toLowerCase().includes(word)))
       .slice(0, 4)
     const propertyBits = [
@@ -6788,6 +6905,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     saveLocalPropertyAgentOutputs(request, outputs)
     setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: outputs }))
 
+    if (propertyAgentOutputsTableUnavailable) return
+
     try {
       const rows = outputs.map((output) => ({
         property_id: output.property_id,
@@ -6808,39 +6927,49 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       const { error } = await supabase.from('property_intelligence_agent_outputs').insert(rows)
       if (error) throw error
     } catch (error) {
-      console.warn('Property intelligence agent outputs saved locally only.', error)
+      if (isMissingPropertyAgentOutputsTableError(error)) {
+        markPropertyAgentOutputsTableUnavailable(error)
+      } else {
+        console.warn('Property intelligence agent outputs saved locally only.', error)
+      }
     }
   }
 
   async function loadOrCreatePropertyAgentOutputs(request: WorkRequest) {
     if (propertyAgentOutputsByRequest[request.id]?.length) return propertyAgentOutputsByRequest[request.id]
 
-    try {
-      const { data, error } = await supabase
-        .from('property_intelligence_agent_outputs')
-        .select('*')
-        .eq('work_request_id', request.id)
-        .order('created_at', { ascending: true })
+    if (!propertyAgentOutputsTableUnavailable) {
+      try {
+        const { data, error } = await supabase
+          .from('property_intelligence_agent_outputs')
+          .select('*')
+          .eq('work_request_id', request.id)
+          .order('created_at', { ascending: true })
 
-      if (error) throw error
+        if (error) throw error
 
-      const rows = (data || []) as PropertyAgentResult[]
-      if (rows.length) {
-        setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: rows }))
-        saveLocalPropertyAgentOutputs(request, rows)
-        return rows
+        const rows = safeArray(data as PropertyAgentResult[] | null).map(normalizePropertyAgentResult)
+        if (rows.length) {
+          setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: rows }))
+          saveLocalPropertyAgentOutputs(request, rows)
+          return rows
+        }
+      } catch (error) {
+        if (isMissingPropertyAgentOutputsTableError(error)) {
+          markPropertyAgentOutputsTableUnavailable(error)
+        } else {
+          console.warn('Property intelligence agent output table unavailable; using local outputs.', error)
+        }
       }
-    } catch (error) {
-      console.warn('Property intelligence agent output table unavailable; using local outputs.', error)
     }
 
-    const localRows = loadLocalPropertyAgentOutputs(request)
+    const localRows = loadLocalPropertyAgentOutputs(request).map(normalizePropertyAgentResult)
     if (localRows.length) {
       setPropertyAgentOutputsByRequest((prev) => ({ ...prev, [request.id]: localRows }))
       return localRows
     }
 
-    const drafts = buildPropertyAgentDrafts(request)
+    const drafts = buildPropertyAgentDrafts(request).map(normalizePropertyAgentResult)
     await savePropertyAgentOutputs(request, drafts)
     return drafts
   }
@@ -7606,7 +7735,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   async function processInspectionPdfsForRequest(request: WorkRequest) {
-    const pdfs = request.documents.filter(isPdfEvidence)
+    const pdfs = safeArray(request.documents).filter(isPdfEvidence)
     if (!pdfs.length) {
       alert('No uploaded PDF evidence is attached to this request.')
       return
@@ -8101,7 +8230,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           scope: request.description,
           timeline: request.timeline,
           notes: `Urgency: ${request.urgency}. Occupancy: ${request.occupancy}. Address: ${request.propertyAddress}`,
-          files: [...request.photos, ...request.documents],
+          files: [...safeArray(request.photos), ...safeArray(request.documents)],
         },
       })
       
@@ -8330,6 +8459,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function buildSellerPrepDraft(request: WorkRequest) {
+    const requestPhotos = safeArray(request.photos)
+    const requestDocuments = safeArray(request.documents)
     const intelligence = buildEstimateIntelligence({
       id: request.id,
       workType: request.workType,
@@ -8341,8 +8472,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       state: request.state,
       zip: request.zip,
       propertyFacts: request.propertyFacts,
-      photoCount: request.photos.length,
-      documentCount: request.documents.length,
+      photoCount: requestPhotos.length,
+      documentCount: requestDocuments.length,
     })
 
     const missing = getMissingInfoItems(request)
@@ -8876,8 +9007,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         state: request.state,
         zip: request.zip,
         propertyFacts: request.propertyFacts,
-        photoCount: request.photos.length,
-        documentCount: request.documents.length,
+        photoCount: safeArray(request.photos).length,
+        documentCount: safeArray(request.documents).length,
       })
 
       const inserts = deckDraftLines.map((line) => ({
@@ -9942,7 +10073,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         ? 'human_verified'
         : 'needs_review'
 
-    const fileLines = [...request.photos, ...request.documents].map((file) =>
+    const fileLines = [...safeArray(request.photos), ...safeArray(request.documents)].map((file) =>
       `${file.type}: ${file.name}${file.url ? ` (${file.url})` : ''}`
     )
 
@@ -10120,8 +10251,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       state: request.state,
       zip: request.zip,
       propertyFacts: request.propertyFacts,
-      photoCount: request.photos.length,
-      documentCount: request.documents.length,
+      photoCount: safeArray(request.photos).length,
+      documentCount: safeArray(request.documents).length,
     })
 
     setEstimateIntelligence(result)
@@ -11931,10 +12062,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       ])
       if (assignmentsError) throw assignmentsError
       if (profilesError && canApproveOperationalMemory(memoryActorRole)) throw profilesError
-      setContractorAssignments((assignments || []) as ContractorAssignment[])
-      setContractorProfiles(((profiles || []) as ContractorProfile[]).filter((profile) => profile.role === 'contractor'))
+      setContractorAssignments(safeArray(assignments as ContractorAssignment[] | null))
+      setContractorProfiles(safeArray(profiles as ContractorProfile[] | null).filter((profile) => profile.role === 'contractor'))
     } catch (error) {
-      console.warn('Could not load contractor assignments.', error)
+      quietOptionalContractorAssignmentsWarning(error)
       setContractorAssignments([])
       if (canApproveOperationalMemory(memoryActorRole)) setContractorProfiles([])
     } finally {
@@ -13043,8 +13174,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       }
     }
 
+    const photoCount = safeArray(request.photos).length
+    const documentCount = safeArray(request.documents).length
     return {
-      stage: request.photos.length || request.documents.length ? 'Scope Organized' : 'Intake',
+      stage: photoCount || documentCount ? 'Scope Organized' : 'Intake',
       title: 'Ready to organize scope',
       body: 'Photos, documents, and request details are attached. Shelter Prep can prepare the first repair scope and Estimate Range draft.',
       buttonLabel: materialEstimateLoadingId === request.id ? 'Preparing...' : 'Prepare Draft',
@@ -13062,28 +13195,28 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function getActiveFindings(request: WorkRequest) {
-    return (siteMediaFindingsByRequest[request.id] || []).filter((finding) => !isRejectedFinding(finding))
+    return safeArray(siteMediaFindingsByRequest[request.id]).filter((finding) => !isRejectedFinding(finding))
   }
 
   function getArchivedFindings(request: WorkRequest) {
-    return (siteMediaFindingsByRequest[request.id] || []).filter(isRejectedFinding)
+    return safeArray(siteMediaFindingsByRequest[request.id]).filter(isRejectedFinding)
   }
 
   function getActiveResearchTasks(request: WorkRequest) {
-    return (agentResearchTasksByRequest[request.id] || []).filter((task) => !isRejectedResearchTask(task))
+    return safeArray(agentResearchTasksByRequest[request.id]).filter((task) => !isRejectedResearchTask(task))
   }
 
   function getArchivedResearchTasks(request: WorkRequest) {
-    return (agentResearchTasksByRequest[request.id] || []).filter(isRejectedResearchTask)
+    return safeArray(agentResearchTasksByRequest[request.id]).filter(isRejectedResearchTask)
   }
 
   function getReportApprovedHelpfulResources(request: WorkRequest | null | undefined) {
     if (!request) return []
-    const requestTasks = agentResearchTasksByRequest[request.id] || []
-    const findingTasks = (siteMediaFindingsByRequest[request.id] || [])
-      .flatMap((finding) => agentResearchTasksByFinding[finding.id] || [])
+    const requestTasks = safeArray(agentResearchTasksByRequest[request.id])
+    const findingTasks = safeArray(siteMediaFindingsByRequest[request.id])
+      .flatMap((finding) => safeArray(agentResearchTasksByFinding[finding.id]))
     const approvedSources = [...requestTasks, ...findingTasks]
-      .flatMap((task) => agentResearchSourcesByTask[task.id] || [])
+      .flatMap((task) => safeArray(agentResearchSourcesByTask[task.id]))
       .filter((source) => source.report_visibility === 'report_approved')
     const unique = new Map<string, AgentResearchSource>()
     approvedSources.forEach((source) => {
@@ -13094,7 +13227,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function getTopReviewPacketSources(sources: AgentResearchSource[], adminView = hasAdminConsoleAccess) {
-    return sources
+    return safeArray(sources)
       .filter((source) =>
         adminView
           ? ['report_approved', 'report_candidate', 'internal_only'].includes(source.report_visibility || 'internal_only') &&
@@ -13248,6 +13381,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     disabled?: boolean
   } = {}) {
     if (!packet) return null
+    const packetMissingInfo = safeArray(packet.missing_info)
+    const packetTopSourceLinks = safeArray(packet.top_source_links)
     const warning = metadata.packet_warning || ((metadata.packet_size_bytes || 0) > REVIEW_PACKET_SIZE_LIMIT_BYTES
       ? 'Review packet is too large. Compress summary or move raw details to source refs.'
       : '')
@@ -13267,15 +13402,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         {lane === 'extended' && <p style={styles.small}>{metadata.extended_review_message || EXTENDED_REVIEW_CUSTOMER_MESSAGE}</p>}
         <p style={styles.small}><strong>What matters:</strong> {packet.what_matters}</p>
         <p style={styles.small}><strong>Evidence:</strong> {packet.evidence_summary}</p>
-        {packet.missing_info.length > 0 && (
-          <p style={styles.small}><strong>Missing info:</strong> {packet.missing_info.join(' ')}</p>
+        {packetMissingInfo.length > 0 && (
+          <p style={styles.small}><strong>Missing info:</strong> {packetMissingInfo.join(' ')}</p>
         )}
         <p style={styles.small}><strong>Next action:</strong> {packet.suggested_next_action}</p>
         <p style={styles.small}><strong>Estimate/bid:</strong> {packet.estimate_range_bid_status}</p>
         <p style={styles.small}><strong>Sources:</strong> {packet.research_confirmation_status}</p>
-        {packet.top_source_links.length > 0 && (
+        {packetTopSourceLinks.length > 0 && (
           <ul style={styles.smallList}>
-            {packet.top_source_links.map((source, index) => (
+            {packetTopSourceLinks.map((source, index) => (
               <li key={`${packet.work_group_title}-packet-source-${index}`}>
                 {source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}
               </li>
@@ -13303,7 +13438,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       request.inspectionIntelligence?.propertyAddress,
       request.inspectionIntelligence?.city,
       request.inspectionIntelligence?.fileName,
-      request.inspectionIntelligence?.repairItems?.map((item) => item.source_text).join(' '),
+      safeArray(request.inspectionIntelligence?.repairItems).map((item) => item.source_text).join(' '),
     ].filter(Boolean).join(' ')
     return /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(text)
   }
@@ -13312,7 +13447,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const intelligence = request.inspectionIntelligence
     if (!intelligence) return []
 
-    const persistedGroups = (intelligence.workGroups || intelligence.repairBundles || []) as InspectionRepairBundleDraft[]
+    const persistedGroups = (safeArray(intelligence.workGroups).length ? intelligence.workGroups : intelligence.repairBundles) || []
     if (persistedGroups.length > 0) {
       return persistedGroups
         .filter((bundle) => bundle.status !== 'rejected')
@@ -13324,8 +13459,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         .map((bundle) => applyReviewPacketToBundle(bundle, request.propertyAddress || intelligence.propertyAddress))
     }
 
-    if (intelligence.repairItems?.length) {
-      return buildRepairBundles(intelligence.repairItems, request.propertyId || getRequestPropertyId(request), request.propertyAddress || intelligence.propertyAddress)
+    const repairItems = safeArray(intelligence.repairItems)
+    if (repairItems.length) {
+      return buildRepairBundles(repairItems, request.propertyId || getRequestPropertyId(request), request.propertyAddress || intelligence.propertyAddress)
         .filter((bundle) => bundle.status !== 'rejected')
     }
 
@@ -13335,12 +13471,12 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   function getArchivedInspectionWorkGroups(request: WorkRequest) {
     const intelligence = request.inspectionIntelligence
     if (!intelligence) return []
-    return ((intelligence.workGroups || intelligence.repairBundles || []) as InspectionRepairBundleDraft[])
+    return (safeArray(intelligence.workGroups).length ? safeArray(intelligence.workGroups) : safeArray(intelligence.repairBundles))
       .filter((bundle) => bundle.status === 'rejected')
   }
 
   function hasInspectionFindingsWithoutWorkGroups(request: WorkRequest) {
-    return Boolean(request.inspectionIntelligence?.repairItems?.length) && getInspectionWorkGroups(request).length === 0
+    return safeArray(request.inspectionIntelligence?.repairItems).length > 0 && getInspectionWorkGroups(request).length === 0
   }
 
   function getNeedsReviewCount(request: WorkRequest) {
@@ -13362,7 +13498,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function getUniqueUploadedFiles(request: WorkRequest) {
     const uniqueFiles = new Map<string, StoredFile>()
-    ;[...request.photos, ...request.documents].forEach((file) => {
+    ;[...safeArray(request.photos), ...safeArray(request.documents)].forEach((file) => {
       const key = (file.path || file.url || file.id || file.name).toLowerCase()
       if (!uniqueFiles.has(key)) uniqueFiles.set(key, file)
     })
@@ -14353,7 +14489,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function renderInspectionProcessing(request: WorkRequest) {
-    const pdfs = request.documents.filter(isPdfEvidence)
+    const pdfs = safeArray(request.documents).filter(isPdfEvidence)
     const status = pdfProcessingByRequest[request.id] || request.inspectionProcessingStatus || (pdfs.length ? 'uploaded' : undefined)
     if (!pdfs.length && !request.inspectionIntelligence && !request.inspectionExtractionMessage) return null
 
@@ -14400,7 +14536,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
               onClick={async () => {
                 await loadRequestsFromSupabase()
                 const latest = requests.find((item) => item.id === request.id) || request
-                if ((latest.documents || request.documents).some(isPdfEvidence)) {
+                if ((safeArray(latest.documents).length ? safeArray(latest.documents) : safeArray(request.documents)).some(isPdfEvidence)) {
                   await processInspectionPdfsForRequest(latest)
                 }
               }}
@@ -14420,11 +14556,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function renderSiteMediaIntelligence(request: WorkRequest) {
-    const allFindings = siteMediaFindingsByRequest[request.id] || []
+    const allFindings = safeArray(siteMediaFindingsByRequest[request.id])
     const findings = allFindings.filter((finding) => !isRejectedFinding(finding))
     const archivedFindings = allFindings.filter(isRejectedFinding)
     const approvedFindings = getApprovedSiteMediaFindings(request)
-    const uploadedFiles = [...request.photos, ...request.documents]
+    const uploadedFiles = [...safeArray(request.photos), ...safeArray(request.documents)]
     const canEditSiteMedia = hasSupabaseSession && canEditOperationalMemory(currentUserRole)
     const canApproveSiteMedia = hasSupabaseSession && canApproveOperationalMemory(currentUserRole)
     const loading = Boolean(siteMediaLoadingByRequest[request.id])
@@ -14998,7 +15134,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   function renderPropertyWorkflowCard(request: WorkRequest) {
     const workflow = getPropertyWorkflow(request)
-    const agentOutputs = propertyAgentOutputsByRequest[request.id] || []
+    const agentOutputs = safeArray(propertyAgentOutputsByRequest[request.id]).map(normalizePropertyAgentResult)
+    const contractorAssignmentList = safeArray(contractorAssignments)
     const approvedSiteMediaFindings = getApprovedSiteMediaFindings(request)
     const coordinationOutput = agentOutputs.find((output) => output.agent_name === 'coordination_agent')
     const logisticsOutput = agentOutputs.find((output) => output.agent_name === 'logistics_agent')
@@ -15013,7 +15150,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       typeof coordinationJson.recommended_next_step === 'string'
         ? coordinationJson.recommended_next_step
         : workflow.buttonLabel
-    const missingInfoCount = agentOutputs.reduce((sum, output) => sum + output.missing_info.length, 0)
+    const missingInfoCount = agentOutputs.reduce((sum, output) => sum + safeArray(output.missing_info).length, 0)
     const needsReviewCount = agentOutputs.filter((output) => !isHumanVerifiedStatus(output.status)).length
     const logisticsSummary = getJsonString(
       logisticsJson.logistics_summary,
@@ -15081,7 +15218,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         disabled: messageSavingId === request.id,
       },
     ]
-    const requestAssignments = contractorAssignments.filter(
+    const requestAssignments = contractorAssignmentList.filter(
       (assignment) =>
         assignment.property_id === getRequestPropertyId(request) ||
         assignment.work_request_id === request.id
@@ -15103,7 +15240,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const missingQuestions = [
       ...getMissingInfoItems(request).map(missingInfoQuestionFor),
       ...logisticsQuestions,
-      ...agentOutputs.flatMap((output) => output.missing_info.map(missingInfoQuestionFor)),
+      ...agentOutputs.flatMap((output) => safeArray(output.missing_info).map(missingInfoQuestionFor)),
     ].filter((item, index, arr) => item && arr.indexOf(item) === index)
     const estimateReviewStatus = scopedItems.length
       ? pendingEstimateItems.length
@@ -15421,19 +15558,19 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   <p style={styles.small}>{output.input_summary}</p>
                   <strong>Assumptions</strong>
                   <ul style={styles.smallList}>
-                    {(output.assumptions.length ? output.assumptions : ['None listed']).map((item) => (
+                    {(safeArray(output.assumptions).length ? safeArray(output.assumptions) : ['None listed']).map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
                   <strong>Missing Info</strong>
                   <ul style={styles.smallList}>
-                    {(output.missing_info.length ? output.missing_info : ['None obvious']).map((item) => (
+                    {(safeArray(output.missing_info).length ? safeArray(output.missing_info) : ['None obvious']).map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
                   <strong>Audit Notes</strong>
                   <ul style={styles.smallList}>
-                    {(output.audit_notes.length ? output.audit_notes : ['Human review required before final use.']).map((item) => (
+                    {(safeArray(output.audit_notes).length ? safeArray(output.audit_notes) : ['Human review required before final use.']).map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
@@ -15453,6 +15590,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         </details>
       </div>
     )
+  }
+
+  function PropertyWorkflowCard({ request }: { request: WorkRequest }) {
+    return renderPropertyWorkflowCard(request)
   }
 
   const currentScopeEstimateItems = useMemo(
@@ -15599,6 +15740,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   const visibleAgentMemoryConflicts = agentMemoryConflicts.filter(
     (conflict) => memoryConflictStatusFilter === 'all' || conflict.resolution_status === memoryConflictStatusFilter
   )
+  const safeContractorAssignments = safeArray(contractorAssignments)
 
   return (
     <div style={isCompact ? { ...styles.page, ...styles.mobilePage } : styles.page}>
@@ -15743,6 +15885,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       )}
 
       <main style={isCompact ? { ...styles.main, ...styles.mobileMain } : styles.main}>
+        <RuntimeSafetyBoundary key={activeTab} label={activeTab === 'new' ? 'New Request' : activeTab === 'dashboard' || activeTab === 'properties' ? 'Property Work Queue' : 'Current screen'}>
         {activeTab === 'new' && (
           <div style={isCompact ? styles.mobileStack : styles.twoColumn}>
             <section style={styles.card}>
@@ -16448,11 +16591,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             {currentUserRole === 'contractor' && !hasAdminConsoleAccess && (
               <section style={isCompact ? { ...styles.card, ...styles.mobileCard } : styles.card}>
                 <h3>My Assignments</h3>
-                {contractorAssignments.length === 0 ? (
+                {safeContractorAssignments.length === 0 ? (
                   <p style={styles.muted}>No active assignments are available for this contractor profile.</p>
                 ) : (
                   <div style={styles.fileGrid}>
-                    {contractorAssignments.map((assignment) => {
+                    {safeContractorAssignments.map((assignment) => {
                       const notesDraft = contractorNotesByAssignment[assignment.id] ?? assignment.contractor_notes ?? ''
                       return (
                         <div key={assignment.id} style={styles.requestCard}>
@@ -16505,7 +16648,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             <section style={isCompact ? { ...styles.kanban, ...styles.mobileKanban } : styles.kanban}>
               {filteredRequests.filter((request) =>
                 currentUserRole === 'contractor' && !hasAdminConsoleAccess
-                  ? contractorAssignments.some(
+                  ? safeContractorAssignments.some(
                       (assignment) =>
                         assignment.contractor_profile_id === currentUserId &&
                         (assignment.property_id === getRequestPropertyId(request) || assignment.work_request_id === request.id)
@@ -16518,7 +16661,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
               {dashboardSections.map((section) => {
                 const items = section.items.filter((request) => {
                   if (currentUserRole !== 'contractor' || hasAdminConsoleAccess) return true
-                  return contractorAssignments.some(
+                  return safeContractorAssignments.some(
                     (assignment) =>
                       assignment.contractor_profile_id === currentUserId &&
                       (assignment.property_id === getRequestPropertyId(request) || assignment.work_request_id === request.id)
@@ -17107,7 +17250,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
                         <details style={styles.moreActions}>
                           <summary style={styles.moreActionsSummary}>History / Archived</summary>
-	                        {renderPropertyWorkflowCard(request)}
+                          <RuntimeSafetyBoundary label="Property workflow card">
+                            <PropertyWorkflowCard request={request} />
+                          </RuntimeSafetyBoundary>
                         </details>
 
                         {hasAdminConsoleAccess && (
@@ -20800,6 +20945,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             )}
           </section>
         )}
+        </RuntimeSafetyBoundary>
       </main>
       {materialEditorItem && materialEditorDraft && (
         <div style={styles.overlay} onClick={closeMaterialEditor}>

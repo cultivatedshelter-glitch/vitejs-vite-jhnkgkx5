@@ -170,6 +170,10 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '-')
 }
 
+function safeArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : []
+}
+
 export const REVIEW_PACKET_VERSION = 'review-packet-v1'
 export const REVIEW_PACKET_SIZE_LIMIT_BYTES = 250 * 1024
 export const EXTENDED_REVIEW_CUSTOMER_MESSAGE =
@@ -782,13 +786,14 @@ export function formatEstimateRange(low: number, high: number) {
 }
 
 export function buildSellerPrepSummary(repairBundles: InspectionRepairBundleDraft[]) {
-  return repairBundles.length
-    ? `Seller prep AI Draft: prioritize ${repairBundles.slice(0, 2).map((bundle) => bundle.title).join(' and ')} before drafting buyer-facing response.`
+  const bundles = safeArray(repairBundles)
+  return bundles.length
+    ? `Seller prep AI Draft: prioritize ${bundles.slice(0, 2).map((bundle) => bundle.title).join(' and ')} before drafting buyer-facing response.`
     : 'Seller prep AI Draft: missing inspection findings; request readable report pages before preparing a seller summary.'
 }
 
 export function buildContractorScopeDraft(repairBundles: InspectionRepairBundleDraft[]) {
-  return repairBundles.map((bundle) => `${bundle.title}: ${bundle.summary} Scope must be verified onsite and edited by admin before sending.`)
+  return safeArray(repairBundles).map((bundle) => `${bundle.title}: ${bundle.summary} Scope must be verified onsite and edited by admin before sending.`)
 }
 
 export function buildInspectionIntelligenceDraft(params: {
@@ -806,8 +811,10 @@ export function buildInspectionIntelligenceDraft(params: {
 }): InspectionIntelligenceDraft {
   const inspectionReportId = `inspection-${safeFileName(params.fileName)}`
   const hasBerlinAddress = /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(`${params.propertyAddress} ${params.city} ${params.fileName}`)
-  const sourceFindings = params.findings.length || !hasBerlinAddress
-    ? params.findings
+  const inputFindings = safeArray(params.findings)
+  const inputMissingInfo = safeArray(params.missingInfo)
+  const sourceFindings = inputFindings.length || !hasBerlinAddress
+    ? inputFindings
     : [
         'Possible roof leaks observed from attic with dark staining on north-facing roof slope and ridge.',
         'Painted sprinkler heads may be sealed closed and may create a fire suppression / life safety hazard.',
@@ -830,7 +837,7 @@ export function buildInspectionIntelligenceDraft(params: {
   const budgetItems = repairItems.filter((item) => /replace|replacement|end of life|aging/i.test(item.source_text)).map((item) => item.description)
   const diyItems = repairItems.filter((item) => /clean|vegetation|moss|caulk|minor|filter/i.test(item.source_text)).map((item) => item.description)
   const missingQuestions = Array.from(new Set([
-    ...params.missingInfo,
+    ...inputMissingInfo,
     ...repairItems.flatMap((item) => item.missing_info),
   ])).filter(Boolean)
   const tradeScopes = normalizedWorkGroups.map((bundle) => `${bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`)
