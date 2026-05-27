@@ -75,6 +75,46 @@ Inspection output should produce executive summary, priority repair roadmap, tra
 
 AI may classify, summarize, bundle, prioritize, and draft repair scopes. AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment. Keep all inspection outputs in AI Draft status until human review.
 
+### Review Packet Size + Fast Human Review Doctrine
+
+Core principle: Store everything. Show only what matters.
+
+Operating phrase: Confirm fast. Research when needed. Never fake certainty.
+
+Inspection reports, uploaded photos, videos, and source documents should be stored in full. The reviewer-facing interpretation packet should stay lightweight, ideally under 250KB. Do not dump raw reports into the reviewer workflow by default. Compress raw evidence into a structured Review Packet containing only what is needed for fast human confirmation.
+
+Review Packets should include property summary, report metadata, executive summary, grouped repair bundles, safety / water intrusion flags, missing information questions, estimate confidence, AI confidence, source references, key page/image references, recommended next action, and human review controls. Full source files remain accessible only when deeper review is required.
+
+Review speed model:
+
+- Standard Review: target under 320 seconds.
+- Deep Review: target up to 10 minutes.
+- Extended Reliable Data Review: 1-2 business days when more evidence, source research, contractor input, or reliable data is required.
+
+Review lanes:
+
+- standard_review: use when inspection text/photos are clear and AI confidence is sufficient. Goal: reviewer confirms, edits, or flags quickly.
+- deep_review: use when issues require deeper judgment but not a full delay, such as unclear roof issues, water intrusion concerns, electrical/plumbing uncertainty, low estimate confidence, conflicting photos/report text, or repair-vs-credit judgment.
+- extended_review: use when Shelter Prep should not produce a reliable recommendation yet, such as code/jurisdiction questions, structural concerns, mold/moisture concerns, permit issues, specialty system questions, pricing that requires contractor/supplier confirmation, source research requirements, or insufficient uploaded evidence.
+
+Each report interpretation or repair item should support review_lane, target_review_time_seconds, review_status, confidence, reason_for_delay, next_action, reviewer_id, review_started_at, review_completed_at, agent_message, source_reference_ids, and packet_size_bytes. Review status should support ai_draft, needs_review, human_reviewed, human_verified, needs_more_info, extended_review, and rejected. Confidence should support high, medium, and low.
+
+Reviewer UX rules:
+
+- Show the lightweight review packet first.
+- Do not show a full PDF/page dump by default.
+- Keep review UI mobile-first and fast.
+- Use progressive reveal: Property -> Summary -> Repair Bundles -> Missing Info -> Estimate Confidence -> Sources -> Review Action.
+- Make the full source document button available but secondary.
+- Warn in development/admin mode if packet_size_bytes exceeds 250KB.
+- Reference media by thumbnails or links, not embedded full-size files.
+- Keep source references as short citations/page links, not long copied text.
+- Clearly explain why more time is needed for extended review.
+
+Customer-facing extended review message: "This item requires additional verification before Shelter Prep can provide a reliable recommendation. We are gathering better source data, expert input, or additional evidence and will update the report."
+
+Success condition: A reviewer can open a property/report, view a lightweight interpretation packet, confirm or flag most normal reports in under 320 seconds, escalate complex cases to deep review, and mark uncertain cases for extended reliable data review.
+
 ## Shelter Prep Approved Contractors + Pricing Paths
 
 Shelter Prep does not run an open bidding marketplace. It routes structured work to Shelter Prep Approved Contractors who review scope and confirm final pricing before any formal paid bid or execution opportunity.

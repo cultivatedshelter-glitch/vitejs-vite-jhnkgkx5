@@ -149,6 +149,88 @@ AI authority rules:
 - Pricing, repair approval, scope approval, and contractor dispatch require human review.
 - Preliminary planning prices must be labeled Estimate Range. Formal Paid Contractor Bids require a Shelter Prep Approved Contractor or internal GC/admin review and are never issued automatically by AI.
 
+### Review Packet Size + Fast Human Review Doctrine
+
+Goal: Shelter Prep must support fast, lightweight human review of inspection and report interpretations.
+
+Core principle: Store everything. Show only what matters.
+
+Operating phrase: Confirm fast. Research when needed. Never fake certainty.
+
+Store inspection reports, uploaded photos, videos, and source documents in full, but keep the reviewer-facing interpretation packet lightweight, ideally under 250KB. Do not dump raw reports into the reviewer workflow by default. Compress raw evidence into a structured Review Packet that contains only what is needed for fast human confirmation.
+
+Review Packet content:
+
+- Property summary.
+- Report metadata.
+- Executive summary.
+- Grouped repair bundles.
+- Safety / water intrusion flags.
+- Missing information questions.
+- Estimate confidence.
+- AI confidence.
+- Source references.
+- Key page/image references.
+- Recommended next action.
+- Human review controls.
+
+Full source files should remain accessible only when deeper review is required.
+
+Review speed model:
+
+- Standard Review: target under 320 seconds.
+- Deep Review: target up to 10 minutes.
+- Extended Reliable Data Review: 1-2 business days when more evidence, source research, contractor input, or reliable data is required.
+
+Review lanes:
+
+- standard_review: used when inspection text/photos are clear and AI confidence is sufficient. Goal: reviewer confirms, edits, or flags quickly.
+- deep_review: used when issues require deeper judgment but not a full delay. Examples include unclear roof issue, water intrusion concern, electrical/plumbing uncertainty, low estimate confidence, conflicting photos/report text, and repair-vs-credit judgment.
+- extended_review: used when Shelter Prep should not produce a reliable recommendation yet. Examples include code/jurisdiction question, structural concern, mold/moisture concern, permit issue, specialty system question, pricing that requires contractor/supplier confirmation, source research required, or insufficient uploaded evidence.
+
+Data model guidance:
+
+Each report interpretation or repair item should support:
+
+- review_lane: standard_review | deep_review | extended_review.
+- target_review_time_seconds.
+- review_status: ai_draft | needs_review | human_reviewed | human_verified | needs_more_info | extended_review | rejected.
+- confidence: high | medium | low.
+- reason_for_delay.
+- next_action.
+- reviewer_id.
+- review_started_at.
+- review_completed_at.
+- agent_message.
+- source_reference_ids.
+- packet_size_bytes.
+
+UX rules:
+
+- Reviewer should see the lightweight review packet first.
+- Do not show full PDF/page dump by default.
+- Keep review UI mobile-first and fast.
+- Use progressive reveal: Property -> Summary -> Repair Bundles -> Missing Info -> Estimate Confidence -> Sources -> Review Action.
+- Full source document button should be available but secondary.
+- If packet exceeds 250KB, show a warning in development/admin mode.
+- Media should be referenced by thumbnails or links, not embedded full-size in the review packet.
+- Source references should be short citations/page links, not long copied text.
+- Extended review should clearly explain why more time is needed.
+
+Customer-facing extended review message:
+
+"This item requires additional verification before Shelter Prep can provide a reliable recommendation. We are gathering better source data, expert input, or additional evidence and will update the report."
+
+Implementation guardrails:
+
+- Do not overbuild new features.
+- Do not add a heavy dashboard.
+- Do not create a full marketplace workflow.
+- Do not remove existing functionality.
+- Keep the app lean.
+
+Success condition: A reviewer can open a property/report, view a lightweight interpretation packet, confirm or flag most normal reports in under 320 seconds, escalate complex cases to deep review, and mark uncertain cases for extended reliable data review.
+
 ### Shelter Prep Approved Contractors And Pricing Paths
 
 Shelter Prep does not run an open bidding marketplace. Do not build language or flows that imply random contractor bidding, marketplace competition, lowest-bid selection, open bidding, or AI-generated final bids.
