@@ -150,13 +150,70 @@ AI rules:
 - AI may classify, summarize, bundle, prioritize, and draft repair scopes.
 - AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment.
 - All outputs remain AI Draft until reviewed.
+- Shelter Prep may provide preliminary Estimate Ranges for planning, but formal Paid Contractor Bids require a Shelter Prep Approved Contractor or internal GC/admin review.
 
 UX direction:
 
 - Add Inspection Intelligence as an upload/analysis mode tied to a Property.
 - Keep the workflow simple: Upload inspection PDF -> Extract findings -> Review bundles -> Generate seller prep report.
 - Do not create dashboard clutter.
-- Use progressive reveal in this order: Summary, Priority items, Repair bundles, Trade scopes, Missing info, Estimate draft, Seller report.
+- Use progressive reveal in this order: Summary, Priority items, Repair bundles, Trade scopes, Missing info, Estimate Range draft, Seller report.
+
+## Shelter Prep Approved Contractors + Pricing Paths
+
+Shelter Prep does not run an open bidding marketplace. It routes structured work to Shelter Prep Approved Contractors who review and confirm formal pricing. The product must not imply random contractor bidding, lowest-bid matching, open marketplace competition, or AI-generated final bids.
+
+A Shelter Prep Approved Contractor is a contractor who has been reviewed by Shelter Prep and meets minimum requirements before receiving formal bid or execution opportunities:
+
+- Licensed where required.
+- Bonded where required.
+- Insured.
+- Identity and business verified.
+- Service area confirmed.
+- Trade and scope categories confirmed.
+- Agrees to Shelter Prep workflow standards.
+- Agrees to provide clear scope and pricing corrections.
+- Agrees not to treat AI estimate ranges as final bids without review.
+
+Pricing paths:
+
+1. Estimate Range.
+   - Preliminary planning range.
+   - Generated from inspection, media, and scope data.
+   - AI-assisted and human-reviewed.
+   - Not a final bid.
+   - Useful for seller prep, repair-vs-credit decisions, and budgeting.
+
+2. Paid Contractor Bid.
+   - Formal paid bid service.
+   - Issued only after review by a Shelter Prep Approved Contractor or internal GC/admin reviewer when applicable.
+   - May require walkthrough or additional media.
+   - Includes assumptions, exclusions, scope limits, expiration date, and contractor/legal information.
+   - Never issued automatically by AI.
+
+Use UI language such as Estimate Range, Request Paid Contractor Bid, Shelter Prep Approved Contractor, Contractor Review Needed, Formal Proposal, GC Review, and Site Verification Needed.
+
+Contractor approval statuses should support:
+
+- pending_review.
+- approved.
+- suspended.
+- rejected.
+- expired_credentials.
+
+Contractor credential fields should support:
+
+- license_number.
+- license_state.
+- license_expiration.
+- bonded_status.
+- insurance_status.
+- insurance_expiration.
+- verified_at.
+- verified_by.
+- service_area.
+- approved_trades.
+- notes.
 
 ## Material Compatibility + Field Finish Memory
 

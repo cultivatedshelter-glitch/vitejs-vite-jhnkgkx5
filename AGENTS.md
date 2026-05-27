@@ -75,6 +75,31 @@ Inspection output should produce executive summary, priority repair roadmap, tra
 
 AI may classify, summarize, bundle, prioritize, and draft repair scopes. AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment. Keep all inspection outputs in AI Draft status until human review.
 
+## Shelter Prep Approved Contractors + Pricing Paths
+
+Shelter Prep does not run an open bidding marketplace. It routes structured work to Shelter Prep Approved Contractors who review scope and confirm final pricing before any formal paid bid or execution opportunity.
+
+A Shelter Prep Approved Contractor is a contractor reviewed by Shelter Prep who meets minimum requirements before receiving formal bid or execution opportunities:
+
+- Licensed where required.
+- Bonded where required.
+- Insured.
+- Identity and business verified.
+- Service area confirmed.
+- Trade and scope categories confirmed.
+- Agrees to Shelter Prep workflow standards.
+- Agrees to provide clear scope and pricing corrections.
+- Agrees not to treat AI estimate ranges as final bids without review.
+
+Use two separate pricing paths:
+
+- Estimate Range: preliminary planning range generated from inspection, media, and scope data. It is AI-assisted and human-reviewed, not a final bid. It supports seller prep, repair-vs-credit decisions, and budgeting.
+- Paid Contractor Bid: formal paid bid service issued only after review by a Shelter Prep Approved Contractor or internal GC/admin reviewer when applicable. It may require a walkthrough or additional media and must include assumptions, exclusions, scope limits, expiration date, and contractor/legal information. AI must never issue this automatically.
+
+Use UI language such as Estimate Range, Request Paid Contractor Bid, Shelter Prep Approved Contractor, Contractor Review Needed, Formal Proposal, GC Review, and Site Verification Needed. Avoid language that implies random contractor bidding, marketplace bidding, lowest bid selection, open bidding, or AI-generated final bids.
+
+Contractor approval statuses should support pending_review, approved, suspended, rejected, and expired_credentials. Contractor credential records should support license_number, license_state, license_expiration, bonded_status, insurance_status, insurance_expiration, verified_at, verified_by, service_area, approved_trades, and notes.
+
 ## Material Compatibility + Field Finish Memory
 
 Shelter Prep should capture field-tested material compatibility lessons as human-verified operational memory, not generic product advice.

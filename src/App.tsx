@@ -531,6 +531,18 @@ type ContractorProfile = {
   email?: string | null
   full_name?: string | null
   role: MemoryActorRole
+  contractor_approval_status?: 'pending_review' | 'approved' | 'suspended' | 'rejected' | 'expired_credentials' | null
+  license_number?: string | null
+  license_state?: string | null
+  license_expiration?: string | null
+  bonded_status?: string | null
+  insurance_status?: string | null
+  insurance_expiration?: string | null
+  verified_at?: string | null
+  verified_by?: string | null
+  service_area?: string | null
+  approved_trades?: string[] | null
+  notes?: string | null
 }
 
 type ContractorAssignmentStatus =
@@ -9758,15 +9770,16 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           : ['No AI research drafts found.'],
       },
       {
-        heading: 'Estimate Summary',
+        heading: 'Estimate Range Summary',
         lines: [
           `Materials subtotal: ${money(materialSubtotal)}`,
           `Approved labor hours: ${approvedLaborLow.toFixed(1)}-${approvedLaborHigh.toFixed(1)}`,
           `Labor total: ${money(totals.labor)}`,
           `Markup: ${totals.markup}% = ${money(totals.markupDollars)}`,
           `Contingency: ${totals.contingency}% = ${money(totals.contingencyDollars)}`,
-          `Standard estimate: ${money(totals.standardTotal)}`,
-          `Suggested range: ${money(totals.lowTotal)} - ${money(totals.premiumTotal)}`,
+          `Planning estimate: ${money(totals.standardTotal)}`,
+          `Estimate Range: ${money(totals.lowTotal)} - ${money(totals.premiumTotal)}`,
+          'Formal Paid Contractor Bids require Shelter Prep Approved Contractor or GC/admin review and are never issued automatically by AI.',
         ],
       },
       {
@@ -9774,7 +9787,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         lines: [
           `Packet review status: ${humanReviewStatus}`,
           `Estimate notes: ${selectedEstimateRequest?.id === request.id ? estimateNotes : 'Open Estimate Review for current notes.'}`,
-          'AI drafts are not final approval, client communication, purchase authorization, or proposal delivery.',
+          'AI drafts are not final approval, client communication, purchase authorization, Formal Proposal delivery, or Paid Contractor Bid delivery.',
         ],
       },
     ]
@@ -9845,7 +9858,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   async function buildLocalEstimateIntelligence(request: WorkRequest) {
     const confirmStart = window.confirm(
-      'This will build a local Shelter Prep estimate intelligence draft: rough quantities, material allowances, urgency labor, overhead, coordination, risk buffers, and a contractor packet. Human review is required before use.'
+      'This will build a local Shelter Prep Estimate Range draft: rough quantities, material allowances, urgency labor, overhead, coordination, risk buffers, and a contractor-ready scope packet. Human review is required before use. This is not a Paid Contractor Bid or Formal Proposal.'
     )
 
     if (!confirmStart) return
@@ -9890,7 +9903,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     )
 
     const shouldSaveItems = window.confirm(
-      `Draft range: ${money(result.suggestedLow)} - ${money(result.suggestedHigh)}. Save ${result.draftItems.length} draft material/allowance line items into Estimate Review?`
+      `Estimate Range: ${money(result.suggestedLow)} - ${money(result.suggestedHigh)}. Save ${result.draftItems.length} draft material/allowance line items into Estimate Review?`
     )
 
     if (!shouldSaveItems) {
@@ -12741,8 +12754,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (pendingReview || request.status === 'pending_approval') {
       return {
         stage: 'Review Required',
-        title: 'Estimate draft ready',
-        body: 'Labor, materials, and scope notes are prepared. Human review is required before sending or routing.',
+        title: 'Estimate Range draft ready',
+        body: 'Labor, materials, and scope notes are prepared as a planning range. Human review is required before sharing or routing.',
         buttonLabel: estimateLoading ? 'Opening...' : 'Review Estimate',
         onPrimary: () => openEstimateReview(request),
         disabled: estimateLoading,
@@ -12751,9 +12764,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     if (approvedEstimate || request.status === 'estimate_ready') {
       return {
-        stage: 'Contractor Routing',
-        title: 'Estimate ready for packet',
-        body: 'Reviewed estimate information is ready to package for reporting or contractor coordination.',
+        stage: 'Contractor Review Needed',
+        title: 'Estimate Range ready for packet',
+        body: 'Reviewed estimate information is ready to package for reporting or Shelter Prep Approved Contractor coordination.',
         buttonLabel: 'Export Job Packet',
         onPrimary: () => exportJobPacket(request),
         disabled: false,
@@ -12774,8 +12787,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (hasEstimateDraft) {
       return {
         stage: 'Estimate Draft',
-        title: 'Estimate draft started',
-        body: 'Initial pricing and scope assumptions are available. Review the estimate before sharing or routing.',
+        title: 'Estimate Range started',
+        body: 'Initial planning pricing and scope assumptions are available. Review the Estimate Range before sharing or routing.',
         buttonLabel: 'Review Estimate',
         onPrimary: () => openEstimateReview(request),
         disabled: false,
@@ -12785,7 +12798,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return {
       stage: request.photos.length || request.documents.length ? 'Scope Organized' : 'Intake',
       title: 'Ready to organize scope',
-      body: 'Photos, documents, and request details are attached. Shelter Prep can prepare the first repair scope and estimate draft.',
+      body: 'Photos, documents, and request details are attached. Shelter Prep can prepare the first repair scope and Estimate Range draft.',
       buttonLabel: materialEstimateLoadingId === request.id ? 'Preparing...' : 'Prepare Draft',
       onPrimary: () => buildMaterialEstimate(request),
       disabled: materialEstimateLoadingId === request.id,
@@ -14438,7 +14451,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         : `${approvedEstimateItems.length} item${approvedEstimateItems.length === 1 ? '' : 's'} human reviewed`
       : request.aiEstimate
         ? 'AI draft present; human review required'
-        : 'No estimate draft yet'
+        : 'No Estimate Range draft yet'
 
     return (
       <div style={isCompact ? { ...styles.workflowCard, ...styles.mobileWorkflowCard } : styles.workflowCard}>
@@ -14580,7 +14593,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
               </div>
               {request.aiEstimate ? (
                 <p style={styles.workflowBody}>
-                  Draft range: Low {money(request.aiEstimate.lowPrice)} • Standard {money(request.aiEstimate.standardPrice)} • Premium {money(request.aiEstimate.premiumPrice)}
+                  Estimate Range: Low {money(request.aiEstimate.lowPrice)} • Standard {money(request.aiEstimate.standardPrice)} • Premium {money(request.aiEstimate.premiumPrice)}
                 </p>
               ) : (
                 <p style={styles.workflowBody}>No AI estimate summary is attached yet.</p>
@@ -14594,12 +14607,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           <details style={styles.revealCard}>
             <summary style={styles.revealSummary}>
               <span>
-                <strong>Contractor Assignment</strong>
-                <small>{visibleAssignments.length ? `${visibleAssignments.length} active assignment${visibleAssignments.length === 1 ? '' : 's'}` : 'No contractor assigned'}</small>
+                <strong>Shelter Prep Approved Contractors</strong>
+                <small>{visibleAssignments.length ? `${visibleAssignments.length} active approved-contractor route${visibleAssignments.length === 1 ? '' : 's'}` : 'No Shelter Prep Approved Contractor assigned'}</small>
               </span>
               <span style={styles.revealChevron}>Open</span>
             </summary>
             <div style={styles.revealBody}>
+            <p style={styles.small}>
+              Estimate Ranges are planning tools. Paid Contractor Bids and Formal Proposals require Shelter Prep Approved Contractor or GC/admin review.
+            </p>
             {canApproveOperationalMemory(memoryActorRole) && (
               <div style={isCompact ? styles.mobileStack : styles.grid2}>
                 <select
@@ -14609,7 +14625,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                     setSelectedContractorByRequest((prev) => ({ ...prev, [request.id]: event.target.value }))
                   }
                 >
-                  <option value="">Choose contractor</option>
+                  <option value="">Choose Shelter Prep Approved Contractor</option>
                   {contractorProfiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
                       {profile.full_name || profile.email || profile.id}
@@ -14622,13 +14638,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   disabled={contractorAssignmentSavingId === request.id || !selectedContractorByRequest[request.id]}
                   onClick={() => assignContractorToRequest(request)}
                 >
-                  Assign Contractor
+                  Route to Approved Contractor
                 </button>
               </div>
             )}
             {contractorAssignmentLoading && <p style={styles.small}>Loading assignments...</p>}
             {visibleAssignments.length === 0 ? (
-              <p style={styles.small}>No contractor assigned yet.</p>
+              <p style={styles.small}>No Shelter Prep Approved Contractor assigned yet.</p>
             ) : (
               <div style={styles.fileGrid}>
                 {visibleAssignments.map((assignment) => {
@@ -14640,7 +14656,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                         <span style={assignment.status === 'cancelled' ? styles.badgeDanger : styles.badge}>
                           {getLearningDisplayName(assignment.status)}
                         </span>
-                        <span style={styles.badgeMuted}>{contractor?.full_name || contractor?.email || 'Assigned contractor'}</span>
+                        <span style={styles.badgeMuted}>{contractor?.full_name || contractor?.email || 'Shelter Prep Approved Contractor'}</span>
+                        <span style={styles.badgeMuted}>
+                          {contractor?.contractor_approval_status ? getLearningDisplayName(contractor.contractor_approval_status) : 'Approval status not shown'}
+                        </span>
                       </div>
                       {assignment.assignment_notes && <p style={styles.small}>Admin notes: {assignment.assignment_notes}</p>}
                       <textarea
@@ -16795,7 +16814,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
             <div style={styles.noticeBox}>
               Safety rule: final report/send actions stay disabled until a human approves the Seller Prep analysis.
-              This V1 draft does not send emails, submit proposals, order materials, approve contractor bids, or make final decisions.
+              This V1 draft does not send emails, issue Formal Proposals, order materials, approve Paid Contractor Bids, or make final decisions.
             </div>
 
             {sellerPrepSelectedRequest ? (
@@ -19046,7 +19065,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                         style={styles.outlineButton}
                         onClick={() => copyToClipboard(estimateIntelligence.contractorPacket)}
                       >
-                        Copy Contractor Packet
+                        Copy Contractor-Ready Scope
                       </button>
                     </div>
 
@@ -19062,7 +19081,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                         </strong>
                       </div>
                       <div style={styles.factCard}>
-                        <span>Draft Range</span>
+                        <span>Estimate Range</span>
                         <strong>
                           {money(estimateIntelligence.suggestedLow)} - {money(estimateIntelligence.suggestedHigh)}
                         </strong>
@@ -19109,7 +19128,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                     <div style={{ flex: 1 }}>
                       <h3 style={{ marginTop: 0 }}>Job Execution Scope</h3>
                       <p style={styles.small}>
-                        AI-generated scope steps are drafts. Approve steps before they count as final proposal labor.
+                        AI-generated scope steps are drafts. Approved steps may support a Formal Proposal only after Shelter Prep Approved Contractor or GC/admin review.
                       </p>
                     </div>
                     <button

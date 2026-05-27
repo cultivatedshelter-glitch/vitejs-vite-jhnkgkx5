@@ -65,7 +65,7 @@ Use progressive reveal in this order:
 3. Repair bundles.
 4. Trade scopes.
 5. Missing info.
-6. Estimate draft.
+6. Estimate Range draft.
 7. Seller report.
 
 Keep the surface quiet. The user should see the property, the source report, the AI Draft status, and the next review action before seeing deeper analysis.
@@ -147,6 +147,60 @@ AI authority rules:
 - AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment.
 - Inspection Intelligence outputs must remain AI Draft until human reviewed.
 - Pricing, repair approval, scope approval, and contractor dispatch require human review.
+- Preliminary planning prices must be labeled Estimate Range. Formal Paid Contractor Bids require a Shelter Prep Approved Contractor or internal GC/admin review and are never issued automatically by AI.
+
+### Shelter Prep Approved Contractors And Pricing Paths
+
+Shelter Prep does not run an open bidding marketplace. Do not build language or flows that imply random contractor bidding, marketplace competition, lowest-bid selection, open bidding, or AI-generated final bids.
+
+A Shelter Prep Approved Contractor is a contractor who has been reviewed by Shelter Prep and meets minimum requirements before receiving formal bid or execution opportunities:
+
+- Licensed where required.
+- Bonded where required.
+- Insured.
+- Identity and business verified.
+- Service area confirmed.
+- Trade and scope categories confirmed.
+- Agrees to Shelter Prep workflow standards.
+- Agrees to provide clear scope and pricing corrections.
+- Agrees not to treat AI estimate ranges as final bids without review.
+
+Implementation must keep two pricing paths distinct:
+
+- Estimate Range: preliminary planning range from inspection, media, and scope data. It may be AI-assisted and human-reviewed, but it is not a final bid. Use it for seller prep, repair-vs-credit decisions, and budgeting.
+- Paid Contractor Bid: formal paid bid service issued only after Shelter Prep Approved Contractor or internal GC/admin review when applicable. It may require walkthrough or additional media and must include assumptions, exclusions, scope limits, expiration date, and contractor/legal information.
+
+Preferred UI language:
+
+- Estimate Range.
+- Request Paid Contractor Bid.
+- Shelter Prep Approved Contractor.
+- Contractor Review Needed.
+- Formal Proposal.
+- GC Review.
+- Site Verification Needed.
+
+Contractor approval statuses:
+
+- pending_review.
+- approved.
+- suspended.
+- rejected.
+- expired_credentials.
+
+Contractor credential fields:
+
+- license_number.
+- license_state.
+- license_expiration.
+- bonded_status.
+- insurance_status.
+- insurance_expiration.
+- verified_at.
+- verified_by.
+- service_area.
+- approved_trades.
+- notes.
 
 ### Material Compatibility + Field Finish Memory
 
