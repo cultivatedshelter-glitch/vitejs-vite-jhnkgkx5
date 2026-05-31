@@ -1,4 +1,4 @@
-import { supabaseAnonKey, supabaseUrl } from './supabase'
+import { supabaseAnonKey, supabaseUrl } from './supabaseClient'
 
 export type PropertyFacts = {
   squareFeet: string

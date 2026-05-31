@@ -1,4 +1,4 @@
-import type { PropertyFacts } from './propertyLookup'
+import type { PropertyFacts } from '../lib/db/propertyLookup'
 
 export type EstimateIntelligenceRequest = {
   id: string

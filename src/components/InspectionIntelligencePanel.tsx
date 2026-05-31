@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
-import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, type CompactReviewPacket } from '../inspectionIntelligence'
-import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../inspectionIntelligence'
+import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, type CompactReviewPacket } from '../agents/inspectionIntelligence'
+import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../agents/inspectionIntelligence'
 
 type Styles = Record<string, CSSProperties>
 
