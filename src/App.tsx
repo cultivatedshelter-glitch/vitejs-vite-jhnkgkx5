@@ -119,6 +119,35 @@ type WorkflowEvent = {
   summary: string
 }
 
+type NotificationSeverity = "normal" | "high" | "urgent"
+type NotificationStatus = "unread" | "read" | "dismissed"
+
+type NotificationEvent = {
+  id: string
+  created_at: string
+  event_type: string
+  event_title: string
+  event_body: string | null
+  property_id: number | string | null
+  file_id: string | null
+  repair_item_id: string | null
+  severity: NotificationSeverity
+  status: NotificationStatus
+  metadata: Record<string, unknown>
+}
+
+type NotificationEventInsert = {
+  event_type: string
+  event_title: string
+  event_body?: string | null
+  property_id?: number | string | null
+  file_id?: string | null
+  repair_item_id?: string | null
+  severity?: NotificationSeverity
+  status?: NotificationStatus
+  metadata?: Record<string, unknown>
+}
+
 type IntakeForm = {
   addressLine1: string
   city: string
@@ -195,6 +224,12 @@ const healthStyles: Record<HealthState, string> = {
   resolved: "bg-zinc-800 text-zinc-200 border-zinc-600",
 }
 
+const notificationSeverityStyles: Record<NotificationSeverity, string> = {
+  normal: "border-[#333] bg-[#111] text-gray-300",
+  high: "border-amber-900 bg-amber-950/50 text-amber-200",
+  urgent: "border-red-900 bg-red-950/50 text-red-200",
+}
+
 const emptyForm: IntakeForm = {
   addressLine1: "",
   city: "",
@@ -233,6 +268,10 @@ function HealthBadge({ health }: { health: HealthState }) {
       {health.replace("_", " ")}
     </span>
   )
+}
+
+function NotificationSeverityBadge({ severity }: { severity: NotificationSeverity }) {
+  return <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${notificationSeverityStyles[severity]}`}>{severity}</span>
 }
 
 function NavTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -284,6 +323,16 @@ function composeDisplayAddress(form: IntakeForm) {
 
 function normalizeText(value = "") {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()
+}
+
+function toNotificationSeverity(value: unknown): NotificationSeverity {
+  if (value === "high" || value === "urgent") return value
+  return "normal"
+}
+
+function toNotificationStatus(value: unknown): NotificationStatus {
+  if (value === "read" || value === "dismissed") return value
+  return "unread"
 }
 
 type RepairItemInsertStatus = "ai_draft" | "needs_review" | "approved" | "rejected"
@@ -634,6 +683,10 @@ export default function App() {
   const [estimatePrepItems, setEstimatePrepItems] = useState<EstimatePrepItem[]>([])
   const [estimateMaterialItems, setEstimateMaterialItems] = useState<EstimateMaterialItem[]>([])
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([])
+  const [notifications, setNotifications] = useState<NotificationEvent[]>([])
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
+  const [notificationUpdatingId, setNotificationUpdatingId] = useState<string | null>(null)
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null)
   const [form, setForm] = useState<IntakeForm>(emptyForm)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
@@ -674,6 +727,14 @@ export default function App() {
   const selectedEvents = selectedProperty
     ? workflowEvents.filter((event) => event.property_id === selectedProperty.id).slice(0, 8)
     : []
+  const propertyAddressById = useMemo(
+    () => new Map(properties.map((property) => [String(property.id), property.address])),
+    [properties]
+  )
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((notification) => notification.status === "unread").length,
+    [notifications]
+  )
   const selectedFilePreviews = useMemo(
     () =>
       selectedFiles.map((file) => ({
@@ -729,6 +790,19 @@ export default function App() {
       setEstimatePrepItems(estimateRows)
       setEstimateMaterialItems(materialRows)
       setWorkflowEvents(eventRows)
+      try {
+        const notificationRows = await selectRows<NotificationEvent>("notification_events", { order: "created_at.desc" })
+        setNotifications(notificationRows.map((row) => ({
+          ...row,
+          severity: toNotificationSeverity(row.severity),
+          status: toNotificationStatus(row.status),
+        })))
+        setNotificationsEnabled(true)
+      } catch (notificationError) {
+        console.warn("[notifications] notification_events table unavailable; in-app notifications are disabled.", notificationError)
+        setNotifications([])
+        setNotificationsEnabled(false)
+      }
       setSelectedPropertyId((current) => current || propertyRows[0]?.id || null)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load saved property records.")
@@ -838,6 +912,49 @@ export default function App() {
     return event
   }
 
+  const createNotification = async (draft: NotificationEventInsert) => {
+    if (!hasSupabaseConfig || !notificationsEnabled) return
+
+    try {
+      const [saved] = await insertRows<NotificationEvent>("notification_events", [
+        {
+          event_type: draft.event_type,
+          event_title: draft.event_title,
+          event_body: draft.event_body || null,
+          property_id: parseBigintLikeId(draft.property_id),
+          file_id: draft.file_id || null,
+          repair_item_id: draft.repair_item_id || null,
+          severity: draft.severity || "normal",
+          status: draft.status || "unread",
+          metadata: draft.metadata || {},
+        },
+      ])
+      setNotifications((current) => [{ ...saved, severity: toNotificationSeverity(saved.severity), status: toNotificationStatus(saved.status) }, ...current])
+    } catch (notificationError) {
+      console.warn("[notifications] Failed to create in-app notification.", notificationError)
+    }
+  }
+
+  const updateNotificationStatus = async (notificationId: string, nextStatus: NotificationStatus) => {
+    if (!hasSupabaseConfig || !notificationsEnabled) return
+
+    setNotificationUpdatingId(notificationId)
+    try {
+      const [updated] = await updateRows<NotificationEvent>("notification_events", { id: `eq.${notificationId}` }, { status: nextStatus })
+      setNotifications((current) =>
+        current.map((notification) =>
+          notification.id === notificationId
+            ? { ...updated, severity: toNotificationSeverity(updated.severity), status: toNotificationStatus(updated.status) }
+            : notification
+        )
+      )
+    } catch (notificationUpdateError) {
+      console.warn("[notifications] Failed to update notification state.", notificationUpdateError)
+    } finally {
+      setNotificationUpdatingId(null)
+    }
+  }
+
   const saveProperty = async () => {
     setSubmittedOnce(true)
     setMessage("")
@@ -899,8 +1016,25 @@ export default function App() {
       )
 
       await logEvent(property.id, "property_submitted", "Property intake submitted by agent.", "agent")
+      void createNotification({
+        event_type: "property_created",
+        event_title: "New property/work request created",
+        event_body: `${property.address} was added for ${property.client_name}.`,
+        property_id: property.id,
+        severity: status === "needs_info" ? "high" : "normal",
+        metadata: { status, readiness_score: property.readiness_score, readiness_total: property.readiness_total },
+      })
       if (uploadedFiles.length > 0) {
         await logEvent(property.id, "files_uploaded", `${uploadedFiles.length} file(s) uploaded to the property record.`, "agent")
+        void createNotification({
+          event_type: "files_uploaded",
+          event_title: "Files uploaded",
+          event_body: `${uploadedFiles.length} file(s) were uploaded for ${property.address}.`,
+          property_id: property.id,
+          file_id: uploadedFiles[0]?.id || null,
+          severity: "normal",
+          metadata: { file_count: uploadedFiles.length },
+        })
       }
 
       setProperties((current) => [property, ...current])
@@ -933,6 +1067,16 @@ export default function App() {
         { property_id: property.id, health_state: healthState, reason: `Status updated to ${status.replace("_", " ")}.` },
       ])
       await logEvent(property.id, "status_updated", `Status updated to ${status.replace("_", " ")}.`, "admin")
+      if (healthState === "at_risk" || status === "needs_info") {
+        void createNotification({
+          event_type: "property_at_risk",
+          event_title: "Property flagged as at-risk",
+          event_body: `${property.address} is now ${status.replace("_", " ")} with health state ${healthState.replace("_", " ")}.`,
+          property_id: property.id,
+          severity: status === "needs_info" ? "urgent" : "high",
+          metadata: { status, health_state: healthState },
+        })
+      }
       setProperties((current) => current.map((item) => (item.id === property.id ? updated : item)))
       setMessage("Status and project health saved.")
     } catch (statusError) {
@@ -1004,12 +1148,32 @@ export default function App() {
       if (repairRows.length) {
         const normalizedRepairRows = normalizeRepairItemsForInsert(repairRows)
         insertedRepairItems = await insertRows<RepairItem>("repair_items", normalizedRepairRows)
+        void createNotification({
+          event_type: "repair_items_created",
+          event_title: "Repair items created",
+          event_body: `${insertedRepairItems.length} repair item(s) were created for ${property.address}.`,
+          property_id: property.id,
+          repair_item_id: insertedRepairItems[0]?.id || null,
+          severity: "normal",
+          metadata: { repair_item_count: insertedRepairItems.length },
+        })
       }
       const insertedPrepItems = await insertRows<EstimatePrepItem>("estimate_prep_items", prepRows)
       const materialRows = buildCurrentScopeMaterialRows(property, insertedRepairItems, propertyFiles)
       const insertedMaterialItems = materialRows.length
         ? await insertRows<EstimateMaterialItem>("estimate_material_items", materialRows)
         : []
+      if (insertedMaterialItems.length > 0) {
+        void createNotification({
+          event_type: "scope_material_items_created",
+          event_title: "Scope/material items created",
+          event_body: `${insertedMaterialItems.length} current-scope material item(s) were created for ${property.address}.`,
+          property_id: property.id,
+          repair_item_id: insertedRepairItems[0]?.id || null,
+          severity: "normal",
+          metadata: { estimate_material_item_count: insertedMaterialItems.length },
+        })
+      }
       const event = await logEvent(property.id, "risk_scan_saved", "Property Risk Scan, repair items, and estimate prep saved.", "admin")
 
       if (draft.missing_information.length > 0) {
@@ -1086,7 +1250,7 @@ export default function App() {
             <p className="text-sm text-gray-400">Repair coordination without the chaos</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:flex">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
             <button
               onClick={() => {
                 setMode("agent")
@@ -1105,6 +1269,20 @@ export default function App() {
             >
               Admin
             </button>
+            {mode === "admin" && (
+              <button
+                onClick={() => setNotificationsOpen((current) => !current)}
+                className="relative min-h-11 rounded-lg border border-[#333] bg-[#111] px-3 py-2 text-sm transition hover:border-green-600"
+                title="Admin notifications"
+              >
+                Notifications
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute -right-2 -top-2 rounded-full bg-red-600 px-2 py-0.5 text-[11px] text-white">
+                    {unreadNotificationCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -1122,6 +1300,84 @@ export default function App() {
             {message && <p className="text-green-300">{message}</p>}
             {error && <p className="text-red-300">{error}</p>}
           </div>
+        )}
+
+        {mode === "admin" && notificationsOpen && (
+          <section className="mb-5 rounded-xl border border-[#333] bg-[#111] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-100">Admin notifications</h2>
+                <p className="text-xs text-gray-500">
+                  {notificationsEnabled ? `${unreadNotificationCount} unread` : "notification_events table unavailable"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotificationsOpen(false)}
+                className="rounded-lg border border-[#333] px-3 py-2 text-xs text-gray-300 transition hover:border-[#555]"
+              >
+                Close
+              </button>
+            </div>
+
+            {!notificationsEnabled && (
+              <p className="mb-3 rounded-lg border border-amber-900 bg-amber-950/40 px-3 py-2 text-xs text-amber-200">
+                Notifications are currently disabled because `notification_events` is not available in this environment.
+              </p>
+            )}
+
+            <div className="space-y-3">
+              {notifications.length > 0 ? (
+                notifications.map((notification) => {
+                  const relatedPropertyAddress = notification.property_id != null
+                    ? propertyAddressById.get(String(notification.property_id)) || `Property #${notification.property_id}`
+                    : null
+                  return (
+                    <article key={notification.id} className="rounded-lg border border-[#2a2a2a] bg-[#080808] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-gray-100">{notification.event_title}</p>
+                          {notification.event_body && <p className="mt-1 text-xs text-gray-400">{notification.event_body}</p>}
+                          <p className="mt-2 text-[11px] text-gray-600">{formatDate(notification.created_at)}</p>
+                          {relatedPropertyAddress && <p className="mt-1 text-[11px] text-gray-500">{relatedPropertyAddress}</p>}
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <NotificationSeverityBadge severity={notification.severity} />
+                          <span className="rounded-full border border-[#333] px-2 py-0.5 text-[11px] text-gray-300">{notification.status}</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        {notification.status !== "read" && (
+                          <button
+                            type="button"
+                            onClick={() => void updateNotificationStatus(notification.id, "read")}
+                            disabled={!notificationsEnabled || notificationUpdatingId === notification.id}
+                            className="rounded-md border border-[#333] px-2 py-1 text-xs text-gray-200 transition hover:border-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Mark read
+                          </button>
+                        )}
+                        {notification.status !== "dismissed" && (
+                          <button
+                            type="button"
+                            onClick={() => void updateNotificationStatus(notification.id, "dismissed")}
+                            disabled={!notificationsEnabled || notificationUpdatingId === notification.id}
+                            className="rounded-md border border-[#333] px-2 py-1 text-xs text-gray-200 transition hover:border-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Dismiss
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })
+              ) : (
+                <p className="rounded-lg border border-[#2a2a2a] bg-[#080808] p-3 text-sm text-gray-500">
+                  No notifications yet.
+                </p>
+              )}
+            </div>
+          </section>
         )}
 
         {view === "intake" && (
