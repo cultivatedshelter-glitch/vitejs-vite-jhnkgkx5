@@ -1,5 +1,11 @@
 type PropertyLookupRequest = {
   address?: string
+  address_line_1?: string
+  city?: string
+  state?: string
+  zip?: string
+  address1?: string
+  address2?: string
 }
 
 type ProviderProperty = {
@@ -28,39 +34,101 @@ Deno.serve(async (request) => {
 
   try {
     const body = (await request.json()) as PropertyLookupRequest
-    const address = body.address?.trim()
+    const normalizedAddress = normalizeRequestAddress(body)
 
-    if (!address) {
-      return jsonResponse({ error: "Address is required." }, 400)
+    if (normalizedAddress.missingFields.length > 0) {
+      return jsonResponse(
+        {
+          error: `Missing address fields: ${normalizedAddress.missingFields.join(", ")}.`,
+          debug: "missing address fields",
+        },
+        400
+      )
     }
 
-    const property = await fetchPropertyFromProvider(address)
+    const providerConfigured = Boolean(Deno.env.get("PROPERTY_DATA_API_URL"))
+    const property = await fetchPropertyFromProvider(normalizedAddress)
 
     return jsonResponse({
+      debug: providerConfigured ? "lookup success" : "provider not configured",
       property: {
-        address: property.address || address,
+        address: property.address || normalizedAddress.displayAddress,
+        addressLine1: normalizedAddress.addressLine1,
+        city: normalizedAddress.city,
+        state: normalizedAddress.state,
+        zip: normalizedAddress.zip,
         squareFeet: toDisplayValue(property.squareFeet, "Confirm with listing data"),
         yearBuilt: toDisplayValue(property.yearBuilt, "Public record pending"),
         bedrooms: toDisplayValue(property.bedrooms, "TBD"),
         bathrooms: toDisplayValue(property.bathrooms, "TBD"),
         lotSize: toDisplayValue(property.lotSize, "TBD"),
         confidence: "medium",
-        notes: "Returned from configured property data provider.",
+        notes: providerConfigured
+          ? "Returned from configured property data provider."
+          : "Provider not configured. Enter property facts manually.",
       },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Property lookup failed."
-    return jsonResponse({ error: message }, 500)
+    const rejected = /rejected|invalid|not found|bad request|400|422/i.test(message)
+    return jsonResponse(
+      {
+        error: rejected ? `Provider rejected address. ${message}` : message,
+        debug: rejected ? "provider rejected address" : "property lookup failed",
+      },
+      rejected ? 422 : 500
+    )
   }
 })
 
-async function fetchPropertyFromProvider(address: string): Promise<ProviderProperty> {
+type NormalizedAddress = {
+  addressLine1: string
+  city: string
+  state: string
+  zip: string
+  address1: string
+  address2: string
+  displayAddress: string
+  missingFields: string[]
+}
+
+function normalizeRequestAddress(body: PropertyLookupRequest): NormalizedAddress {
+  const addressLine1 = cleanText(body.address_line_1 || body.address1 || "")
+  const city = cleanText(body.city || "")
+  const state = cleanText(body.state || "").toUpperCase()
+  const zip = cleanText(body.zip || "").match(/\d{5}(?:-\d{4})?/)?.[0] || cleanText(body.zip || "")
+  const address2 = cleanText(body.address2 || [city, [state, zip].filter(Boolean).join(" ")].filter(Boolean).join(", "))
+  const displayAddress = cleanText(body.address || [addressLine1, address2].filter(Boolean).join(", "))
+  const missingFields = [
+    !addressLine1 ? "street address" : "",
+    !city ? "city" : "",
+    !state ? "state" : "",
+    !zip ? "zip" : "",
+  ].filter(Boolean)
+
+  return {
+    addressLine1,
+    city,
+    state,
+    zip,
+    address1: addressLine1,
+    address2,
+    displayAddress,
+    missingFields,
+  }
+}
+
+function cleanText(value: string): string {
+  return value.trim().replace(/\s+/g, " ")
+}
+
+async function fetchPropertyFromProvider(address: NormalizedAddress): Promise<ProviderProperty> {
   const providerUrl = Deno.env.get("PROPERTY_DATA_API_URL")
   const providerKey = Deno.env.get("PROPERTY_DATA_API_KEY")
 
   if (!providerUrl) {
     return {
-      address,
+      address: address.displayAddress,
       squareFeet: "Confirm with listing data",
       yearBuilt: "Public record pending",
       bedrooms: "TBD",
@@ -70,7 +138,8 @@ async function fetchPropertyFromProvider(address: string): Promise<ProviderPrope
   }
 
   const url = new URL(providerUrl)
-  url.searchParams.set("address", address)
+  url.searchParams.set("address1", address.address1)
+  url.searchParams.set("address2", address.address2)
 
   const response = await fetch(url, {
     headers: {
@@ -80,11 +149,12 @@ async function fetchPropertyFromProvider(address: string): Promise<ProviderPrope
   })
 
   if (!response.ok) {
-    throw new Error(`Property provider returned ${response.status}.`)
+    const providerMessage = await response.text().catch(() => "")
+    throw new Error(`Property provider returned ${response.status}. ${providerMessage.slice(0, 180)}`)
   }
 
   const payload = await response.json()
-  return normalizeProviderPayload(payload, address)
+  return normalizeProviderPayload(payload, address.displayAddress)
 }
 
 function normalizeProviderPayload(payload: unknown, address: string): ProviderProperty {

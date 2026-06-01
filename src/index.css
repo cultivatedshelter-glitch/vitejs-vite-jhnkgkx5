@@ -1,3 +1,26 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    background: #030303;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-width: 320px;
+    overflow-x: hidden;
+    background: #030303;
+    overscroll-behavior-y: none;
+  }
+
+  button,
+  label,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+}
