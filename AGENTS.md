@@ -1,179 +1,63 @@
 # Shelter Prep Agent Instructions
 
-## Operational Simplicity Principle
+Before changing code, read:
 
-Shelter Prep should be as efficient as Larry Haun-style field execution: simple, sequenced, low-waste, and clear.
+- /docs/SHELTER_PREP_MASTER_CODEX_PROMPT.md
+- /docs/security-model.md
+- /docs/schema-plan.md
+- /docs/agent-architecture.md
+- /docs/phase-1-build-order.md
 
-When working in this repo, make the app feel like a well-organized jobsite, not a cluttered software dashboard.
+Shelter Prep is operational infrastructure for property repair coordination.
 
-Follow these rules:
+Do not build it as:
+- a chatbot
+- an AI wrapper
+- a contractor marketplace
+- a feature-heavy dashboard
+- autonomous estimating software
 
+Build it as:
+- property-centered workflow software
+- inspection-to-scope coordination
+- contractor-authored scope capture
+- admin-verified structured summaries
+- human-reviewed outputs
+- secure Supabase-backed operational memory
+
+Core principle:
+Contractors author scope. AI structures it. Shelter Prep verifies it. Agents use it. Memory learns from approved outcomes.
+
+Security rules:
+- Never expose service role keys in frontend code.
+- Do not use hardcoded admin PINs in production.
+- Use Supabase Auth, profiles, roles, RLS, private buckets, and signed URLs.
+- Browser is untrusted.
+- Server controls approvals, verification, agent visibility, and memory creation.
+
+UX rules:
 - Reduce wasted motion.
 - Reduce unnecessary decisions.
 - Preserve workflow rhythm.
 - Stage information clearly.
 - Reveal the next action naturally.
-- Minimize cognitive load.
-- Keep users moving from intake to execution.
 - Keep one obvious next action per screen.
 - Put complexity underneath the system, not on the surface.
 
-Do not add flashy new features, expand the roadmap, or create dashboard clutter unless the user explicitly asks for that direction. Prefer dependable persistence, clear property-centered workflow, and human-reviewed operational outputs.
+Design philosophy:
+Shelter Prep should feel useful, quiet, durable, and obvious.
+Prioritize function over decoration.
+Prioritize clarity over visual excitement.
+Reduce visual noise.
 
-## Design Philosophy: Rams-Inspired Operational Minimalism
+Phase 1 focus:
+Build the trust spine before adding features.
 
-Shelter Prep should feel useful, quiet, durable, and obvious. It should not feel flashy, decorative, trendy, or over-designed.
-
-Design rules:
-
-- Good design is useful.
-- Good design is understandable.
-- Good design is unobtrusive.
-- Good design is honest.
-- Good design is thorough down to the last detail.
-- Good design is as little design as possible.
-
-Apply this to every interface decision:
-
-- Prioritize function over decoration.
-- Prioritize clarity over visual excitement.
-- Reduce visual noise.
-- Use restrained spacing, typography, and color.
-- Use restrained layouts, calm spacing, functional hierarchy, quiet typography, neutral surfaces, strong alignment, and minimal color.
-- Make system status obvious.
-- Avoid decorative UI unless it improves comprehension.
-- Avoid gradients, flashy cards, excessive shadows, and decorative motion.
-- Every screen should answer: what is this, what matters, and what should I do next?
-- Operational memory should feel trustworthy and inspectable, not magical.
-- AI outputs must be clearly labeled by status: AI Draft, Needs Review, Human Verified, Deprecated, Rejected.
-- Field lessons should read like durable records, not marketing content.
-- Make the app feel like a serious field tool for property operations.
-
-## Inspection Intelligence
-
-Shelter Prep agents must think in systems when interpreting inspection reports:
-
-defect -> building system -> root risk -> hidden damage -> trade -> priority -> sequence -> estimate impact.
-
-Do not merely summarize inspection reports. Extract property address, inspection date, inspector/company, defects, recommendations, safety hazards, maintenance items, likely hidden damage, buyer/seller concern level, and repair-vs-credit context.
-
-For each inspection finding, generate a task intelligence record with task title, defect / concern, building system, risk level, trade needed, urgency, missing information needed, photo requests, recommended next action, and human review status.
-
-Core rule:
-
-inspection item -> risk -> trade -> missing evidence -> next task.
-
-Group related findings into operational bundles before drafting scopes. For example:
-
-- Roof / water intrusion: moss, exposed nail heads, damaged shingles, cracked roof vents, active roof leak, rotted fascia.
-- Exterior envelope / moisture: cracked siding, CertainTeed siding concern, rotted trim, thin paint, missing flashing, cracked caulk, vegetation against siding, negative grading.
-- Plumbing risk: leaking water heater connectors, black iron fittings, high water pressure, leaking fixtures, broken waste-line straps.
-- Safety: missing smoke detector, stair inconsistency, active moisture or mold concern, and dryer vent or bird activity when it creates fire or moisture risk.
-- Fire suppression: painted-over, obstructed, or sealed sprinkler heads. Create "Fire suppression sprinkler issue" with life safety / fire hazard risk, fire suppression specialist / Fire Marshal trade, and missing evidence requests for close-up photos of every sprinkler head, wide room/ceiling photos, better angled photos, sprinkler head count, fire system inspection tags, and fire panel photos.
-
-Inspection output should produce executive summary, priority repair roadmap, trade scopes, repair bundles, finding-level task records, missing-evidence requests, photo requests, immediate safety/water-intrusion items, deferred maintenance items, budget-to-replace items, DIY/simple maintenance items, contractor-ready scopes, seller prep summary, buyer credit candidates, estimate confidence, and human review status.
-
-AI may classify, summarize, bundle, prioritize, and draft repair scopes. AI may not finalize pricing, approve repairs, or replace inspector or contractor judgment. Keep all inspection outputs in AI Draft status until human review.
-
-### Review Packet Size + Fast Human Review Doctrine
-
-Core principle: Store everything. Show only what matters.
-
-Operating phrase: Confirm fast. Research when needed. Never fake certainty.
-
-Inspection reports, uploaded photos, videos, and source documents should be stored in full. The reviewer-facing interpretation packet should stay lightweight, ideally under 250KB. Do not dump raw reports into the reviewer workflow by default. Compress raw evidence into a structured Review Packet containing only what is needed for fast human confirmation.
-
-Review Packets should include property summary, report metadata, executive summary, grouped repair bundles, safety / water intrusion flags, missing information questions, estimate confidence, AI confidence, source references, key page/image references, recommended next action, and human review controls. Full source files remain accessible only when deeper review is required.
-
-Review speed model:
-
-- Standard Review: target under 320 seconds.
-- Deep Review: target up to 10 minutes.
-- Extended Reliable Data Review: 1-2 business days when more evidence, source research, contractor input, or reliable data is required.
-
-Review lanes:
-
-- standard_review: use when inspection text/photos are clear and AI confidence is sufficient. Goal: reviewer confirms, edits, or flags quickly.
-- deep_review: use when issues require deeper judgment but not a full delay, such as unclear roof issues, water intrusion concerns, electrical/plumbing uncertainty, low estimate confidence, conflicting photos/report text, or repair-vs-credit judgment.
-- extended_review: use when Shelter Prep should not produce a reliable recommendation yet, such as code/jurisdiction questions, structural concerns, mold/moisture concerns, permit issues, specialty system questions, pricing that requires contractor/supplier confirmation, source research requirements, or insufficient uploaded evidence.
-
-Each report interpretation or repair item should support review_lane, target_review_time_seconds, review_status, confidence, reason_for_delay, next_action, reviewer_id, review_started_at, review_completed_at, agent_message, source_reference_ids, and packet_size_bytes. Review status should support ai_draft, needs_review, human_reviewed, human_verified, needs_more_info, extended_review, and rejected. Confidence should support high, medium, and low.
-
-Reviewer UX rules:
-
-- Show the lightweight review packet first.
-- Do not show a full PDF/page dump by default.
-- Keep review UI mobile-first and fast.
-- Use progressive reveal: Property -> Summary -> Repair Bundles -> Missing Info -> Estimate Confidence -> Sources -> Review Action.
-- Make the full source document button available but secondary.
-- Warn in development/admin mode if packet_size_bytes exceeds 250KB.
-- Reference media by thumbnails or links, not embedded full-size files.
-- Keep source references as short citations/page links, not long copied text.
-- Clearly explain why more time is needed for extended review.
-
-Customer-facing extended review message: "This item requires additional verification before Shelter Prep can provide a reliable recommendation. We are gathering better source data, expert input, or additional evidence and will update the report."
-
-Success condition: A reviewer can open a property/report, view a lightweight interpretation packet, confirm or flag most normal reports in under 320 seconds, escalate complex cases to deep review, and mark uncertain cases for extended reliable data review.
-
-## Shelter Prep Approved Contractors + Pricing Paths
-
-Shelter Prep does not run an open bidding marketplace. It routes structured work to Shelter Prep Approved Contractors who review scope and confirm final pricing before any formal paid bid or execution opportunity.
-
-A Shelter Prep Approved Contractor is a contractor reviewed by Shelter Prep who meets minimum requirements before receiving formal bid or execution opportunities:
-
-- Licensed where required.
-- Bonded where required.
-- Insured.
-- Identity and business verified.
-- Service area confirmed.
-- Trade and scope categories confirmed.
-- Agrees to Shelter Prep workflow standards.
-- Agrees to provide clear scope and pricing corrections.
-- Agrees not to treat AI estimate ranges as final bids without review.
-
-Use two separate pricing paths:
-
-- Estimate Range: preliminary planning range generated from inspection, media, and scope data. It is AI-assisted and human-reviewed, not a final bid. It supports seller prep, repair-vs-credit decisions, and budgeting.
-- Paid Contractor Bid: formal paid bid service issued only after review by a Shelter Prep Approved Contractor or internal GC/admin reviewer when applicable. It may require a walkthrough or additional media and must include assumptions, exclusions, scope limits, expiration date, and contractor/legal information. AI must never issue this automatically.
-
-Use UI language such as Estimate Range, Request Paid Contractor Bid, Shelter Prep Approved Contractor, Contractor Review Needed, Formal Proposal, GC Review, and Site Verification Needed. Avoid language that implies random contractor bidding, marketplace bidding, lowest bid selection, open bidding, or AI-generated final bids.
-
-Contractor approval statuses should support pending_review, approved, suspended, rejected, and expired_credentials. Contractor credential records should support license_number, license_state, license_expiration, bonded_status, insurance_status, insurance_expiration, verified_at, verified_by, service_area, approved_trades, and notes.
-
-## Admin Research Confirmation Links
-
-When a work group, finding, estimate assumption, material assumption, permit question, code question, safety issue, manufacturer issue, or contractor scope note needs verification, admin must have source links available for research confirmation.
-
-Consumer reports get clean Helpful Resources. Admin review gets Research Confirmation Links.
-
-Source Research tasks should return admin-facing confirmation links when sources are available, even when a source is not approved for a consumer report. If no source links are found, show: "No confirmation links found yet. Run additional research or add source manually."
-
-Admins can manually add source links and review them with confirmation status: not_reviewed, confirms, partially_supports, does_not_support, or needs_more_research. Admins can set report visibility: internal_only, report_candidate, report_approved, report_hidden, or rejected.
-
-Only report_approved links may appear in consumer Helpful Resources. Internal-only, hidden, rejected, and unreviewed links must stay out of consumer reports. Do not allow AI to human-verify a finding based only on general web sources; prefer official, manufacturer, supplier, internal verified, or jurisdiction sources.
-
-## Material Compatibility + Field Finish Memory
-
-Shelter Prep should capture field-tested material compatibility lessons as human-verified operational memory, not generic product advice.
-
-When a real field outcome teaches something about substrate, prep, product, dilution, lighting, application, finish behavior, or correction method, capture the lesson locally first with property_id, room_or_area, substrate, product_name, product_type, prep_method, dilution_ratio, application_tool, application_pattern, lighting_condition, observed_issue, correction_method, final_outcome, risk_level, confidence, verification_status, human_notes, before_photos, and after_photos.
-
-Use statuses: AI Draft, Needs Review, Human Verified, Deprecated, Rejected.
-
-Do not treat AI observation as final truth. Do not turn one job into a universal rule. Promote to reusable memory only after human verification with evidence.
-
-Example: James Alexander Limewash Paint on clean new drywall in a narrow stairwell. Strong grazing light made seams, patch transitions, uneven absorption, and isolated touchups more visible. Draft correction: apply one broad diluted unifying pass across full wall planes, approximately 15-25% water, using a large block brush or wide masonry brush with broad X movement, long feather arcs, and light pressure. Avoid scrubbing, spot chasing, and flattening the mineral finish into standard beige drywall paint. Memory status remains Needs Review until the dry outcome is confirmed.
-
-## Deck Build Field Intelligence
-
-Shelter Prep should capture real deck build jobsite lessons as field intelligence, not just square footage, board counts, or generic deck advice.
-
-For low-elevation garden decks in dense Pacific Northwest landscapes, look for visible site access constraints, root/landscape preservation requirements, ground prep and drainage strategy, deck block/pier logic, framing layout logic, blocking/stiffness strategy, lateral movement risk, moisture exposure risk, fastener compatibility, material staging friction, and future maintenance implications.
-
-Operational rule: for low-elevation decks in shaded or wet Pacific Northwest environments, flag drainage under deck, airflow under framing, ground contact risk, pier/block settlement risk, lateral stiffness/racking risk, fastener compatibility with treated lumber, root/landscape protection, material handling/access constraints, and future inspection/maintenance access.
-
-Future Deck Field Intelligence entries should support property_id, project_id, area_or_zone, deck_type, elevation_type, site_conditions, soil_or_base_condition, drainage_strategy, landscape_constraints, access_constraints, framing_material, footing_or_support_type, joist_layout_notes, blocking_strategy, fastener_type, connector_type, corrosion_protection, observed_risks, mitigation_notes, sequencing_notes, material_handling_notes, human_notes, before_photos, progress_photos, after_photos, confidence, and verification_status.
-
-Use statuses: AI Draft, Needs Review, Human Verified, Contractor Verified, Completed / Actual Confirmed, Rejected, Deprecated.
-
-AI may identify visible field conditions and risks from photos, but it may not create a universal structural recommendation from one photo set or say a deck is structurally approved from photos alone. Human or contractor review is required for structural approval. Treat deck intelligence as field memory and job context, not final engineering.
+Do not build:
+- full contractor portal
+- marketplace logic
+- predictive maintenance
+- homeowner app
+- LiDAR
+- autonomous purchasing
+- automatic memory learning
