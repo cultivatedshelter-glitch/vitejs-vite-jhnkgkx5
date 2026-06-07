@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type React from 'react'
 
 export type ReportPreviewFile = {
@@ -52,7 +53,6 @@ type StyleMap = Record<string, React.CSSProperties>
 type ReportPreviewProps = {
   data: ReportPreviewData
   styles: StyleMap
-  getStatusLabel: (value?: string | null) => string
 }
 
 function display(value?: string | null) {
@@ -66,7 +66,7 @@ function statusStyle(styles: StyleMap, status?: string | null) {
   return styles.badgeMuted
 }
 
-function reportStatusLabel(status: string | null | undefined, fallback: (value?: string | null) => string) {
+function reportStatusLabel(status: string | null | undefined) {
   const normalized = String(status || '').trim().toLowerCase()
   const reportStatusLabels: Record<string, string> = {
     ai_draft: 'AI Draft',
@@ -82,19 +82,17 @@ function reportStatusLabel(status: string | null | undefined, fallback: (value?:
     rejected: 'Rejected',
     deprecated: 'Deprecated',
   }
-  return reportStatusLabels[normalized] || fallback(status)
+  return reportStatusLabels[normalized] || 'Needs Review'
 }
 
 function ReportStatusBadge({
   status,
   styles,
-  getStatusLabel,
 }: {
   status?: string | null
   styles: StyleMap
-  getStatusLabel: (value?: string | null) => string
 }) {
-  return <span style={statusStyle(styles, status)}>{reportStatusLabel(status, getStatusLabel)}</span>
+  return <span style={statusStyle(styles, status)}>{reportStatusLabel(status)}</span>
 }
 
 function ReportSection({
@@ -107,7 +105,7 @@ function ReportSection({
   styles: StyleMap
 }) {
   return (
-    <section style={styles.noticeBox}>
+    <section className="report-print-section" style={styles.noticeBox}>
       <h4 style={{ margin: '0 0 10px', color: '#173425', letterSpacing: 0 }}>{title}</h4>
       {children}
     </section>
@@ -117,14 +115,12 @@ function ReportSection({
 function ReportFindingCard({
   group,
   styles,
-  getStatusLabel,
 }: {
   group: ReportPreviewWorkGroup
   styles: StyleMap
-  getStatusLabel: (value?: string | null) => string
 }) {
   return (
-    <article style={styles.inspectionTaskCard}>
+    <article className="report-print-card" style={styles.inspectionTaskCard}>
       <div style={styles.buttonRow}>
         <div style={{ flex: 1 }}>
           <strong>{display(group.title)}</strong>
@@ -135,7 +131,7 @@ function ReportFindingCard({
         </span>
       </div>
       <div style={styles.badgeRow}>
-        <ReportStatusBadge status={group.reviewStatus || 'ai_draft'} styles={styles} getStatusLabel={getStatusLabel} />
+        <ReportStatusBadge status={group.reviewStatus || 'needs_review'} styles={styles} />
       </div>
       <p style={styles.small}>
         <strong>What matters:</strong> {display(group.whatMatters)}
@@ -166,11 +162,46 @@ function ReportFindingCard({
   )
 }
 
-export function ReportPreview({ data, styles, getStatusLabel }: ReportPreviewProps) {
+function getUseGuidance(data: ReportPreviewData) {
+  const total = data.summary.totalWorkGroups
+  const verified = data.summary.humanVerifiedCount
+
+  if (!total || verified === 0) {
+    return 'Use this as an internal draft only. Review findings before sending to a client, seller, buyer, or contractor.'
+  }
+
+  if (verified < total) {
+    return 'Verified items may support internal coordination. Draft items still require review before external use.'
+  }
+
+  return 'This report may be used for internal coordination. Confirm pricing and contractor scope before treating it as final.'
+}
+
+export function ReportPreview({ data, styles }: ReportPreviewProps) {
+  const reportRef = useRef<HTMLElement | null>(null)
   const hasUnverifiedContent = data.reviewStatus !== 'Human Verified'
+  const sourceNote = 'Source detail is limited to currently saved uploaded files and interpretation data.'
+
+  function handlePrintReport() {
+    const root = reportRef.current
+    const cleanup = () => {
+      document.body.classList.remove('printing-report-preview')
+      root?.classList.remove('report-print-active')
+      window.removeEventListener('afterprint', cleanup)
+    }
+
+    document.querySelectorAll('.report-print-active').forEach((element) => {
+      element.classList.remove('report-print-active')
+    })
+    document.body.classList.add('printing-report-preview')
+    root?.classList.add('report-print-active')
+    window.addEventListener('afterprint', cleanup, { once: true })
+    window.print()
+    window.setTimeout(cleanup, 3000)
+  }
 
   return (
-    <section style={styles.reviewBox} aria-label="Report Preview">
+    <section ref={reportRef} className="report-preview report-print-root" style={styles.reviewBox} aria-label="Report Preview">
       <div style={styles.buttonRow}>
         <div style={{ flex: 1 }}>
           <span style={styles.workflowStage}>Shelter Prep</span>
@@ -183,17 +214,22 @@ export function ReportPreview({ data, styles, getStatusLabel }: ReportPreviewPro
             Generated: {new Date(data.generatedAt).toLocaleString()} - Request: {data.requestId}
           </p>
         </div>
-        <span style={data.reviewStatus === 'Human Verified' ? styles.badge : styles.badgeMuted}>{data.reviewStatus}</span>
+        <div style={styles.buttonRow}>
+          <span style={data.reviewStatus === 'Human Verified' ? styles.badge : styles.badgeMuted}>{data.reviewStatus}</span>
+          <button type="button" className="report-print-hidden" style={styles.outlineButton} onClick={handlePrintReport}>
+            Print Report
+          </button>
+        </div>
       </div>
 
       {hasUnverifiedContent && (
-        <div style={styles.warningBox}>
+        <div className="report-print-warning" style={styles.warningBox}>
           This report contains AI-organized draft findings. Human review is required before client use.
         </div>
       )}
 
       {data.errors.length > 0 && (
-        <div style={{ ...styles.noticeBox, background: '#fde8df', borderColor: '#e5b4a3', color: '#8a2f12' }}>
+        <div className="report-print-warning" style={{ ...styles.noticeBox, background: '#fde8df', borderColor: '#e5b4a3', color: '#8a2f12' }}>
           {data.errors.map((error) => (
             <p key={error} style={{ ...styles.small, color: '#8a2f12' }}>{error}</p>
           ))}
@@ -201,12 +237,22 @@ export function ReportPreview({ data, styles, getStatusLabel }: ReportPreviewPro
       )}
 
       {data.warnings.length > 0 && (
-        <div style={styles.noticeBox}>
+        <div className="report-print-warning" style={styles.noticeBox}>
           {data.warnings.map((warning) => (
             <p key={warning} style={styles.small}>{warning}</p>
           ))}
         </div>
       )}
+
+      <ReportSection title="Report Completeness" styles={styles}>
+        <div style={styles.compactMetaGrid}>
+          <span>Work groups: {data.summary.totalWorkGroups}</span>
+          <span>Human verified: {data.summary.humanVerifiedCount}</span>
+          <span>Needs review: {data.summary.needsReviewCount}</span>
+          <span>Missing info questions: {data.missingInfo.length}</span>
+          <span>Uploaded files: {data.uploadedFiles.length}</span>
+        </div>
+      </ReportSection>
 
       <ReportSection title="Property / Request Summary" styles={styles}>
         <div style={styles.compactMetaGrid}>
@@ -233,21 +279,26 @@ export function ReportPreview({ data, styles, getStatusLabel }: ReportPreviewPro
         </p>
       </ReportSection>
 
+      <ReportSection title="How to Use This Report" styles={styles}>
+        <p style={styles.small}>{getUseGuidance(data)}</p>
+      </ReportSection>
+
       <ReportSection title="Priority Repair Roadmap" styles={styles}>
         {data.workGroups.length === 0 ? (
-          <p style={styles.small}>No interpreted work groups found.</p>
+          <p style={styles.small}>No interpreted repair items are available for this report yet. Upload evidence or run interpretation before generating a report.</p>
         ) : (
           <div style={styles.inspectionTaskGrid}>
             {data.workGroups.map((group) => (
-              <ReportFindingCard key={group.id} group={group} styles={styles} getStatusLabel={getStatusLabel} />
+              <ReportFindingCard key={group.id} group={group} styles={styles} />
             ))}
           </div>
         )}
       </ReportSection>
 
       <ReportSection title="Known Facts" styles={styles}>
+        <p style={styles.small}>{sourceNote}</p>
         {data.knownFacts.length === 0 ? (
-          <p style={styles.small}>Source ledger is limited. Uploaded evidence and reviewed findings will appear here when available.</p>
+          <p style={styles.small}>Unavailable source detail: no uploaded file names or saved interpretation summaries are available for this report.</p>
         ) : (
           <ul style={styles.smallList}>
             {data.knownFacts.map((fact) => (
@@ -276,7 +327,7 @@ export function ReportPreview({ data, styles, getStatusLabel }: ReportPreviewPro
           <ul style={styles.smallList}>
             {data.workGroups.map((group) => (
               <li key={`${group.id}-status`}>
-                {group.title}: <ReportStatusBadge status={group.reviewStatus || 'ai_draft'} styles={styles} getStatusLabel={getStatusLabel} />
+                {group.title}: <ReportStatusBadge status={group.reviewStatus || 'needs_review'} styles={styles} />
               </li>
             ))}
           </ul>

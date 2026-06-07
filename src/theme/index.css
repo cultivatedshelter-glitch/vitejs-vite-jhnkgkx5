@@ -1,3 +1,72 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@media print {
+  @page {
+    margin: 0.55in;
+  }
+
+  body.printing-report-preview {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  body.printing-report-preview #root * {
+    visibility: hidden !important;
+  }
+
+  body.printing-report-preview .report-print-active,
+  body.printing-report-preview .report-print-active * {
+    visibility: visible !important;
+  }
+
+  body.printing-report-preview .report-print-active {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
+  .report-print-root,
+  .report-print-root * {
+    color: #111111 !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  .report-print-hidden,
+  .report-print-hidden * {
+    display: none !important;
+  }
+
+  .report-print-section,
+  .report-print-card,
+  .report-print-warning {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    background: #ffffff !important;
+    border-color: #999999 !important;
+    box-shadow: none !important;
+  }
+
+  .report-print-section,
+  .report-print-card {
+    margin-bottom: 12px !important;
+  }
+
+  .report-print-warning {
+    background: #fff8e8 !important;
+    color: #111111 !important;
+  }
+
+  .report-print-root a {
+    color: #111111 !important;
+    text-decoration: underline !important;
+  }
+}

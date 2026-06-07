@@ -12179,6 +12179,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return isReportHumanVerifiedStatus(normalized) || normalized === 'human_reviewed'
   }
 
+  function normalizeReportReviewStatus(value?: string | null) {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (['ai_draft', 'needs_review', 'human_reviewed', 'human_verified', 'approved', 'human_approved', 'needs_more_info', 'research_requested', 'research_drafted', 'rejected'].includes(normalized)) {
+      return normalized
+    }
+    return 'needs_review'
+  }
+
   function getReportReviewStatus(items: ReportPreviewWorkGroup[]): ReportPreviewData['reviewStatus'] {
     if (!items.length) return 'Draft'
     const activeItems = items.filter((item) => String(item.reviewStatus || '').toLowerCase() !== 'rejected')
@@ -12199,7 +12207,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       title: group.title || 'Untitled work group',
       category: group.recommended_trade || group.system_category || group.work_area,
       priority: group.priority || group.severity || 'Unknown',
-      reviewStatus: group.status || 'ai_draft',
+      reviewStatus: normalizeReportReviewStatus(group.status),
       whatMatters: group.risk_explanation || group.summary,
       evidenceSummary: group.evidence_summary || group.source_text || group.summary,
       likelyCostImpact: costImpact,
@@ -12219,7 +12227,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       title: item.description || item.category || 'Inspection finding',
       category: item.trade || item.category,
       priority: item.severity || item.urgency || 'Unknown',
-      reviewStatus: item.status || 'ai_draft',
+      reviewStatus: normalizeReportReviewStatus(item.status),
       whatMatters: item.description,
       evidenceSummary: item.source_text || `${item.location || 'Location not provided'} - ${item.category || 'Inspection item'}`,
       likelyCostImpact: costImpact,
@@ -12235,7 +12243,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       title: finding.finding_type || 'Evidence finding',
       category: finding.finding_type,
       priority: finding.safety_notes ? 'High' : 'Unknown',
-      reviewStatus: finding.review_status || 'ai_draft',
+      reviewStatus: normalizeReportReviewStatus(finding.review_status),
       whatMatters: finding.field_consequence || finding.observation,
       evidenceSummary: finding.observation,
       likelyCostImpact: finding.estimate_impact || 'Estimate impact not recorded.',
@@ -12250,14 +12258,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const intelligence = request.inspectionIntelligence
     const fileFacts = files.slice(0, 6).map((file) => `Uploaded file: ${file.name}`)
     const sourceFacts = items
-      .map((item) => item.evidenceSummary ? `${item.title}: ${compactReportText(item.evidenceSummary, 180)}` : '')
+      .map((item) => item.evidenceSummary ? `Evidence summary - ${item.title}: ${compactReportText(item.evidenceSummary, 180)}` : '')
       .filter(Boolean)
       .slice(0, 4)
 
     return uniqueReportStrings([
       request.propertyAddress ? `Property address: ${request.propertyAddress}` : '',
       request.workType ? `Work request: ${request.workType}` : '',
-      intelligence?.fileName ? `Inspection source: ${intelligence.fileName}` : '',
+      intelligence?.fileName ? `Extracted report source: ${intelligence.fileName}` : '',
       intelligence?.inspectionDate ? `Inspection date: ${intelligence.inspectionDate}` : '',
       intelligence?.inspectorName ? `Inspector: ${intelligence.inspectorName}` : '',
       intelligence?.inspectorCompany ? `Inspection company: ${intelligence.inspectorCompany}` : '',
@@ -12312,6 +12320,22 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return uniqueReportStrings(actions)
   }
 
+  function getReportModeLabel(data: ReportPreviewData) {
+    if (data.summary.totalWorkGroups === 0) {
+      return 'Report preview generated - No interpreted repair items available yet'
+    }
+    if (data.missingInfo.length > 0 && data.summary.humanVerifiedCount === 0) {
+      return 'Draft report generated - Missing info and human review required'
+    }
+    if (data.summary.humanVerifiedCount === 0) {
+      return 'Draft report generated - Human review required'
+    }
+    if (data.summary.needsReviewCount > 0) {
+      return 'Report preview generated - Some items verified, some still need review'
+    }
+    return 'Report ready for internal use - Human verified'
+  }
+
   function normalizeReportData(request: WorkRequest): ReportPreviewData {
     const files = getUniqueUploadedFiles(request)
     const workGroupItems = getInspectionWorkGroups(request).map(mapWorkGroupToReportItem)
@@ -12332,7 +12356,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     const errors = workGroups.length
       ? []
       : [
-          'No interpreted work groups found.',
+          'No interpreted repair items are available for this report yet.',
           files.length ? 'Run interpretation before generating a report.' : 'Upload evidence or run interpretation before generating a report.',
         ]
     const warnings = uniqueReportStrings([
@@ -15641,7 +15665,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
                         <section style={styles.nextActionPanel}>
                           <strong>{workflow.title}</strong>
-                          <p style={styles.small}>{workflow.body}</p>
+                          <p style={styles.small}>{isReportPreviewOpen ? getReportModeLabel(reportPreviewData) : workflow.body}</p>
                           <div style={styles.buttonRow}>
                             <button
                               type="button"
@@ -15673,7 +15697,6 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                           <ReportPreview
                             data={reportPreviewData}
                             styles={styles}
-                            getStatusLabel={getLearningDisplayName}
                           />
                         )}
 
