@@ -24,6 +24,7 @@ import {
   type ReviewLane,
 } from '../agents/inspectionIntelligence'
 import { InspectionIntelligencePanel } from '../components/InspectionIntelligencePanel'
+import { ReportPreview, type ReportPreviewData, type ReportPreviewWorkGroup } from '../components/ReportPreview'
 import { RuntimeSafetyBoundary } from '../components/RuntimeSafetyBoundary'
 import { styles } from '../theme/appStyles'
 import {
@@ -2847,6 +2848,7 @@ export default function ShelterPrepWorkspace() {
   const [requestSavingId, setRequestSavingId] = useState<string | null>(null)
   const [adminNoteDrafts, setAdminNoteDrafts] = useState<Record<string, AdminNoteDraft>>({})
   const [pdfProcessingByRequest, setPdfProcessingByRequest] = useState<Record<string, InspectionProcessingStatus>>({})
+  const [openReportPreviewByRequest, setOpenReportPreviewByRequest] = useState<Record<string, boolean>>({})
   const [inspectionFindingSavingId, setInspectionFindingSavingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | RequestStatus>('all')
@@ -12143,6 +12145,237 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return Array.from(uniqueFiles.values())
   }
 
+  function compactReportText(value?: string | null, maxLength = 240) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim()
+    if (text.length <= maxLength) return text
+    return `${text.slice(0, maxLength - 3)}...`
+  }
+
+  function uniqueReportStrings(values: Array<string | null | undefined>) {
+    return values
+      .map((value) => String(value || '').replace(/\s+/g, ' ').trim())
+      .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index)
+  }
+
+  function reportPriorityRank(priority?: string | null) {
+    const normalized = String(priority || '').toLowerCase()
+    if (normalized.includes('critical')) return 0
+    if (normalized.includes('high') || normalized.includes('must')) return 1
+    if (normalized.includes('medium')) return 2
+    if (normalized.includes('low')) return 3
+    return 4
+  }
+
+  function isHighPriorityReportItem(item: ReportPreviewWorkGroup) {
+    return reportPriorityRank(item.priority) <= 1
+  }
+
+  function isReportHumanVerifiedStatus(value?: string | null) {
+    return ['human_verified', 'approved', 'human_approved'].includes(String(value || '').trim().toLowerCase())
+  }
+
+  function isReportReviewedStatus(value?: string | null) {
+    const normalized = String(value || '').trim().toLowerCase()
+    return isReportHumanVerifiedStatus(normalized) || normalized === 'human_reviewed'
+  }
+
+  function getReportReviewStatus(items: ReportPreviewWorkGroup[]): ReportPreviewData['reviewStatus'] {
+    if (!items.length) return 'Draft'
+    const activeItems = items.filter((item) => String(item.reviewStatus || '').toLowerCase() !== 'rejected')
+    const humanVerifiedCount = activeItems.filter((item) => isReportHumanVerifiedStatus(item.reviewStatus)).length
+    const reviewedCount = activeItems.filter((item) => isReportReviewedStatus(item.reviewStatus)).length
+    if (activeItems.length > 0 && humanVerifiedCount === activeItems.length) return 'Human Verified'
+    if (reviewedCount > 0) return 'Human Reviewed'
+    return 'Needs Review'
+  }
+
+  function mapWorkGroupToReportItem(group: InspectionRepairBundleDraft): ReportPreviewWorkGroup {
+    const costImpact = Number(group.estimate_low || 0) || Number(group.estimate_high || 0)
+      ? `${money(group.estimate_low)} - ${money(group.estimate_high)}${group.estimate_note ? `; ${group.estimate_note}` : ''}`
+      : group.estimate_note || 'Estimate Range not recorded.'
+
+    return {
+      id: group.id,
+      title: group.title || 'Untitled work group',
+      category: group.recommended_trade || group.system_category || group.work_area,
+      priority: group.priority || group.severity || 'Unknown',
+      reviewStatus: group.status || 'ai_draft',
+      whatMatters: group.risk_explanation || group.summary,
+      evidenceSummary: group.evidence_summary || group.source_text || group.summary,
+      likelyCostImpact: costImpact,
+      recommendedAction: group.recommended_next_action || group.contractor_scope_note || 'Review before client use.',
+      missingInfo: uniqueReportStrings(group.missing_information || []),
+      sourceIds: uniqueReportStrings([group.source_page, ...safeArray(group.finding_ids)]),
+    }
+  }
+
+  function mapRepairItemToReportItem(item: InspectionRepairItemDraft): ReportPreviewWorkGroup {
+    const costImpact = Number(item.estimate_low || 0) || Number(item.estimate_high || 0)
+      ? `${money(item.estimate_low)} - ${money(item.estimate_high)}`
+      : 'Estimate Range not recorded.'
+
+    return {
+      id: item.id,
+      title: item.description || item.category || 'Inspection finding',
+      category: item.trade || item.category,
+      priority: item.severity || item.urgency || 'Unknown',
+      reviewStatus: item.status || 'ai_draft',
+      whatMatters: item.description,
+      evidenceSummary: item.source_text || `${item.location || 'Location not provided'} - ${item.category || 'Inspection item'}`,
+      likelyCostImpact: costImpact,
+      recommendedAction: item.urgency || 'Review before client use.',
+      missingInfo: uniqueReportStrings(item.missing_info || []),
+      sourceIds: uniqueReportStrings([item.inspection_report_id, item.repair_bundle_id]),
+    }
+  }
+
+  function mapMediaFindingToReportItem(finding: PropertyMediaFinding): ReportPreviewWorkGroup {
+    return {
+      id: finding.id,
+      title: finding.finding_type || 'Evidence finding',
+      category: finding.finding_type,
+      priority: finding.safety_notes ? 'High' : 'Unknown',
+      reviewStatus: finding.review_status || 'ai_draft',
+      whatMatters: finding.field_consequence || finding.observation,
+      evidenceSummary: finding.observation,
+      likelyCostImpact: finding.estimate_impact || 'Estimate impact not recorded.',
+      recommendedAction: finding.access_notes || finding.safety_notes || 'Review finding before client use.',
+      missingInfo: uniqueReportStrings([finding.access_notes, finding.safety_notes, finding.admin_notes]),
+      sourceIds: uniqueReportStrings([finding.source_file_id]),
+    }
+  }
+
+  function buildReportKnownFacts(request: WorkRequest, items: ReportPreviewWorkGroup[]) {
+    const files = getUniqueUploadedFiles(request)
+    const intelligence = request.inspectionIntelligence
+    const fileFacts = files.slice(0, 6).map((file) => `Uploaded file: ${file.name}`)
+    const sourceFacts = items
+      .map((item) => item.evidenceSummary ? `${item.title}: ${compactReportText(item.evidenceSummary, 180)}` : '')
+      .filter(Boolean)
+      .slice(0, 4)
+
+    return uniqueReportStrings([
+      request.propertyAddress ? `Property address: ${request.propertyAddress}` : '',
+      request.workType ? `Work request: ${request.workType}` : '',
+      intelligence?.fileName ? `Inspection source: ${intelligence.fileName}` : '',
+      intelligence?.inspectionDate ? `Inspection date: ${intelligence.inspectionDate}` : '',
+      intelligence?.inspectorName ? `Inspector: ${intelligence.inspectorName}` : '',
+      intelligence?.inspectorCompany ? `Inspection company: ${intelligence.inspectorCompany}` : '',
+      ...fileFacts,
+      ...sourceFacts,
+    ])
+  }
+
+  function buildReportMissingInfo(request: WorkRequest, items: ReportPreviewWorkGroup[]) {
+    return uniqueReportStrings([
+      ...getMissingInfoItems(request).map(missingInfoQuestionFor),
+      ...safeArray(request.inspectionIntelligence?.missingInformationQuestions),
+      ...items.flatMap((item) => item.missingInfo || []),
+      ...getActiveResearchTasks(request).map((task) => task.missing_information || task.needs_more_info_prompt || ''),
+    ])
+  }
+
+  function buildReportNextActions(items: ReportPreviewWorkGroup[], missingInfo: string[], evidenceCount: number) {
+    const humanVerifiedCount = items.filter((item) => isReportHumanVerifiedStatus(item.reviewStatus)).length
+    const reviewedCount = items.filter((item) => isReportReviewedStatus(item.reviewStatus)).length
+    const contractorReviewNeeded = items.some((item) =>
+      /contractor|licensed|trade|review|verify|walkthrough/i.test(
+        [item.recommendedAction, item.category, item.whatMatters].filter(Boolean).join(' ')
+      )
+    )
+    const actions: string[] = []
+
+    if (!items.length) {
+      actions.push(evidenceCount ? 'Run interpretation before generating a report.' : 'Upload evidence or run interpretation before generating a report.')
+    }
+
+    if (items.length && reviewedCount === 0) {
+      actions.push('Review at least one work group before using this report externally.')
+    }
+
+    if (missingInfo.length > 0) {
+      actions.push('Collect missing information before finalizing scope.')
+    }
+
+    if (humanVerifiedCount > 0) {
+      actions.push('Verified items may be included in a seller/client-facing summary.')
+    }
+
+    if (contractorReviewNeeded) {
+      actions.push('Send scope to contractor for verification before final estimate.')
+    }
+
+    if (!actions.length) {
+      actions.push('Review this preview before any client-facing use.')
+    }
+
+    return uniqueReportStrings(actions)
+  }
+
+  function normalizeReportData(request: WorkRequest): ReportPreviewData {
+    const files = getUniqueUploadedFiles(request)
+    const workGroupItems = getInspectionWorkGroups(request).map(mapWorkGroupToReportItem)
+    const repairItemItems = workGroupItems.length
+      ? []
+      : safeArray(request.inspectionIntelligence?.repairItems)
+          .filter((item) => item.status !== 'rejected')
+          .map(mapRepairItemToReportItem)
+    const mediaFindingItems = workGroupItems.length || repairItemItems.length
+      ? []
+      : getActiveFindings(request).map(mapMediaFindingToReportItem)
+    const workGroups = [...workGroupItems, ...repairItemItems, ...mediaFindingItems]
+      .sort((a, b) => reportPriorityRank(a.priority) - reportPriorityRank(b.priority))
+    const missingInfo = buildReportMissingInfo(request, workGroups)
+    const reviewStatus = getReportReviewStatus(workGroups)
+    const humanVerifiedCount = workGroups.filter((item) => isReportHumanVerifiedStatus(item.reviewStatus)).length
+    const needsReviewCount = workGroups.filter((item) => !isReportReviewedStatus(item.reviewStatus)).length
+    const errors = workGroups.length
+      ? []
+      : [
+          'No interpreted work groups found.',
+          files.length ? 'Run interpretation before generating a report.' : 'Upload evidence or run interpretation before generating a report.',
+        ]
+    const warnings = uniqueReportStrings([
+      workGroups.length && humanVerifiedCount === 0 ? 'This report is draft-only because no items are human verified.' : '',
+      request.inspectionProcessingStatus === 'extraction_failed'
+        ? 'Report generation failed. Check that this property has saved interpretation data.'
+        : '',
+    ])
+
+    return {
+      propertyAddress: request.propertyAddress || request.inspectionIntelligence?.propertyAddress || '',
+      propertyLocation: uniqueReportStrings([request.city, request.state, request.zip]).join(', '),
+      propertyId: String(request.propertyId || getRequestPropertyId(request) || ''),
+      requestId: request.id,
+      requestTitle: request.workType || request.description,
+      requesterName: request.requesterName,
+      requestStatus: STATUS_META[request.status]?.label || request.status,
+      interpretationStatus: getInspectionStatusLabel(
+        pdfProcessingByRequest[request.id] || request.inspectionProcessingStatus || (request.inspectionIntelligence ? 'inspection_review_drafted' : undefined)
+      ),
+      reviewStatus,
+      generatedAt: new Date().toISOString(),
+      uploadedFiles: files.map((file) => ({
+        name: file.name,
+        type: getEvidenceTypeLabel(getEvidenceCategory(file.name, '', file.type)),
+        url: file.previewUrl || file.url,
+      })),
+      workGroups,
+      knownFacts: buildReportKnownFacts(request, workGroups),
+      missingInfo,
+      nextActions: buildReportNextActions(workGroups, missingInfo, files.length),
+      warnings,
+      errors,
+      summary: {
+        totalWorkGroups: workGroups.length,
+        highPriorityCount: workGroups.filter(isHighPriorityReportItem).length,
+        missingInfoCount: workGroups.filter((item) => (item.missingInfo || []).length > 0).length,
+        humanVerifiedCount,
+        needsReviewCount,
+      },
+    }
+  }
+
   function getResearchAnswerSummary(task: AgentResearchTask) {
     const raw = task.answer_draft || task.recommended_next_action || task.missing_information || 'No answer drafted yet.'
     return raw.length > 170 ? `${raw.slice(0, 167)}...` : raw
@@ -15339,6 +15572,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                       const activeResearchCount = getActiveResearchTasks(request).length
                       const workGroupCount = getInspectionWorkGroups(request).length
                       const isArchivedProject = Boolean(request.archived)
+                      const reportPreviewData = normalizeReportData(request)
+                      const isReportPreviewOpen = Boolean(openReportPreviewByRequest[request.id])
+                      const reportButtonLabel =
+                        reportPreviewData.reviewStatus === 'Human Verified' ? 'Generate Report' : 'Generate Draft Report'
 
                       return (
 	                      <div key={request.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
@@ -15405,15 +15642,40 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                         <section style={styles.nextActionPanel}>
                           <strong>{workflow.title}</strong>
                           <p style={styles.small}>{workflow.body}</p>
-                          <button
-                            type="button"
-                            style={styles.primaryButton}
-                            disabled={workflow.disabled}
-                            onClick={workflow.onPrimary}
-                          >
-                            Review
-                          </button>
+                          <div style={styles.buttonRow}>
+                            <button
+                              type="button"
+                              style={styles.primaryButton}
+                              disabled={workflow.disabled}
+                              onClick={workflow.onPrimary}
+                            >
+                              Review
+                            </button>
+                            <button
+                              type="button"
+                              style={styles.outlineButton}
+                              onClick={() =>
+                                setOpenReportPreviewByRequest((prev) => ({
+                                  ...prev,
+                                  [request.id]: !prev[request.id],
+                                }))
+                              }
+                            >
+                              {isReportPreviewOpen ? 'Hide Report Preview' : reportButtonLabel}
+                            </button>
+                          </div>
+                          {!isReportPreviewOpen && reportPreviewData.errors.length > 0 && (
+                            <p style={styles.small}>{reportPreviewData.errors.join(' ')}</p>
+                          )}
                         </section>
+
+                        {isReportPreviewOpen && (
+                          <ReportPreview
+                            data={reportPreviewData}
+                            styles={styles}
+                            getStatusLabel={getLearningDisplayName}
+                          />
+                        )}
 
                         {renderAddressWorkGroups(request)}
 
