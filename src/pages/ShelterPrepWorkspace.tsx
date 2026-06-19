@@ -32,6 +32,7 @@ import {
   attachFilesToRequests,
   attachPreviewUrls,
   mapFileRowToStoredFile,
+  resolveStoredFileUrl,
   storagePathFromPublicUrl,
 } from '../lib/db/requestFiles'
 import {
@@ -1898,6 +1899,21 @@ function formatUploadedAt(value?: string | null) {
   return date.toLocaleString()
 }
 
+function formatFileSize(value?: number | null) {
+  if (!value || !Number.isFinite(value) || value < 0) return 'Size not recorded'
+  if (value < 1024) return `${value} B`
+  const units = ['KB', 'MB', 'GB']
+  let size = value / 1024
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
+}
+
 function getEvidenceCategory(name = '', mimeType = '', storedType?: 'photo' | 'document'): UploadEvidenceCategory {
   const lowerName = name.toLowerCase()
   const lowerMime = mimeType.toLowerCase()
@@ -2881,6 +2897,7 @@ export default function ShelterPrepWorkspace() {
   const [documentFiles, setDocumentFiles] = useState<File[]>([])
   const [localEvidenceStatus, setLocalEvidenceStatus] = useState<UploadEvidenceStatus>('selected')
   const [localEvidencePreviews, setLocalEvidencePreviews] = useState<Record<string, string>>({})
+  const [fileAccessError, setFileAccessError] = useState('')
   const [inspectionReading, setInspectionReading] = useState(false)
   const [inspectionReportDraft, setInspectionReportDraft] = useState<InspectionReportDraft | null>(null)
   const [inspectionDraftTasks, setInspectionDraftTasks] = useState<InspectionTaskIntelligence[]>([])
@@ -4127,16 +4144,92 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
   }
 
+  function canonicalWorkRequestStatus(status: RequestStatus | string) {
+    if (status === 'in_progress') return 'in_review'
+    if (status === 'needs_info') return 'blocked'
+    if (status === 'pending_approval') return 'ready'
+    if (status === 'estimate_ready') return 'completed'
+    return 'new'
+  }
+
+  async function syncCanonicalWorkRequest(params: {
+    leadId: string
+    propertyId?: string | number | null
+    requesterName: string
+    requesterEmail: string
+    requesterPhone: string
+    workType: string
+    description: string
+    urgency: string
+    occupancy: string
+    status: RequestStatus | string
+  }) {
+    const propertyIdNumber = params.propertyId === null || params.propertyId === undefined || params.propertyId === ''
+      ? null
+      : Number(params.propertyId)
+    const linkedPropertyId = Number.isFinite(propertyIdNumber) ? propertyIdNumber : null
+    const workRequestId = asNullableUuid(params.leadId)
+
+    if (!workRequestId || !linkedPropertyId) return null
+
+    try {
+      const { data, error } = await supabase
+        .from('work_requests')
+        .upsert({
+          id: workRequestId,
+          lead_id: workRequestId,
+          property_id: linkedPropertyId,
+          title: params.workType || 'Property work request',
+          request_type: params.workType || 'intake',
+          work_type: params.workType || null,
+          description: params.description || null,
+          requester_name: params.requesterName || null,
+          requester_email: params.requesterEmail || null,
+          requester_phone: params.requesterPhone || null,
+          urgency: params.urgency || null,
+          occupancy: params.occupancy || null,
+          status: canonicalWorkRequestStatus(params.status),
+          created_by: currentUserId || null,
+          metadata: {
+            source: 'leads_compatibility_sync',
+            app_status: params.status,
+          },
+        }, { onConflict: 'id' })
+        .select('id')
+        .single()
+
+      if (error) throw error
+      return data?.id || workRequestId
+    } catch (error) {
+      console.warn('Canonical work_request row was not synced; continuing with the saved lead record.', error)
+      return null
+    }
+  }
+
   async function uploadRequestFiles(
     files: File[],
     folder: 'photos' | 'documents',
     type: 'photo' | 'document',
-    leadId?: string
+    leadId?: string,
+    propertyId?: string | number | null,
+    workRequestId?: string | null
   ) {
     const uploaded: StoredFile[] = []
+    const linkedWorkRequestId = asNullableUuid(workRequestId || '')
+    const linkedLeadId = asNullableUuid(leadId || '')
+    const propertyIdValue = propertyId === null || propertyId === undefined || propertyId === ''
+      ? null
+      : String(propertyId)
 
     for (const file of files) {
-      const path = `${folder}/${leadId || 'unlinked'}/${Date.now()}-${safeFileName(file.name)}`
+      const path = [
+        'properties',
+        propertyIdValue || 'unlinked',
+        'requests',
+        linkedWorkRequestId || linkedLeadId || 'unlinked',
+        folder,
+        `${Date.now()}-${makeId()}-${safeFileName(file.name)}`,
+      ].join('/')
 
       const { error } = await supabase.storage
         .from(REQUEST_FILES_BUCKET)
@@ -4144,53 +4237,45 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       if (error) throw error
 
-      const { data: publicUrlData } = supabase.storage
-        .from(REQUEST_FILES_BUCKET)
-        .getPublicUrl(path)
+      const { data: fileRow, error: fileInsertError } = await supabase
+        .from('files')
+        .insert({
+          property_id: propertyIdValue,
+          linked_property_id: propertyIdValue,
+          work_request_id: linkedWorkRequestId,
+          linked_work_request_id: linkedWorkRequestId,
+          linked_request_id: linkedLeadId || leadId || null,
+          linked_lead_id: linkedLeadId || leadId || null,
+          lead_id: linkedLeadId,
+          original_name: file.name,
+          original_filename: file.name,
+          file_name: file.name,
+          file_url: null,
+          storage_bucket: REQUEST_FILES_BUCKET,
+          bucket: REQUEST_FILES_BUCKET,
+          storage_path: path,
+          file_kind: type,
+          file_type: type,
+          mime_type: file.type || null,
+          file_size: file.size,
+          size_bytes: file.size,
+          uploaded_by: currentUserId || null,
+          visibility: 'private',
+          metadata: {
+            upload_source: 'shelter_prep_intake',
+          },
+        })
+        .select('id, created_at, property_id, linked_property_id, work_request_id, linked_request_id, lead_id, original_name, original_filename, file_name, storage_bucket, bucket, storage_path, file_kind, file_type, mime_type, file_size, size_bytes, uploaded_by, review_status')
+        .single()
 
-      if (leadId) {
-        const { data: fileRow, error: fileInsertError } = await supabase
-          .from('files')
-          .insert({
-            lead_id: leadId,
-            file_url: publicUrlData.publicUrl,
-            file_name: file.name,
-            storage_bucket: REQUEST_FILES_BUCKET,
-            storage_path: path,
-            file_type: type,
-            mime_type: file.type || null,
-            file_size: file.size,
-          })
-          .select('id, created_at, file_name, file_url, storage_bucket, storage_path, file_type, mime_type, file_size')
-          .single()
-
-        if (fileInsertError) {
-          console.warn('File uploaded, but file database row was not saved:', fileInsertError)
-        }
-
-        if (fileRow?.id) {
-          const savedFile = mapFileRowToStoredFile(fileRow)
-          const [hydratedFile] = await attachPreviewUrls([savedFile])
-          uploaded.push(hydratedFile)
-          continue
-        }
+      if (fileInsertError || !fileRow?.id) {
+        await supabase.storage.from(REQUEST_FILES_BUCKET).remove([path])
+        throw fileInsertError || new Error('File uploaded, but the file metadata row was not saved.')
       }
 
-      const fallbackFile: StoredFile = {
-        name: file.name,
-        path,
-        url: publicUrlData.publicUrl,
-        bucket: REQUEST_FILES_BUCKET,
-        type,
-        createdAt: new Date().toISOString(),
-        source: 'local',
-      }
-
-      const [hydratedFallback] = await attachPreviewUrls([fallbackFile])
-      uploaded.push({
-        ...fallbackFile,
-        previewUrl: hydratedFallback.previewUrl,
-      })
+      const savedFile = mapFileRowToStoredFile(fileRow)
+      const [hydratedFile] = await attachPreviewUrls([savedFile])
+      uploaded.push(hydratedFile)
     }
 
     return uploaded
@@ -4202,11 +4287,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
   async function openRequestFile(file: StoredFile, download = false) {
     try {
+      setFileAccessError('')
       const signedUrl = await createRequestFileUrl(file, download)
-      window.open(signedUrl, '_blank', 'noopener,noreferrer')
+      const opened = window.open(signedUrl, '_blank', 'noopener,noreferrer')
+      if (!opened) {
+        setFileAccessError('Signed file link was created, but the browser blocked the new tab.')
+      }
     } catch (error) {
       console.error(error)
-      alert('Could not open file. Check Supabase storage bucket/policies.')
+      setFileAccessError('Could not create a signed file link. Check Supabase storage bucket and policies.')
     }
   }
 
@@ -4760,7 +4849,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       sources: [
         ...uploadedMatches.map((file): Omit<AgentResearchSource, 'id' | 'research_task_id' | 'created_at'> => ({
           source_title: file.name,
-          source_url: file.url || null,
+          source_url: null,
           source_type: 'uploaded_file',
           source_category: 'Property history',
           source_quality: 'unknown',
@@ -5728,12 +5817,26 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         console.warn('Lead saved, but property intelligence fields were not saved:', propertyUpdateError)
       }
 
-      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id)
-      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id)
+      const linkedPropertyId = propertyRecordId || leadRow.property_id || null
+      const canonicalWorkRequestId = await syncCanonicalWorkRequest({
+        leadId: leadRow.id,
+        propertyId: linkedPropertyId,
+        requesterName,
+        requesterEmail: email,
+        requesterPhone: phone,
+        workType,
+        description: safeDescription,
+        urgency,
+        occupancy,
+        status: 'new',
+      })
+
+      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id, linkedPropertyId, canonicalWorkRequestId)
+      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id, linkedPropertyId, canonicalWorkRequestId)
 
       const newRequest: WorkRequest = {
         id: leadRow?.id || makeId(),
-        propertyId: propertyRecordId || leadRow?.property_id || null,
+        propertyId: linkedPropertyId,
         createdAt: leadRow?.created_at
           ? new Date(leadRow.created_at).toLocaleString()
           : new Date().toLocaleString(),
@@ -5928,6 +6031,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
       if (error) throw error
 
+      await syncCanonicalWorkRequest({
+        leadId: request.id,
+        propertyId: getLinkedPropertyId(request),
+        requesterName: request.requesterName,
+        requesterEmail: request.email,
+        requesterPhone: request.phone,
+        workType: draft.workType,
+        description: draft.description,
+        urgency: draft.urgency,
+        occupancy: draft.occupancy,
+        status: draft.status,
+      })
       await persistScopeInterpretation(request, draft)
       setEditingRequestId(null)
     } catch (error: any) {
@@ -8714,7 +8829,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         : 'needs_review'
 
     const fileLines = [...safeArray(request.photos), ...safeArray(request.documents)].map((file) =>
-      `${file.type}: ${file.name}${file.url ? ` (${file.url})` : ''}`
+      `${file.type}: ${file.name}`
     )
 
     const sections = [
@@ -12381,8 +12496,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       generatedAt: new Date().toISOString(),
       uploadedFiles: files.map((file) => ({
         name: file.name,
-        type: getEvidenceTypeLabel(getEvidenceCategory(file.name, '', file.type)),
-        url: file.previewUrl || file.url,
+        type: getEvidenceTypeLabel(getEvidenceCategory(file.name, file.mimeType || '', file.type), file.mimeType || ''),
+        url: file.previewUrl || '',
       })),
       workGroups,
       knownFacts: buildReportKnownFacts(request, workGroups),
@@ -13012,16 +13127,22 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           </button>
         </div>
 
+        {fileAccessError && (
+          <div style={{ ...styles.noticeBox, background: '#fde8df', borderColor: '#e5b4a3', color: '#8a2f12' }}>
+            {fileAccessError}
+          </div>
+        )}
+
         {uploadedFiles.length === 0 ? (
           <div style={styles.empty}>Uploaded photos, videos, documents, and inspection reports will appear here after submission.</div>
         ) : (
           <div style={styles.mediaGrid}>
             {uploadedFiles.map((file) => {
-              const category = getEvidenceCategory(file.name, '', file.type)
+              const category = getEvidenceCategory(file.name, file.mimeType || '', file.type)
               const isPhoto = category === 'photo'
               const isPdf = isPdfEvidence(file)
-              const previewUrl = file.previewUrl || file.url || ''
-              const status: UploadEvidenceStatus = file.url || file.path ? 'uploaded' : 'selected'
+              const previewUrl = file.previewUrl || ''
+              const status: UploadEvidenceStatus = file.path ? 'uploaded' : 'selected'
               const evidenceKey = getEvidenceKey(file)
               const primaryInspectionKey = getEvidenceKey(file, isPdf ? 'full_pdf' : isPhoto ? 'image' : 'file')
               const linkedFindings = getEvidenceFindingsForFile(request, file)
@@ -13050,7 +13171,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
                   <div style={styles.mediaMeta}>
                     <span style={styles.fileName}>{file.name}</span>
-                    <span style={styles.small}>{getEvidenceTypeLabel(category)}</span>
+                    <span style={styles.small}>{getEvidenceTypeLabel(category, file.mimeType || '')}</span>
+                    <span style={styles.small}>{formatUploadedAt(file.createdAt)} · {formatFileSize(file.sizeBytes)}</span>
                     <span style={getOperationalStatusStyle(inspectionStatus)}>
                       {inspectionStatus === 'uploaded' ? 'Not interpreted' : inspectionStatus.replace(/_/g, ' ')}
                     </span>
@@ -13060,8 +13182,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   </div>
 
                   <div style={styles.mediaActions}>
-                    {(file.url || file.path) ? (
+                    {file.path ? (
                       <>
+                        <button
+                          type="button"
+                          style={styles.outlineButton}
+                          onClick={() => openRequestFile(file)}
+                        >
+                          Open
+                        </button>
                         <button
                           type="button"
                           style={linkedFindings.length ? styles.primaryButton : styles.outlineButton}
@@ -13081,12 +13210,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                     <div style={styles.compactMetaGrid}>
                       <span>Upload status: {status}</span>
                       <span>Category: {category}</span>
+                      <span>MIME type: {file.mimeType || 'Not recorded'}</span>
+                      <span>File size: {formatFileSize(file.sizeBytes)}</span>
                       <span>Request: {request.id}</span>
                       <span>Property: {request.propertyId || getRequestPropertyId(request) || 'Not linked yet'}</span>
                       <span>Uploaded: {formatUploadedAt(file.createdAt)}</span>
                     </div>
                     <div style={styles.buttonRow}>
-                      {(file.url || file.path) && (
+                      {file.path && (
                         <>
                           <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file)}>
                             {isPhoto ? 'Open preview' : 'Open file'}
@@ -13490,6 +13621,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         </div>
 
         <p style={styles.small}>AI/media analysis remains draft until a human verifies it.</p>
+        {fileAccessError && (
+          <div style={{ ...styles.noticeBox, background: '#fde8df', borderColor: '#e5b4a3', color: '#8a2f12' }}>
+            {fileAccessError}
+          </div>
+        )}
 
         <details style={styles.moreActions}>
           <summary style={styles.moreActionsSummary}>Media sources ({uploadedFiles.length})</summary>
@@ -13504,6 +13640,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                 >
                   <span style={styles.fileName}>{file.name}</span>
                   <span style={styles.badgeMuted}>{file.type}</span>
+                  <span style={styles.small}>{formatUploadedAt(file.createdAt)} · {formatFileSize(file.sizeBytes)}</span>
                   <button type="button" style={styles.linkButton} onClick={() => openRequestFile(file)}>
                     Open
                   </button>

@@ -1,16 +1,20 @@
 import { supabase } from './supabaseClient'
 import type { StoredFile, WorkRequest } from '../../types/app'
 
-export const REQUEST_FILES_BUCKET = 'job-files'
+export const REQUEST_FILES_BUCKET = 'shelter-prep-files'
 export function storagePathFromPublicUrl(fileUrl = '', bucket = REQUEST_FILES_BUCKET) {
-  const marker = `/storage/v1/object/public/${bucket}/`
-  const index = fileUrl.indexOf(marker)
-  if (index === -1) return ''
-  return decodeURIComponent(fileUrl.slice(index + marker.length))
+  const markers = [
+    `/storage/v1/object/public/${bucket}/`,
+    `/storage/v1/object/sign/${bucket}/`,
+  ]
+  const marker = markers.find((item) => fileUrl.includes(item))
+  if (!marker) return ''
+  const value = fileUrl.slice(fileUrl.indexOf(marker) + marker.length).split('?')[0]
+  return decodeURIComponent(value)
 }
 export function inferStoredFileType(row: any): 'photo' | 'document' {
-  const rawType = String(row.file_type || row.type || '').toLowerCase()
-  const path = String(row.storage_path || row.file_url || row.file_name || '').toLowerCase()
+  const rawType = String(row.file_kind || row.file_type || row.type || '').toLowerCase()
+  const path = String(row.storage_path || row.file_url || row.original_name || row.original_filename || row.file_name || '').toLowerCase()
   const mime = String(row.mime_type || '').toLowerCase()
 
   if (rawType === 'photo' || path.includes('/photos/') || mime.startsWith('image/')) return 'photo'
@@ -20,16 +24,53 @@ export function inferStoredFileType(row: any): 'photo' | 'document' {
 export function mapFileRowToStoredFile(row: any): StoredFile {
   const bucket = row.storage_bucket || row.bucket || REQUEST_FILES_BUCKET
   const path = row.storage_path || storagePathFromPublicUrl(row.file_url || '', bucket)
+  const sizeValue = row.file_size ?? row.size_bytes ?? null
+  const sizeBytes = sizeValue === null || sizeValue === undefined || sizeValue === ''
+    ? null
+    : Number(sizeValue)
 
   return {
     id: row.id,
-    name: row.file_name || row.name || path.split('/').pop() || 'Uploaded file',
+    name: row.original_name || row.original_filename || row.file_name || row.name || path.split('/').pop() || 'Uploaded file',
     path,
-    url: row.file_url || '',
     bucket,
+    mimeType: row.mime_type || null,
+    sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
+    propertyId: row.property_id || row.linked_property_id || null,
+    workRequestId: row.work_request_id || row.linked_request_id || row.linked_work_request_id || row.lead_id || null,
+    uploadedBy: row.uploaded_by || null,
+    reviewStatus: row.review_status || null,
     type: inferStoredFileType(row),
     createdAt: row.created_at || row.uploaded_at || null,
     source: row.source || 'files',
+  }
+}
+async function logFileAccessEvent(file: StoredFile, download: boolean) {
+  if (!file.id) return
+
+  try {
+    const { data } = await supabase.auth.getUser()
+    const actorId = data?.user?.id || null
+
+    const { error } = await supabase.from('file_access_events').insert({
+      file_id: file.id,
+      work_request_id: file.workRequestId || null,
+      user_id: actorId,
+      actor_id: actorId,
+      accessed_by: actorId,
+      action: download ? 'download' : 'open',
+      access_type: download ? 'downloaded' : 'viewed',
+      signed_url_created: true,
+      metadata: {
+        storage_bucket: file.bucket || REQUEST_FILES_BUCKET,
+        storage_path: file.path,
+        original_name: file.name,
+      },
+    })
+
+    if (error) console.warn('File access event could not be logged:', error)
+  } catch (error) {
+    console.warn('File access event could not be logged:', error)
   }
 }
 export async function resolveStoredFileUrl(file: StoredFile, download = false) {
@@ -37,7 +78,6 @@ export async function resolveStoredFileUrl(file: StoredFile, download = false) {
   const path = file.path || storagePathFromPublicUrl(file.url || '', bucket)
 
   if (!path) {
-    if (file.url) return file.url
     throw new Error('Missing file storage path.')
   }
 
@@ -46,9 +86,10 @@ export async function resolveStoredFileUrl(file: StoredFile, download = false) {
     .createSignedUrl(path, 60 * 10, download ? { download: file.name } : undefined)
 
   if (error || !data?.signedUrl) {
-    if (file.url) return file.url
     throw error || new Error('Signed URL was not returned.')
   }
+
+  await logFileAccessEvent({ ...file, bucket, path }, download)
 
   return data.signedUrl
 }
@@ -60,8 +101,8 @@ export async function attachPreviewUrls(files: StoredFile[]) {
       try {
         return { ...file, previewUrl: await resolveStoredFileUrl(file) }
       } catch (error) {
-        console.warn('Photo thumbnail URL could not be created; using stored URL fallback.', error)
-        return { ...file, previewUrl: file.url || '' }
+        console.warn('Photo thumbnail URL could not be created.', error)
+        return { ...file, previewUrl: '' }
       }
     })
   )
@@ -82,7 +123,7 @@ export function isOptionalFileSchemaError(error: unknown) {
     : typeof error === 'object' && error !== null
       ? JSON.stringify(error)
       : String(error || '')
-  return /linked_property_id|linked_lead_id|linked_request_id|property_files|schema cache|column .* does not exist|relation .* does not exist|table .* does not exist/i.test(text)
+  return /property_id|work_request_id|lead_id|linked_property_id|linked_lead_id|linked_request_id|property_files|schema cache|column .* does not exist|relation .* does not exist|table .* does not exist/i.test(text)
 }
 export async function attachFilesToRequests(items: WorkRequest[]) {
   const ids = items.map((item) => item.id).filter(Boolean)
@@ -96,32 +137,38 @@ export async function attachFilesToRequests(items: WorkRequest[]) {
   const fileRows: any[] = []
 
   if (ids.length > 0) {
-    const { data, error } = await supabase
-      .from('files')
-      .select('*')
-      .in('lead_id', ids)
-      .order('created_at', { ascending: false })
+    for (const column of ['work_request_id', 'lead_id', 'linked_request_id', 'linked_lead_id']) {
+      const { data, error } = await supabase
+        .from('files')
+        .select('*')
+        .in(column, ids)
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      console.warn('Leads loaded, but lead-linked uploaded files could not be loaded:', error)
-    } else {
-      fileRows.push(...(data || []))
+      if (error) {
+        if (!isOptionalFileSchemaError(error)) {
+          console.warn(`Uploaded files could not be loaded by ${column}; continuing with other links.`, error)
+        }
+      } else {
+        fileRows.push(...(data || []))
+      }
     }
   }
 
   if (propertyIds.length > 0) {
-    const { data, error } = await supabase
-      .from('files')
-      .select('*')
-      .in('linked_property_id', propertyIds)
-      .order('created_at', { ascending: false })
+    for (const column of ['property_id', 'linked_property_id']) {
+      const { data, error } = await supabase
+        .from('files')
+        .select('*')
+        .in(column, propertyIds)
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      if (!isOptionalFileSchemaError(error)) {
-        console.warn('Property-linked files could not be loaded; continuing with lead files.', error)
+      if (error) {
+        if (!isOptionalFileSchemaError(error)) {
+          console.warn(`Property-linked files could not be loaded by ${column}; continuing with request files.`, error)
+        }
+      } else {
+        fileRows.push(...(data || []))
       }
-    } else {
-      fileRows.push(...(data || []))
     }
 
     const { data: propertyFileRows, error: propertyFilesError } = await supabase
@@ -146,9 +193,10 @@ export async function attachFilesToRequests(items: WorkRequest[]) {
   }
 
   const byLeadId = fileRows.reduce((acc: Record<string, StoredFile[]>, row: any) => {
-    const leadId = row.lead_id
+    const leadId = row.work_request_id || row.lead_id || row.linked_request_id || row.linked_work_request_id || row.linked_lead_id || row.request_id
     if (!leadId) return acc
-    acc[leadId] = [...(acc[leadId] || []), mapFileRowToStoredFile(row)]
+    const key = String(leadId)
+    acc[key] = [...(acc[key] || []), mapFileRowToStoredFile(row)]
     return acc
   }, {})
 

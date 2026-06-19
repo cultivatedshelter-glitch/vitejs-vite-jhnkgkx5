@@ -12,6 +12,12 @@ export type StoredFile = {
   url?: string
   previewUrl?: string
   bucket?: string
+  mimeType?: string | null
+  sizeBytes?: number | null
+  propertyId?: string | number | null
+  workRequestId?: string | null
+  uploadedBy?: string | null
+  reviewStatus?: string | null
   type: 'photo' | 'document'
   createdAt?: string | null
   source?: 'files' | 'property_files' | 'local'
