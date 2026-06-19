@@ -289,7 +289,7 @@ function stripHtml(value: string) {
 
 function isRenderableReportHtml(html: string) {
   const text = stripHtml(html)
-  return html.includes('data-sp-print-report="true"') &&
+  return html.includes('id="shelter-prep-printable-report"') &&
     text.includes('Shelter Prep') &&
     text.includes('Report Preview') &&
     text.length > 180
@@ -430,9 +430,9 @@ function buildPrintDocumentHtml(data: ReportPreviewData, draft: EditableReportDr
     </style>
   </head>
   <body>
-    <main data-sp-print-report="true">
+    <main id="shelter-prep-printable-report">
       <div class="print-toolbar">
-        <button id="sp-print-document-button" class="print-button" type="button">Print / Save PDF</button>
+        <button id="sp-print-document-button" class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
       </div>
       <header class="header">
         <div class="label">Shelter Prep</div>
@@ -694,19 +694,26 @@ export function ReportPreview({ data, styles }: ReportPreviewProps) {
       return
     }
 
-    const html = buildPrintDocumentHtml(data, draft, sourceNote)
-    const reportText = stripHtml(html)
+    const generatedHtml = buildPrintDocumentHtml(data, draft, sourceNote)
+    const reportText = stripHtml(generatedHtml)
+    const generatedHtmlHasMarker = generatedHtml.includes('id="shelter-prep-printable-report"')
     console.info('[Shelter Prep] generated report print HTML', {
       requestId: data.requestId,
-      htmlLength: html.length,
+      generatedHtmlLength: generatedHtml.length,
+      generatedHtmlHasMarker,
       textLength: reportText.length,
       textPreview: reportText.slice(0, 700),
-      html,
+      generatedHtml,
     })
-    ;(window as unknown as { __shelterPrepLastReportPrintHtml?: string }).__shelterPrepLastReportPrintHtml = html
+    ;(window as unknown as { __shelterPrepLastReportPrintHtml?: string }).__shelterPrepLastReportPrintHtml = generatedHtml
 
-    if (!isRenderableReportHtml(html)) {
-      setDraftMessage('', 'Report print content is empty. Open the report preview and try again.')
+    if (!generatedHtmlHasMarker) {
+      setDraftMessage('', 'Printable report HTML is missing the report marker.')
+      return
+    }
+
+    if (!isRenderableReportHtml(generatedHtml)) {
+      setDraftMessage('', 'Printable report shell rendered but report text was missing.')
       return
     }
 
@@ -717,30 +724,33 @@ export function ReportPreview({ data, styles }: ReportPreviewProps) {
     }
 
     printWindow.document.open()
-    printWindow.document.write(html)
+    printWindow.document.write(generatedHtml)
     printWindow.document.close()
-    const bodyText = printWindow.document.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
-    const sectionCount = printWindow.document.querySelectorAll('[data-sp-report-section]').length
-    const printButton = printWindow.document.getElementById('sp-print-document-button')
-    console.info('[Shelter Prep] printable report page inspection', {
-      requestId: data.requestId,
-      bodyTextLength: bodyText.length,
-      sectionCount,
-      bodyPreview: bodyText.slice(0, 700),
-    })
-
-    if (bodyText.length < 120 || !bodyText.includes('Shelter Prep') || sectionCount < 4 || !printButton) {
-      printWindow.close()
-      setDraftMessage('', 'Printable report page did not render report content. Please try Print Report again.')
-      return
-    }
-
-    printButton.addEventListener('click', () => {
-      printWindow.focus()
-      printWindow.print()
-    })
     printWindow.focus()
-    setDraftMessage('Printable report page opened. Review it, then click Print / Save PDF in that page.')
+    printWindow.setTimeout(() => {
+      const marker = printWindow.document.querySelector('#shelter-prep-printable-report')
+      const bodyTextLength = printWindow.document.body?.innerText?.trim().length ?? 0
+      const bodyHtmlPreview = printWindow.document.body?.innerHTML.slice(0, 1000) || ''
+      console.info('[Shelter Prep] printable report page inspection', {
+        generatedHtmlLength: generatedHtml.length,
+        generatedHtmlHasMarker,
+        markerFound: Boolean(marker),
+        bodyTextLength,
+        bodyHtmlPreview,
+      })
+
+      if (!marker) {
+        setDraftMessage('', 'Printable report marker was not found after rendering.')
+        return
+      }
+
+      if (bodyTextLength <= 300) {
+        setDraftMessage('', 'Printable report shell rendered but report text was missing.')
+        return
+      }
+
+      setDraftMessage('Printable report page opened. Review it, then click Print / Save PDF in that page.')
+    }, 500)
   }
 
   async function handleCopyReportText() {
