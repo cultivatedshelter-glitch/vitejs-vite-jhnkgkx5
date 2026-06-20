@@ -11941,6 +11941,78 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     }
   }
 
+  function getPrimaryPropertyStatus(request: WorkRequest) {
+    if (request.archived || request.status === 'estimate_ready') return 'Done'
+    if (request.status === 'pending_approval') return 'Ready'
+    if (request.status === 'new') return 'New'
+    return 'In Progress'
+  }
+
+  function getPropertySummaryLine(request: WorkRequest) {
+    return compactReportText(
+      request.scopeInterpretation ||
+        request.description ||
+        request.workType ||
+        'Scope is waiting for evidence review.',
+      140
+    )
+  }
+
+  function getPropertySecondaryFlags(
+    request: WorkRequest,
+    needsReviewCount: number,
+    reportPreviewData: ReportPreviewData
+  ) {
+    const flags: string[] = []
+    const missingInfo = request.status === 'needs_info' || getMissingInfoItems(request).length > 0
+    const hasReviewedOutput =
+      reportPreviewData.summary.humanVerifiedCount > 0 ||
+      estimateItems
+        .filter((item) => estimateItemMatchesCurrentScope(item, request))
+        .some((item) => item.human_approved)
+    const contractorReviewNeeded =
+      safeArray(contractorAssignments).some(
+        (assignment) =>
+          assignment.property_id === getRequestPropertyId(request) ||
+          assignment.work_request_id === request.id
+      ) ||
+      /contractor|approved contractor/i.test(getPropertyWorkflow(request).stage)
+
+    if (missingInfo) flags.push('Needs Info')
+    if (needsReviewCount > 0 || reportPreviewData.summary.needsReviewCount > 0) flags.push('Needs Review')
+    if (hasReviewedOutput) flags.push('Human Reviewed')
+    if (contractorReviewNeeded) flags.push('Contractor Review Needed')
+
+    return flags
+  }
+
+  function renderPropertyLayer({
+    title,
+    hint,
+    count,
+    children,
+    defaultOpen = false,
+  }: {
+    title: string
+    hint: string
+    count?: string | number
+    children: React.ReactNode
+    defaultOpen?: boolean
+  }) {
+    return (
+      <details style={styles.propertyLayer} open={defaultOpen}>
+        <summary style={styles.propertyLayerSummary}>
+          <span>
+            <strong>{title}</strong>
+            <small style={styles.propertyLayerHint}>{hint}</small>
+          </span>
+          {count !== undefined && <span style={styles.propertyLayerCount}>{count}</span>}
+        </summary>
+        <div style={styles.propertyLayerBody}>{children}</div>
+      </details>
+    )
+  }
+
   function isRejectedResearchTask(task: AgentResearchTask) {
     return task.status === 'rejected'
   }
@@ -15561,23 +15633,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
               </div>
 
               {hasAdminConsoleAccess && (
-                <div style={isCompact ? styles.mobileStack : styles.dashboardMetricGrid}>
-                  <div style={styles.dashboardMetricCard}>
-                    <strong>{activePropertyCount}</strong>
-                    <span>Active Properties</span>
-                  </div>
-                  <div style={styles.dashboardMetricCard}>
-                    <strong>{needsReviewRequests.length}</strong>
-                    <span>Needs Review</span>
-                  </div>
-                  <div style={styles.dashboardMetricCard}>
-                    <strong>{readyForActionRequests.length}</strong>
-                    <span>Ready</span>
-                  </div>
-                  <div style={styles.dashboardMetricCard}>
-                    <strong>{addressGroupedRequests.length}</strong>
-                    <span>Address Groups</span>
-                  </div>
+                <div style={styles.queueSnapshot}>
+                  <span style={styles.queueSnapshotPill}>{activePropertyCount} Active</span>
+                  <span style={styles.queueSnapshotPill}>{needsReviewRequests.length} Needs Review</span>
+                  <span style={styles.queueSnapshotPill}>{readyForActionRequests.length} Ready</span>
                 </div>
               )}
 
@@ -15737,13 +15796,29 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                       const isReportPreviewOpen = Boolean(openReportPreviewByRequest[request.id])
                       const reportButtonLabel =
                         reportPreviewData.reviewStatus === 'Human Verified' ? 'Generate Report' : 'Generate Draft Report'
+                      const primaryStatus = getPrimaryPropertyStatus(request)
+                      const summaryLine = getPropertySummaryLine(request)
+                      const secondaryFlags = getPropertySecondaryFlags(request, needsReviewCount, reportPreviewData)
+                      const missingQuestions = getMissingInfoItems(request).map(missingInfoQuestionFor)
+                      const propertyLocation = [request.city, request.state, request.zip].filter(Boolean).join(', ')
+                      const contractorAssignmentCount = safeContractorAssignments.filter(
+                        (assignment) =>
+                          assignment.property_id === getRequestPropertyId(request) ||
+                          assignment.work_request_id === request.id
+                      ).length
+                      const reportLayerCount = reportPreviewData.summary.totalWorkGroups || reportPreviewData.summary.needsReviewCount || reportPreviewData.errors.length
+                      const repairLayerCount = workGroupCount || activeFindingCount
 
                       return (
 	                      <div key={request.id} style={isCompact ? { ...styles.requestCard, ...styles.mobileRequestCard } : styles.requestCard}>
                         <div style={styles.propertyCardHeader}>
-                          <div style={{ flex: 1 }}>
-	                          <strong style={isCompact ? { ...styles.mobileRequestTitle, flex: 1 } : { flex: 1 }}>{request.propertyAddress || 'Property address needed'}</strong>
-                            <p style={styles.small}>{request.description || 'No request summary yet.'}</p>
+                          <div style={styles.propertyTitleBlock}>
+	                          <strong style={isCompact ? { ...styles.propertyCardTitle, ...styles.mobileRequestTitle } : styles.propertyCardTitle}>{request.propertyAddress || 'Property address needed'}</strong>
+                            <p style={styles.propertySummaryLine}>{summaryLine}</p>
+                            <p style={styles.propertyMetaLine}>
+                              {propertyLocation || 'Location details pending'}
+                              {request.workType ? ` • ${request.workType}` : ''}
+                            </p>
                           </div>
                           {hasAdminConsoleAccess && (
                             <details style={styles.moreActions}>
@@ -15794,51 +15869,171 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                             </details>
                           )}
                         </div>
-                        <div style={styles.badgeRow}>
-                          <span style={getOperationalStatusStyle(request.status)}>{STATUS_META[request.status].label}</span>
-                          <span style={styles.badgeMuted}>{workGroupCount} work groups</span>
-                          <span style={needsReviewCount ? styles.badgeMuted : styles.badge}>{needsReviewCount} needs review</span>
+                        <div style={styles.propertyFlagRow}>
+                          <span style={getOperationalStatusStyle(request.status)}>{primaryStatus}</span>
+                          {secondaryFlags.map((flag) => (
+                            <span key={`${request.id}-${flag}`} style={styles.propertyFlag}>{flag}</span>
+                          ))}
+                          <span style={styles.propertyFlagMuted}>{evidenceCount} evidence</span>
+                          <span style={styles.propertyFlagMuted}>{workGroupCount} repair groups</span>
                         </div>
 
                         <section style={styles.nextActionPanel}>
-                          <strong>{workflow.title}</strong>
-                          <p style={styles.small}>{isReportPreviewOpen ? getReportModeLabel(reportPreviewData) : workflow.body}</p>
-                          <div style={styles.buttonRow}>
+                          <div style={styles.nextActionHeader}>
+                            <span style={styles.propertyLayerHint}>Next action</span>
+                            <strong style={styles.nextActionTitle}>{workflow.title}</strong>
+                            <p style={{ ...styles.small, margin: 0 }}>{workflow.body}</p>
+                          </div>
+                          <div style={styles.calmActionRow}>
                             <button
                               type="button"
                               style={styles.primaryButton}
                               disabled={workflow.disabled}
                               onClick={workflow.onPrimary}
                             >
-                              Review
-                            </button>
-                            <button
-                              type="button"
-                              style={styles.outlineButton}
-                              onClick={() =>
-                                setOpenReportPreviewByRequest((prev) => ({
-                                  ...prev,
-                                  [request.id]: !prev[request.id],
-                                }))
-                              }
-                            >
-                              {isReportPreviewOpen ? 'Hide Report Preview' : reportButtonLabel}
+                              {workflow.buttonLabel}
                             </button>
                           </div>
-                          {!isReportPreviewOpen && reportPreviewData.errors.length > 0 && (
-                            <p style={styles.small}>{reportPreviewData.errors.join(' ')}</p>
-                          )}
                         </section>
 
-                        {isReportPreviewOpen && (
-                          <ReportPreview
-                            data={reportPreviewData}
-                            styles={styles}
-                          />
-                        )}
+                        <div style={styles.layerStack}>
+                          {renderPropertyLayer({
+                            title: 'Uploaded Evidence',
+                            hint: 'Photos and documents stay close without taking over the card.',
+                            count: evidenceCount,
+                            children: renderUploadedEvidence(request),
+                          })}
 
-                        {renderAddressWorkGroups(request)}
+                          {renderPropertyLayer({
+                            title: 'Repair Groups',
+                            hint: 'Scope interpretation, work groups, and evidence findings.',
+                            count: repairLayerCount,
+                            children: (
+                              <>
+                                {renderAddressWorkGroups(request) || (
+                                  <p style={styles.small}>Repair groups are waiting for uploaded evidence or a prepared draft.</p>
+                                )}
+                                <details style={styles.moreActions}>
+                                  <summary style={styles.moreActionsSummary}>Scope Interpretation</summary>
+                                  {request.scopeInterpretation || request.missingInformation ? (
+                                    <div style={styles.noticeBox}>
+                                      {request.scopeInterpretation && <p style={styles.small}>{request.scopeInterpretation}</p>}
+                                      {request.missingInformation && <p style={styles.small}>Missing: {request.missingInformation}</p>}
+                                    </div>
+                                  ) : (
+                                    <p style={styles.small}>No scope interpretation yet.</p>
+                                  )}
+                                  {renderInspectionProcessing(request)}
+                                </details>
+                                {activeFindingCount > 0 && (
+                                  <details style={styles.moreActions}>
+                                    <summary style={styles.moreActionsSummary}>Evidence Findings ({activeFindingCount})</summary>
+                                    {renderSiteMediaIntelligence(request)}
+                                  </details>
+                                )}
+                              </>
+                            ),
+                          })}
 
+                          {renderPropertyLayer({
+                            title: 'Missing Info',
+                            hint: 'Questions and research tasks that unblock review.',
+                            count: missingQuestions.length + activeResearchCount,
+                            children: (
+                              <>
+                                {missingQuestions.length === 0 ? (
+                                  <p style={styles.small}>No missing-info questions are currently blocking this property.</p>
+                                ) : (
+                                  <ul style={styles.smallList}>
+                                    {missingQuestions.map((question) => (
+                                      <li key={`${request.id}-${question}`}>{question}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                                {request.status === 'needs_info' && (
+                                  <button
+                                    type="button"
+                                    style={styles.outlineButton}
+                                    disabled={messageSavingId === request.id}
+                                    onClick={() => generateMissingInfoRequest(request)}
+                                  >
+                                    {messageSavingId === request.id ? 'Creating...' : 'Create Info Request'}
+                                  </button>
+                                )}
+                                {activeResearchCount > 0 && (
+                                  <div style={styles.inspectionTaskGrid}>
+                                    {getActiveResearchTasks(request).map((task) => (
+                                      <div key={`property-research-${task.id}`} style={styles.inspectionTaskCard}>
+                                        <div style={styles.badgeRow}>
+                                          <span style={getOperationalStatusStyle(task.status)}>{getLearningDisplayName(task.status)}</span>
+                                        </div>
+                                        <strong>{task.question}</strong>
+                                        <p style={styles.small}>{getResearchAnswerSummary(task)}</p>
+                                        <p style={styles.small}>Next action: {getResearchNextStep(task)}</p>
+                                        <details style={styles.moreActions}>
+                                          <summary style={styles.moreActionsSummary}>Show details</summary>
+                                          <p style={styles.small}>{task.evidence_summary || 'No evidence summary drafted yet.'}</p>
+                                          <p style={styles.small}>{task.missing_information || 'No missing information listed.'}</p>
+                                          <p style={styles.small}>{task.recommended_next_action || 'Review before use.'}</p>
+                                        </details>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            ),
+                          })}
+
+                          {renderPropertyLayer({
+                            title: 'Report',
+                            hint: 'Readable preview and print controls stay in one quiet place.',
+                            count: reportLayerCount,
+                            children: (
+                              <>
+                                <p style={styles.small}>{getReportModeLabel(reportPreviewData)}</p>
+                                <button
+                                  type="button"
+                                  style={styles.outlineButton}
+                                  onClick={() =>
+                                    setOpenReportPreviewByRequest((prev) => ({
+                                      ...prev,
+                                      [request.id]: !prev[request.id],
+                                    }))
+                                  }
+                                >
+                                  {isReportPreviewOpen ? 'Hide Report Preview' : reportButtonLabel}
+                                </button>
+                                {!isReportPreviewOpen && reportPreviewData.errors.length > 0 && (
+                                  <p style={styles.small}>{reportPreviewData.errors.join(' ')}</p>
+                                )}
+                                {isReportPreviewOpen && (
+                                  <ReportPreview
+                                    data={reportPreviewData}
+                                    styles={styles}
+                                  />
+                                )}
+                              </>
+                            ),
+                          })}
+
+                          {renderPropertyLayer({
+                            title: 'Contractor Review',
+                            hint: 'Approved contractor routing and estimate review tools.',
+                            count: contractorAssignmentCount,
+                            children: (
+                              <RuntimeSafetyBoundary label="Property workflow card">
+                                <PropertyWorkflowCard request={request} />
+                              </RuntimeSafetyBoundary>
+                            ),
+                          })}
+
+                          {renderPropertyLayer({
+                            title: 'History / Advanced',
+                            hint: 'Admin notes, property profile, edit controls, and status history.',
+                            count: request.adminNotes?.length || 0,
+                            defaultOpen: isEditingRequest,
+                            children: (
+                              <>
                         {isEditingRequest && hasAdminConsoleAccess && (
                           <details style={styles.moreActions}>
                             <summary style={styles.moreActionsSummary}>Edit operational record</summary>
@@ -16259,65 +16454,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                           </details>
                         )}
 
-                        <details style={styles.moreActions}>
-                          <summary style={styles.moreActionsSummary}>Uploaded Evidence ({evidenceCount})</summary>
-                          {renderUploadedEvidence(request)}
-                        </details>
-	
-                        <details style={styles.moreActions}>
-                          <summary style={styles.moreActionsSummary}>Scope Interpretation</summary>
-                          {request.scopeInterpretation || request.missingInformation ? (
-                            <div style={styles.noticeBox}>
-                              {request.scopeInterpretation && <p style={styles.small}>{request.scopeInterpretation}</p>}
-                              {request.missingInformation && <p style={styles.small}>Missing: {request.missingInformation}</p>}
-                            </div>
-                          ) : (
-                            <p style={styles.small}>No scope interpretation yet.</p>
-                          )}
-                          {renderInspectionProcessing(request)}
-                        </details>
-
-                        {activeFindingCount > 0 && (
-                          <details style={styles.moreActions}>
-                            <summary style={styles.moreActionsSummary}>Evidence Findings ({activeFindingCount})</summary>
-	                          {renderSiteMediaIntelligence(request)}
-                          </details>
-                        )}
-
-                        {activeResearchCount > 0 && (
-                          <details style={styles.moreActions}>
-                            <summary style={styles.moreActionsSummary}>Research Tasks ({activeResearchCount})</summary>
-                            <div style={styles.inspectionTaskGrid}>
-                              {getActiveResearchTasks(request).map((task) => (
-                                <div key={`property-research-${task.id}`} style={styles.inspectionTaskCard}>
-                                  <div style={styles.badgeRow}>
-                                    <span style={getOperationalStatusStyle(task.status)}>{getLearningDisplayName(task.status)}</span>
-                                  </div>
-                                  <strong>{task.question}</strong>
-                                  <p style={styles.small}>{getResearchAnswerSummary(task)}</p>
-                                  <p style={styles.small}>Next action: {getResearchNextStep(task)}</p>
-                                  <details style={styles.moreActions}>
-                                    <summary style={styles.moreActionsSummary}>Show details</summary>
-                                    <p style={styles.small}>{task.evidence_summary || 'No evidence summary drafted yet.'}</p>
-                                    <p style={styles.small}>{task.missing_information || 'No missing information listed.'}</p>
-                                    <p style={styles.small}>{task.recommended_next_action || 'Review before use.'}</p>
-                                  </details>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-
-                        <details style={styles.moreActions}>
-                          <summary style={styles.moreActionsSummary}>History / Archived</summary>
-                          <RuntimeSafetyBoundary label="Property workflow card">
-                            <PropertyWorkflowCard request={request} />
-                          </RuntimeSafetyBoundary>
-                        </details>
-
                         {hasAdminConsoleAccess && (
                           <details style={styles.moreActions}>
-                            <summary style={styles.moreActionsSummary}>History / Advanced</summary>
+                            <summary style={styles.moreActionsSummary}>Status</summary>
                             <select
                               style={styles.input}
                               value={request.status}
@@ -16331,6 +16470,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                             </select>
                           </details>
                         )}
+                              </>
+                            ),
+                          })}
+                        </div>
                       </div>
                       )
                     })}
