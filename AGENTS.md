@@ -28,6 +28,51 @@ Build it as:
 Core principle:
 Contractors author scope. AI structures it. Shelter Prep verifies it. Agents use it. Memory learns from approved outcomes.
 
+Operating doctrines:
+
+1. Field Team Communication
+Shelter Prep should communicate like a calm field lead. Important work should reduce to Finding / Move / Owner / Status. Do not turn operational reality into vague dashboards, generic summaries, or AI monologues. The user should always understand what was found, what should happen next, who owns it, and whether it is draft, blocked, reviewed, or done.
+
+2. Jam-Clearing Communication
+When work is blocked, explain the jam instead of merely labeling it blocked. A blocked state should say what is stuck, why it matters, who owns the next move, what unblocks it, and what can continue meanwhile. The app should clear jams without blame or panic.
+
+3. Pink Panther / Clue-Based AI
+AI should behave like an observant clue finder, not a final authority. AI findings should use Known / Unknown / Clues / Next Evidence Needed / Review Status. Final claims require evidence and review status.
+
+4. Vlad / Asymmetric Focus
+Shelter Prep should apply asymmetric focus to the highest-leverage constraint in the property workflow. Prefer one decisive next move over broad generic advice. Do not scatter user attention across equal-looking tasks when one jam, risk, missing file, owner, or review action matters most.
+
+5. Real-Life Intelligence
+Real properties, field evidence, contractor judgment, corrections, photos, files, timelines, and completed outcomes are the source of truth. Contractor corrections become memory candidates with provenance, not automatic truth. Never turn one field outcome or AI inference into universal memory without human review.
+
+Workflow gating principle:
+Do not protect the sentence. Protect the system around the sentence.
+
+Shelter Prep must not become a generic answer machine. Free or preview output may identify the shape of the problem, but valuable outputs should stay tied to the property workspace, evidence chain, review status, role-based links, contractor/admin feedback, decision history, and final report generation.
+
+Generated outputs must be property-specific. Stamp reports and copied text with property address, report date, source file or inspection reference, review status, "Not valid for unrelated properties", and "AI draft until reviewed" unless the output is reviewed/finalized.
+
+Use these report status labels for property-specific outputs:
+- AI Draft
+- Needs Review
+- Human Reviewed
+- Contractor Reviewed
+- Seller Ready
+- Finalized
+
+Use these workflow states:
+- preview
+- workspace_active
+- reviewed_report
+- contractor_packet
+- finalized_report
+
+Role-based views must not leak unrelated/internal data:
+- Agent View: transaction strategy, seller talking points, status, next steps, reviewed repair-vs-credit guidance when available.
+- Seller View: plain-language summary, priority repairs, approved repair-vs-credit options, reviewed estimate range when available; no internal notes or unverified AI reasoning.
+- Contractor View: scope packet, photos/files, inspection excerpts, missing info, site/access notes, walkthrough and upload actions; no seller strategy or unrelated property data.
+- Admin View: full evidence, AI drafts, review controls, contractor feedback, approval history, internal notes.
+
 Security rules:
 - Never expose service role keys in frontend code.
 - Do not use hardcoded admin PINs in production.

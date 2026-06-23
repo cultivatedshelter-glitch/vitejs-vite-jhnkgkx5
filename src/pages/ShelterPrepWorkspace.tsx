@@ -28,6 +28,11 @@ import { ReportPreview, type ReportPreviewData, type ReportPreviewWorkGroup } fr
 import { RuntimeSafetyBoundary } from '../components/RuntimeSafetyBoundary'
 import { styles } from '../theme/appStyles'
 import {
+  deriveWorkflowAccessState,
+  isSellerReadyReportStatus,
+  roleViewsForWorkflowState,
+} from '../lib/workflowGating'
+import {
   REQUEST_FILES_BUCKET,
   attachFilesToRequests,
   attachPreviewUrls,
@@ -2865,6 +2870,7 @@ export default function ShelterPrepWorkspace() {
   const [adminNoteDrafts, setAdminNoteDrafts] = useState<Record<string, AdminNoteDraft>>({})
   const [pdfProcessingByRequest, setPdfProcessingByRequest] = useState<Record<string, InspectionProcessingStatus>>({})
   const [openReportPreviewByRequest, setOpenReportPreviewByRequest] = useState<Record<string, boolean>>({})
+  const [openPropertyLayersByKey, setOpenPropertyLayersByKey] = useState<Record<string, boolean>>({})
   const [inspectionFindingSavingId, setInspectionFindingSavingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | RequestStatus>('all')
@@ -11992,23 +11998,47 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     count,
     children,
     defaultOpen = false,
+    layerKey,
+    summaryTestId,
+    mountChildrenWhenClosed = true,
   }: {
     title: string
     hint: string
     count?: string | number
     children: React.ReactNode
     defaultOpen?: boolean
+    layerKey?: string
+    summaryTestId?: string
+    mountChildrenWhenClosed?: boolean
   }) {
+    const isOpen = layerKey ? openPropertyLayersByKey[layerKey] ?? defaultOpen : defaultOpen
+    const shouldMountChildren = mountChildrenWhenClosed || isOpen
+
     return (
-      <details style={styles.propertyLayer} open={defaultOpen}>
-        <summary style={styles.propertyLayerSummary}>
+      <details
+        style={styles.propertyLayer}
+        open={isOpen}
+        onToggle={layerKey
+          ? (event) => {
+              const nextOpen = event.currentTarget.open
+              setOpenPropertyLayersByKey((prev) => (
+                prev[layerKey] === nextOpen ? prev : { ...prev, [layerKey]: nextOpen }
+              ))
+            }
+          : undefined}
+      >
+        <summary
+          style={styles.propertyLayerSummary}
+          data-testid={summaryTestId}
+          data-property-layer-key={layerKey}
+        >
           <span>
             <strong>{title}</strong>
             <small style={styles.propertyLayerHint}>{hint}</small>
           </span>
           {count !== undefined && <span style={styles.propertyLayerCount}>{count}</span>}
         </summary>
-        <div style={styles.propertyLayerBody}>{children}</div>
+        {shouldMountChildren && <div style={styles.propertyLayerBody}>{children}</div>}
       </details>
     )
   }
@@ -12361,25 +12391,34 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return ['human_verified', 'approved', 'human_approved'].includes(String(value || '').trim().toLowerCase())
   }
 
+  function isReportContractorReviewedStatus(value?: string | null) {
+    const normalized = String(value || '').trim().toLowerCase()
+    return normalized.includes('contractor_verified') || normalized === 'contractor_reviewed'
+  }
+
   function isReportReviewedStatus(value?: string | null) {
     const normalized = String(value || '').trim().toLowerCase()
-    return isReportHumanVerifiedStatus(normalized) || normalized === 'human_reviewed'
+    return isReportHumanVerifiedStatus(normalized) ||
+      isReportContractorReviewedStatus(normalized) ||
+      normalized === 'human_reviewed'
   }
 
   function normalizeReportReviewStatus(value?: string | null) {
     const normalized = String(value || '').trim().toLowerCase()
-    if (['ai_draft', 'needs_review', 'human_reviewed', 'human_verified', 'approved', 'human_approved', 'needs_more_info', 'research_requested', 'research_drafted', 'rejected'].includes(normalized)) {
+    if (['ai_draft', 'needs_review', 'human_reviewed', 'human_verified', 'approved', 'human_approved', 'contractor_reviewed', 'contractor_verified', 'contractor_verified_structured_summary', 'needs_more_info', 'research_requested', 'research_drafted', 'rejected'].includes(normalized)) {
       return normalized
     }
     return 'needs_review'
   }
 
   function getReportReviewStatus(items: ReportPreviewWorkGroup[]): ReportPreviewData['reviewStatus'] {
-    if (!items.length) return 'Draft'
+    if (!items.length) return 'AI Draft'
     const activeItems = items.filter((item) => String(item.reviewStatus || '').toLowerCase() !== 'rejected')
     const humanVerifiedCount = activeItems.filter((item) => isReportHumanVerifiedStatus(item.reviewStatus)).length
+    const contractorReviewedCount = activeItems.filter((item) => isReportContractorReviewedStatus(item.reviewStatus)).length
     const reviewedCount = activeItems.filter((item) => isReportReviewedStatus(item.reviewStatus)).length
-    if (activeItems.length > 0 && humanVerifiedCount === activeItems.length) return 'Human Verified'
+    if (activeItems.length > 0 && humanVerifiedCount === activeItems.length) return 'Seller Ready'
+    if (contractorReviewedCount > 0) return 'Contractor Reviewed'
     if (reviewedCount > 0) return 'Human Reviewed'
     return 'Needs Review'
   }
@@ -12461,6 +12500,21 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     ])
   }
 
+  function buildReportSourceFileReferences(request: WorkRequest) {
+    const files = getUniqueUploadedFiles(request)
+    return uniqueReportStrings([
+      request.inspectionIntelligence?.fileName ? `inspection-file:${request.inspectionIntelligence.fileName}` : '',
+      request.inspectionIntelligence?.inspectionDate ? `inspection-date:${request.inspectionIntelligence.inspectionDate}` : '',
+      ...files.map((file) => (
+        file.id
+          ? `${file.type}:${file.id}`
+          : file.path
+            ? `${file.type}:${file.path}`
+            : `${file.type}:${file.name}`
+      )),
+    ])
+  }
+
   function buildReportMissingInfo(request: WorkRequest, items: ReportPreviewWorkGroup[]) {
     return uniqueReportStrings([
       ...getMissingInfoItems(request).map(missingInfoQuestionFor),
@@ -12520,11 +12574,14 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (data.summary.needsReviewCount > 0) {
       return 'Report preview generated - Some items verified, some still need review'
     }
-    return 'Report ready for internal use - Human verified'
+    return 'Seller-ready report draft available - Human reviewed'
   }
 
   function normalizeReportData(request: WorkRequest): ReportPreviewData {
     const files = getUniqueUploadedFiles(request)
+    const generatedAt = new Date().toISOString()
+    const propertyId = String(request.propertyId || getRequestPropertyId(request) || '')
+    const sourceFileReferences = buildReportSourceFileReferences(request)
     const workGroupItems = getInspectionWorkGroups(request).map(mapWorkGroupToReportItem)
     const repairItemItems = workGroupItems.length
       ? []
@@ -12536,10 +12593,36 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       : getActiveFindings(request).map(mapMediaFindingToReportItem)
     const workGroups = [...workGroupItems, ...repairItemItems, ...mediaFindingItems]
       .sort((a, b) => reportPriorityRank(a.priority) - reportPriorityRank(b.priority))
+      .map((item) => ({
+        ...item,
+        propertyId,
+        sourceFileIds: uniqueReportStrings([
+          ...(item.sourceFileIds || []),
+          ...sourceFileReferences,
+        ]),
+        evidenceItemIds: uniqueReportStrings([
+          ...(item.evidenceItemIds || []),
+          ...(item.sourceIds || []),
+        ]),
+        repairItemId: item.repairItemId || item.id,
+        generatedAt,
+        reviewerId: isReportReviewedStatus(item.reviewStatus) ? item.reviewerId || null : null,
+      }))
     const missingInfo = buildReportMissingInfo(request, workGroups)
     const reviewStatus = getReportReviewStatus(workGroups)
     const humanVerifiedCount = workGroups.filter((item) => isReportHumanVerifiedStatus(item.reviewStatus)).length
     const needsReviewCount = workGroups.filter((item) => !isReportReviewedStatus(item.reviewStatus)).length
+    const hasHumanReview = workGroups.some((item) => isReportHumanVerifiedStatus(item.reviewStatus) || String(item.reviewStatus || '').toLowerCase() === 'human_reviewed')
+    const hasContractorReview = workGroups.some((item) => isReportContractorReviewedStatus(item.reviewStatus))
+    const workflowState = deriveWorkflowAccessState({
+      reportStatus: reviewStatus,
+      hasPropertyRecord: Boolean(propertyId),
+      hasSourceFile: sourceFileReferences.length > 0,
+      hasEvidenceReferences: workGroups.some((item) => (item.evidenceItemIds || item.sourceIds || []).length > 0),
+      hasHumanReview,
+      hasContractorReview,
+      hasApprovalEvent: isSellerReadyReportStatus(reviewStatus),
+    })
     const errors = workGroups.length
       ? []
       : [
@@ -12547,7 +12630,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           files.length ? 'Run interpretation before generating a report.' : 'Upload evidence or run interpretation before generating a report.',
         ]
     const warnings = uniqueReportStrings([
-      workGroups.length && humanVerifiedCount === 0 ? 'This report is draft-only because no items are human verified.' : '',
+      workGroups.length && humanVerifiedCount === 0 ? 'This report is draft-only because no items are human reviewed.' : '',
       request.inspectionProcessingStatus === 'extraction_failed'
         ? 'Report generation failed. Check that this property has saved interpretation data.'
         : '',
@@ -12556,7 +12639,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return {
       propertyAddress: request.propertyAddress || request.inspectionIntelligence?.propertyAddress || '',
       propertyLocation: uniqueReportStrings([request.city, request.state, request.zip]).join(', '),
-      propertyId: String(request.propertyId || getRequestPropertyId(request) || ''),
+      propertyId,
       requestId: request.id,
       requestTitle: request.workType || request.description,
       requesterName: request.requesterName,
@@ -12565,7 +12648,19 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         pdfProcessingByRequest[request.id] || request.inspectionProcessingStatus || (request.inspectionIntelligence ? 'inspection_review_drafted' : undefined)
       ),
       reviewStatus,
-      generatedAt: new Date().toISOString(),
+      workflowState,
+      generatedAt,
+      sourceFileReferences,
+      roleViews: roleViewsForWorkflowState(workflowState),
+      evidenceLinks: workGroups.map((item) => ({
+        propertyId,
+        sourceFileId: item.sourceFileIds?.[0] || null,
+        evidenceItemId: item.evidenceItemIds?.[0] || item.sourceIds?.[0] || null,
+        repairItemId: item.repairItemId || item.id,
+        reviewStatus: item.reviewStatus || 'needs_review',
+        generatedAt,
+        reviewerId: item.reviewerId || null,
+      })),
       uploadedFiles: files.map((file) => ({
         name: file.name,
         type: getEvidenceTypeLabel(getEvidenceCategory(file.name, file.mimeType || '', file.type), file.mimeType || ''),
@@ -15794,8 +15889,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                       const isArchivedProject = Boolean(request.archived)
                       const reportPreviewData = normalizeReportData(request)
                       const isReportPreviewOpen = Boolean(openReportPreviewByRequest[request.id])
+                      const reportLayerKey = `report-${request.id}`
+                      const isReportLayerOpen = openPropertyLayersByKey[reportLayerKey] ?? isReportPreviewOpen
                       const reportButtonLabel =
-                        reportPreviewData.reviewStatus === 'Human Verified' ? 'Generate Report' : 'Generate Draft Report'
+                        isSellerReadyReportStatus(reportPreviewData.reviewStatus) ? 'Generate Seller-Ready Report' : 'Generate Draft Report'
                       const primaryStatus = getPrimaryPropertyStatus(request)
                       const summaryLine = getPropertySummaryLine(request)
                       const secondaryFlags = getPropertySecondaryFlags(request, needsReviewCount, reportPreviewData)
@@ -15988,23 +16085,37 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                             title: 'Report',
                             hint: 'Readable preview and print controls stay in one quiet place.',
                             count: reportLayerCount,
+                            layerKey: reportLayerKey,
+                            summaryTestId: 'report-context-toggle',
+                            mountChildrenWhenClosed: isReportPreviewOpen,
+                            defaultOpen: isReportPreviewOpen,
                             children: (
                               <>
-                                <p style={styles.small}>{getReportModeLabel(reportPreviewData)}</p>
-                                <button
-                                  type="button"
-                                  style={styles.outlineButton}
-                                  onClick={() =>
-                                    setOpenReportPreviewByRequest((prev) => ({
-                                      ...prev,
-                                      [request.id]: !prev[request.id],
-                                    }))
-                                  }
-                                >
-                                  {isReportPreviewOpen ? 'Hide Report Preview' : reportButtonLabel}
-                                </button>
-                                {!isReportPreviewOpen && reportPreviewData.errors.length > 0 && (
-                                  <p style={styles.small}>{reportPreviewData.errors.join(' ')}</p>
+                                {isReportLayerOpen && (
+                                  <>
+                                    <p style={styles.small}>{getReportModeLabel(reportPreviewData)}</p>
+                                    <button
+                                      type="button"
+                                      style={styles.outlineButton}
+                                      data-testid="open-report-preview"
+                                      data-report-request-id={request.id}
+                                      data-report-property-id={reportPreviewData.propertyId || undefined}
+                                      data-report-preview-state={isReportPreviewOpen ? 'open' : 'closed'}
+                                      aria-expanded={isReportPreviewOpen}
+                                      aria-label={`${isReportPreviewOpen ? 'Hide' : 'Open'} report preview for ${request.propertyAddress || request.id}`}
+                                      onClick={() =>
+                                        setOpenReportPreviewByRequest((prev) => ({
+                                          ...prev,
+                                          [request.id]: !prev[request.id],
+                                        }))
+                                      }
+                                    >
+                                      {isReportPreviewOpen ? 'Hide Report Preview' : reportButtonLabel}
+                                    </button>
+                                    {!isReportPreviewOpen && reportPreviewData.errors.length > 0 && (
+                                      <p style={styles.small}>{reportPreviewData.errors.join(' ')}</p>
+                                    )}
+                                  </>
                                 )}
                                 {isReportPreviewOpen && (
                                   <ReportPreview

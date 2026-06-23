@@ -19,6 +19,95 @@ Build rules:
 - Do not add flashy new modules when an existing property card, reveal section, or admin control can carry the work.
 - Do not expand the roadmap while implementing narrow reliability or workflow improvements.
 
+## Operating Doctrine Implementation Guidance
+
+These doctrines are canon and future build guidance. They do not authorize new app behavior unless a later task explicitly asks for implementation.
+
+Doctrine-only changes must not alter Supabase behavior, file storage, AI calls, report preview, print behavior, payment logic, or app workflow behavior.
+
+### Field Team Communication
+
+Future Operational Feed events should use:
+
+```text
+Finding / Move / Owner / Status
+```
+
+Implementation guidance:
+
+- Finding should state the observed issue, decision, correction, upload, review, or evidence event.
+- Move should state the next practical action.
+- Owner should be a person, role, or system responsibility.
+- Status should be a controlled workflow value, not vague prose.
+- Avoid generic activity-feed noise that does not change the property workflow.
+
+### Jam-Clearing Communication
+
+Blocked states should explain:
+
+- what is stuck
+- why it matters
+- who owns it
+- what unblocks it
+- what can continue
+
+Implementation guidance:
+
+- Do not use "blocked" as a dead-end label.
+- Show the next unblock action near the blocked state.
+- Keep blocked copy calm and concrete.
+- Preserve partial progress; do not make one jam hide everything else that can continue.
+
+### Pink Panther / Clue-Based AI
+
+AI findings should use:
+
+```text
+Known / Unknown / Clues / Next Evidence Needed / Review Status
+```
+
+Implementation guidance:
+
+- Known requires evidence.
+- Unknown should be explicit instead of guessed.
+- Clues are observations, not final claims.
+- Next Evidence Needed should name the photo, file, excerpt, contractor input, or admin review that advances the finding.
+- Review Status must travel with the finding.
+- Final claims require evidence and review status.
+
+### Vlad / Asymmetric Focus
+
+Implementation should help the user focus on the highest-leverage constraint.
+
+Guidance:
+
+- Prefer one decisive next action over a broad answer dump.
+- Surface the jam, owner, missing evidence, review step, or risk that most changes the transaction.
+- Do not give all tasks equal visual weight when one task controls progress.
+- Keep secondary details available through progressive reveal.
+
+### Real-Life Intelligence
+
+Real-world evidence is the source of truth.
+
+Implementation guidance:
+
+- Contractor corrections are memory candidates, not automatic truth.
+- AI observations stay draft until reviewed.
+- Completed outcomes and human-reviewed corrections may become reusable memory only with provenance.
+- Do not create universal guidance from one property, one photo, one contractor note, or one AI inference.
+- Preserve property_id, source file, evidence reference, review status, reviewer, and generated/approved timestamps where applicable.
+
+## Workflow Gating Reference
+
+The existing Workflow Gating Principle remains the controlling value-capture doctrine:
+
+```text
+Do not protect the sentence. Protect the system around the sentence.
+```
+
+Do not duplicate Workflow Gating logic in new doctrine implementations. Instead, connect new workflow surfaces to the same property-specific value chain: evidence, property context, review status, role-based views, decision history, contractor/admin feedback, controlled sharing, and final report generation.
+
 ## Design Philosophy: Rams-Inspired Operational Minimalism
 
 Shelter Prep should feel useful, quiet, durable, and obvious. It should not feel flashy, decorative, trendy, or over-designed.

@@ -5,6 +5,41 @@ export type RequestStatus = 'new' | 'in_progress' | 'needs_info' | 'pending_appr
 
 export type Tab = 'new' | 'properties' | 'dashboard' | 'reports' | 'gallery' | 'intake' | 'messages' | 'archived' | 'invoices' | 'history' | 'sellerPrep' | 'pricingMemory' | 'materials' | 'labor' | 'estimates' | 'agentLearning' | 'fieldLessons' | 'settings'
 
+export type PropertyReportStatusLabel =
+  | 'AI Draft'
+  | 'Needs Review'
+  | 'Human Reviewed'
+  | 'Contractor Reviewed'
+  | 'Seller Ready'
+  | 'Finalized'
+
+export type WorkflowAccessState =
+  | 'preview'
+  | 'workspace_active'
+  | 'reviewed_report'
+  | 'contractor_packet'
+  | 'finalized_report'
+
+export type RoleBasedShareView = 'Agent View' | 'Seller View' | 'Contractor View' | 'Admin View'
+
+export type GeneratedOutputEvidenceLink = {
+  propertyId: string
+  sourceFileId?: string | null
+  evidenceItemId?: string | null
+  repairItemId?: string | null
+  reviewStatus: string
+  generatedAt: string
+  reviewerId?: string | null
+}
+
+export type WorkflowGatingSummary = {
+  state: WorkflowAccessState
+  reportStatus: PropertyReportStatusLabel
+  sourceFileReferences: string[]
+  roleViews: RoleBasedShareView[]
+  evidenceLinks: GeneratedOutputEvidenceLink[]
+}
+
 export type StoredFile = {
   id?: string
   name: string

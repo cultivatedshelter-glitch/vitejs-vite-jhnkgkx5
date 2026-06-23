@@ -246,9 +246,13 @@ Do not build these in Phase 1:
 - always-on background agents
 - unreviewed memory learning
 - public file buckets for private data
+- remodel/addition UI
+- full remodel workflows
+- remodel-specific AI calls or autonomous planning
 
 Phase 1 is:
 
+- inspection repair clarity
 - property intake
 - inspection/file upload
 - repair organization
@@ -257,6 +261,41 @@ Phase 1 is:
 - seller-ready direction
 - memory candidate foundation
 - secure solo-operated backend
+
+Roadmap context:
+
+- Phase 1: Inspection Repair Clarity.
+- Phase 2: Controlled Sharing + Contractor Scope Review.
+- Phase 3: Remodel / Addition Planning Intake.
+- Phase 4: Property Work Memory.
+
+Shelter Prep's broader long-term category is property-work organization, but Phase 1 remains the inspection and repair wedge for real estate agents. Remodel/addition work starts from owner intent and belongs to later roadmap planning, not current implementation.
+
+## Operating Doctrine Guidance
+
+These doctrines are canon for future app and LLM behavior. Do not implement new behavior from them until a task explicitly asks for it.
+
+1. Field Team Communication
+   - Future Operational Feed events should use Finding / Move / Owner / Status.
+   - Avoid generic activity feed noise.
+
+2. Jam-Clearing Communication
+   - Blocked states should explain what is stuck, why it matters, who owns it, what unblocks it, and what can continue.
+   - Do not use "blocked" as a dead-end label.
+
+3. Pink Panther / Clue-Based AI
+   - AI findings should use Known / Unknown / Clues / Next Evidence Needed / Review Status.
+   - Final claims require evidence and review status.
+
+4. Vlad / Asymmetric Focus
+   - Prefer one decisive next move over broad generic advice.
+   - Surface the highest-leverage jam, missing evidence, owner, review action, or risk.
+
+5. Real-Life Intelligence
+   - Real property evidence and reviewed field outcomes are the source of truth.
+   - Contractor corrections become memory candidates, not automatic truth.
+
+Workflow Gating already exists and should be referenced, not duplicated. These doctrines should support the same property-specific value chain: evidence, context, review status, role-based views, decision history, contractor/admin feedback, controlled sharing, and final report generation.
 
 ## Codex Operating Instructions
 

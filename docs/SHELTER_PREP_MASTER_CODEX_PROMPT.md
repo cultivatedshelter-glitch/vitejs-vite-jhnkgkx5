@@ -64,6 +64,115 @@ Founder/investor positioning:
 
 Shelter Prep is building the operating layer for property repair coordination. It turns inspection reports, photos, field notes, contractor-authored scopes, job-site activity, pricing corrections, seller decisions, and completed outcomes into structured repair workflows, human-reviewed scopes, contractor-ready work packages, seller-prep reports, and reusable operational memory.
 
+Long-term category:
+
+Shelter Prep starts with inspection and repair chaos because that is the sharpest first wedge for real estate agents. Long term, Shelter Prep organizes property work more broadly. A property work request may begin as an inspection finding, seller-prep task, maintenance issue, remodel idea, addition, deck, garage, ADU, or other property project.
+
+The same core structure should support all of them:
+
+```text
+Property
+-> Work Request
+-> Evidence / Notes / Files
+-> Scope Items
+-> Missing Information / Missing Decisions
+-> Review Status
+-> Role-Specific Output
+-> Next Action
+-> Outcome / Property Memory
+```
+
+Important distinction:
+
+* Repair / Inspection Mode starts from a problem: "What is wrong, what matters, what needs verification, and what should happen next?"
+* Remodel / Addition Mode starts from an intent: "What does the owner want to build, what decisions are missing, what constraints may matter, and what should happen next?"
+
+Current product positioning:
+
+* Shelter Prep is not a contractor marketplace.
+* Shelter Prep does not provide contractors.
+* Shelter Prep does not replace contractors, inspectors, engineers, designers, agents, or permit authorities.
+* Shelter Prep is a neutral coordination layer that organizes property work into clear next steps.
+
+Roadmap:
+
+* Phase 1: Inspection Repair Clarity.
+* Phase 2: Controlled Sharing + Contractor Scope Review.
+* Phase 3: Remodel / Addition Planning Intake.
+* Phase 4: Property Work Memory.
+
+Phase 1 remains focused on inspection repair clarity. Remodel/addition planning is later roadmap, not current app behavior.
+
+Workflow gating principle:
+
+Do not protect the sentence. Protect the system around the sentence.
+
+Shelter Prep should not become a generic reusable answer machine. Agents can copy text, but copied text should lose value outside Shelter Prep because it loses evidence chain, property context, uploaded photos/files, inspection excerpts, review status, contractor/admin feedback, decision history, live workflow status, role-based permissions, and final report generation.
+
+Shelter Prep gates by workflow value, not by hiding all information.
+
+Free or preview output may show:
+
+* top issue categories
+* draft repair roadmap preview
+* limited missing-info questions
+* evidence-linked sample findings
+* AI Draft / Needs Review status
+
+Paid or active property workspace unlocks:
+
+* full repair roadmap
+* full missing-info checklist
+* contractor-ready scope packet
+* seller-ready report draft
+* repair-vs-credit recommendations
+* estimate guidance
+* status tracking
+* role-based share links
+* decision history
+* admin/contractor review workflow
+
+Reviewed or verified output requires:
+
+* property record
+* source file
+* evidence references
+* human/admin review
+* contractor review where applicable
+* review status
+* approval event
+* generated report or controlled share link
+
+Generated outputs must be property-specific and stamped with property address, report date, source file ID or inspection reference, review status, "Not valid for unrelated properties", and "AI draft until reviewed" unless reviewed/finalized.
+
+Use these workflow states:
+
+* preview
+* workspace_active
+* reviewed_report
+* contractor_packet
+* finalized_report
+
+Use these property-specific report status labels:
+
+* AI Draft
+* Needs Review
+* Human Reviewed
+* Contractor Reviewed
+* Seller Ready
+* Finalized
+
+Role-based views:
+
+* Agent View: transaction strategy, seller talking points, status, next steps, and reviewed repair-vs-credit guidance when available.
+* Seller View: plain-language summary, priority repairs, approved repair-vs-credit options, reviewed estimate range when available; excludes internal notes and unverified AI reasoning.
+* Contractor View: scope packet, photos/files, inspection excerpts, missing info, site/access notes, request walkthrough, and estimate/scope upload; excludes seller strategy and unrelated property data.
+* Admin View: full evidence, AI drafts, review controls, contractor feedback, approval history, and internal notes.
+
+Free output identifies the shape of the problem. Paid/reviewed workflow moves the transaction forward.
+
+Do not overbuild payment logic yet. Create the data model, statuses, UI labels, and gating structure so pricing/payment can be connected later.
+
 ---
 
 # 2. Product Is Not AI
@@ -152,6 +261,87 @@ Real repair work teaches the system what matters.
 AI supports the system in the background.
 
 Human-verified reality is the source of truth.
+
+---
+
+## 3.1 Operating Doctrines
+
+These doctrines translate founder strategy into concrete app and LLM behavior. They are canon for future build decisions, but they do not authorize new app behavior unless a task explicitly asks for implementation.
+
+### Field Team Communication
+
+Shelter Prep should communicate like a calm field lead, not a dashboard, chatbot, or generic AI answer machine.
+
+Important workflow communication should reduce to:
+
+```text
+Finding / Move / Owner / Status
+```
+
+* Finding: what was observed, decided, corrected, uploaded, reviewed, or blocked.
+* Move: the next practical action.
+* Owner: the person, role, or system responsible.
+* Status: draft, needs review, blocked, reviewed, done, or another controlled workflow state.
+
+Future Operational Feed events should follow this pattern so a property reads like a useful field handoff.
+
+### Jam-Clearing Communication
+
+Shelter Prep should clear jams instead of merely reporting problems.
+
+A blocked state should explain:
+
+* what is stuck
+* why it matters
+* who owns the next move
+* what unblocks it
+* what can continue meanwhile
+
+The app should not use "blocked" as a dead-end label. Blocked communication should be calm, concrete, and action-oriented.
+
+### Pink Panther / Clue-Based AI
+
+AI should behave like an observant clue finder, not a final authority.
+
+AI findings should use:
+
+```text
+Known / Unknown / Clues / Next Evidence Needed / Review Status
+```
+
+* Known: evidence-backed facts.
+* Unknown: what cannot be concluded yet.
+* Clues: observations that may matter.
+* Next Evidence Needed: photos, files, inspection excerpts, contractor input, or admin review needed to advance.
+* Review Status: the current controlled status of the finding or recommendation.
+
+Final claims require evidence and review status. AI should not convert clues into conclusions without review.
+
+### Vlad / Asymmetric Focus
+
+Shelter Prep should apply asymmetric focus to the highest-leverage constraint in the property workflow.
+
+The app and LLM should prefer one decisive next move over broad generic advice. If one missing photo, contractor correction, owner decision, safety issue, source file, or review action controls progress, Shelter Prep should make that constraint obvious.
+
+This doctrine protects users from scattered output and equal-weight task noise.
+
+### Real-Life Intelligence
+
+Real properties, field evidence, photos, files, inspection excerpts, contractor judgment, pricing corrections, timelines, seller decisions, and completed outcomes are the source of truth.
+
+Contractor corrections become memory candidates with provenance, not automatic truth. AI may organize corrections and draft lessons, but human review decides whether they become reusable memory.
+
+Do not create universal rules from one property, one photo, one contractor note, or one AI inference.
+
+### Workflow Gating Reference
+
+Workflow Gating already exists as a controlling doctrine:
+
+```text
+Do not protect the sentence. Protect the system around the sentence.
+```
+
+The Operating Doctrines should strengthen Workflow Gating rather than duplicate it. Shelter Prep should keep value in the property workspace, evidence chain, review status, role-specific views, decision history, contractor/admin feedback, controlled sharing, and final report generation.
 
 ---
 
@@ -270,6 +460,14 @@ Primary Phase 1 North Star:
 
 How fast can Shelter Prep turn an inspection report into contractor-informed, admin-verified repair direction?
 
+Phase 1 category focus:
+
+Inspection Repair Clarity for real estate agents. This is the first wedge into broader property-work organization.
+
+Later roadmap:
+
+Remodel / Addition Planning Intake belongs to Phase 3. It starts from owner intent rather than a repair problem, and it should reuse the same Property -> Work Request -> Evidence / Notes / Files -> Scope Items -> Missing Information / Missing Decisions -> Review Status -> Role-Specific Output -> Next Action -> Outcome / Property Memory structure. Do not build remodel/addition UI or full remodel workflows in Phase 1.
+
 Primary adoption signal:
 
 An agent or PM uses Shelter Prep again to get contractor input on another inspection, repair scope, or work request.
@@ -349,7 +547,7 @@ No provenance, no memory.
 
 ---
 
-# 7. Detective Doctrine
+# 7. Detective Doctrine / Pink Panther Clue-Based AI
 
 Shelter Prep should behave like a detective, not a dictator.
 
@@ -378,6 +576,10 @@ Suggested next investigation:
 Core detective model:
 
 Observation → Interpretation → Missing Info → Reviewer → Decision → Outcome → Memory
+
+AI finding structure:
+
+Known → Unknown → Clues → Next Evidence Needed → Review Status
 
 AI collects and organizes clues.
 
@@ -2388,9 +2590,13 @@ Do not build these in Phase 1:
 * always-on background agents
 * unreviewed memory learning
 * public file buckets for private data
+* remodel/addition UI
+* full remodel workflows
+* remodel-specific AI calls or autonomous planning
 
 Phase 1 is:
 
+* inspection repair clarity
 * property intake
 * inspection/file upload
 * repair organization
@@ -2399,6 +2605,15 @@ Phase 1 is:
 * seller-ready direction
 * memory candidate foundation
 * secure solo-operated backend
+
+Roadmap context:
+
+* Phase 1: Inspection Repair Clarity.
+* Phase 2: Controlled Sharing + Contractor Scope Review.
+* Phase 3: Remodel / Addition Planning Intake.
+* Phase 4: Property Work Memory.
+
+Shelter Prep's broader long-term category is property-work organization, but Phase 1 remains the inspection and repair wedge for real estate agents. Remodel/addition work starts from owner intent and belongs to later roadmap planning, not current implementation.
 
 ---
 
