@@ -45,6 +45,12 @@ Shelter Prep should apply asymmetric focus to the highest-leverage constraint in
 5. Real-Life Intelligence
 Real properties, field evidence, contractor judgment, corrections, photos, files, timelines, and completed outcomes are the source of truth. Contractor corrections become memory candidates with provenance, not automatic truth. Never turn one field outcome or AI inference into universal memory without human review.
 
+6. AI Draft Estimating
+AI may draft industry-standard pricing assumptions, labor steps, material lists, missing information, and pricing-memory comparisons for admin review. AI may not finalize pricing, create seller-ready estimate language, send outputs externally, approve contractor scope, or save pricing memory. Every estimating output must show knowns, unknowns, assumptions, missing evidence, pricing sources, confidence, review status, and admin notes. If live source research is not implemented, material prices must be marked as placeholder/draft and needs source verification.
+
+7. Admin Task Workbench
+The admin side may behave like a property-specific LLM task console, not an autonomous agent. Admins can request tasks such as estimate this bundle, generate material list, research material costs, draft contractor scope, identify missing information, draft seller summary, compare to pricing memory, review contractor upload, or create repair-vs-credit options. Task results are AI Draft / Needs Review until an admin reviews, edits, approves, rejects, or requests more information. Approved drafts may later become memory candidates, but never automatic truth.
+
 Workflow gating principle:
 Do not protect the sentence. Protect the system around the sentence.
 

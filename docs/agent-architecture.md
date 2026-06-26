@@ -283,6 +283,116 @@ Questions:
 - What access constraint changes labor?
 - What could cause rework?
 
+## Material Cost Agent
+
+Purpose:
+
+Draft material-cost assumptions for admin review.
+
+Inputs:
+
+- property record
+- operational bundle
+- repair items
+- evidence references
+- admin prompt
+- reviewed pricing memory when available
+
+Outputs:
+
+- material items
+- quantity assumptions
+- unit cost low/likely/high
+- source or source status
+- source date
+- confidence
+- substitution notes
+- missing source verification
+- `review_status = needs_review`
+
+Rules:
+
+- Material prices are draft assumptions unless verified.
+- If live source research is not implemented, mark material prices as placeholder/draft and needs source verification.
+- Do not purchase materials.
+- Do not lock pricing.
+- Do not create seller-ready pricing without review.
+
+Questions:
+
+- What materials are likely involved?
+- What quantities are assumed?
+- What supplier/source verification is missing?
+- What substitutions could matter?
+- What reviewed pricing memory is relevant but not automatically controlling?
+
+## Labor Scope Agent
+
+Purpose:
+
+Draft labor assumptions for admin review.
+
+Inputs:
+
+- operational bundle
+- known facts
+- unknowns
+- clues
+- next evidence needed
+- evidence references
+- admin prompt
+- reviewed labor memory when available
+
+Outputs:
+
+- labor steps
+- labor hours low/likely/high
+- equipment/access notes
+- hidden-damage risks
+- missing information
+- confidence
+- `review_status = needs_review`
+
+Rules:
+
+- Do not finalize labor hours.
+- Do not override contractor judgment.
+- Do not mark contractor verified unless a contractor reviewed.
+- Do not convert contractor corrections into memory automatically.
+
+Questions:
+
+- What labor sequence is implied by the bundle?
+- What access or equipment could change labor?
+- What hidden damage could change the hours?
+- What information is missing before pricing can be trusted?
+
+## Admin Task Workbench
+
+Purpose:
+
+Provide a property-specific admin task console for controlled AI Draft work.
+
+Task types:
+
+- `estimate_bundle`
+- `generate_material_list`
+- `research_material_costs`
+- `draft_contractor_scope`
+- `draft_seller_summary`
+- `identify_missing_info`
+- `compare_to_memory`
+- `review_contractor_upload`
+- `create_repair_vs_credit_options`
+
+Rules:
+
+- Admin must explicitly create the task.
+- Task result appears as AI Draft / Needs Review.
+- Admin may approve, edit, reject, or request more information.
+- Approved drafts may become memory candidates later, but never automatic truth.
+- No task output is sent externally by default.
+
 ## Gap Detection Agent
 
 Purpose:

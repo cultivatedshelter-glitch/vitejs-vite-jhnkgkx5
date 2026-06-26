@@ -98,6 +98,111 @@ Implementation guidance:
 - Do not create universal guidance from one property, one photo, one contractor note, or one AI inference.
 - Preserve property_id, source file, evidence reference, review status, reviewer, and generated/approved timestamps where applicable.
 
+## AI Draft Estimating + Admin Task Workbench
+
+This doctrine authorizes only draft/admin-review behavior unless a later task explicitly builds persistence, server-side review gates, or external sharing.
+
+Core rule:
+
+```text
+AI may draft industry-standard pricing and material-cost assumptions. Admin must review, edit, approve, or reject before anything becomes seller-ready, contractor-ready, or memory.
+```
+
+Do not build autonomous final estimating, final pricing, payment logic, purchase actions, proposal sending, external sharing, or automatic memory creation.
+
+### Required Estimate Draft Shape
+
+Every estimate draft must include:
+
+- `bundle_id`
+- `trade_owner`
+- `scope_summary`
+- `labor_steps`
+- `labor_hours_low`
+- `labor_hours_likely`
+- `labor_hours_high`
+- `material_items`
+- `material_cost_low`
+- `material_cost_likely`
+- `material_cost_high`
+- `equipment_or_access_notes`
+- `hidden_damage_risks`
+- `missing_info`
+- `pricing_sources`
+- `confidence`
+- `review_status`
+- `admin_notes`
+
+Every material item must include:
+
+- `material_name`
+- `quantity_assumption`
+- `unit_cost_low`
+- `unit_cost_likely`
+- `unit_cost_high`
+- `source`
+- `source_date`
+- `confidence`
+- `substitution_notes`
+
+If live source research is not implemented, material prices must be labeled placeholder/draft and needs source verification. Do not present placeholder costs as verified supplier pricing.
+
+### Admin Task Workbench
+
+The admin side may provide a property-specific task console where admins can submit plain-language requests against a property, bundle, evidence set, or contractor upload.
+
+Supported task types:
+
+- `estimate_bundle`
+- `generate_material_list`
+- `research_material_costs`
+- `draft_contractor_scope`
+- `draft_seller_summary`
+- `identify_missing_info`
+- `compare_to_memory`
+- `review_contractor_upload`
+- `create_repair_vs_credit_options`
+
+Admin task model:
+
+- `id`
+- `property_id`
+- `bundle_id` optional
+- `task_type`
+- `admin_prompt`
+- `input_evidence_ids`
+- `status`
+- `output_summary`
+- `output_json`
+- `review_status`
+- `created_at`
+- `reviewed_by` optional
+- `approved_at` optional
+
+Implementation guidance:
+
+- Admin can create a task from a bundle.
+- Admin can type a plain-language prompt.
+- Task result appears as AI Draft / Needs Review.
+- Admin can approve, edit, reject, or request more information.
+- Approved estimates can later feed pricing memory, but do not write memory automatically.
+- Contractor corrections become memory candidates, not automatic truth.
+- No seller-ready pricing unless reviewed.
+- No contractor-verified status unless a contractor reviewed.
+- Pricing must show knowns, unknowns, assumptions, missing evidence, source status, and confidence.
+
+### Material Cost Agent
+
+Material Cost Agent behavior is a controlled draft function.
+
+It may draft material lists, quantity assumptions, low/likely/high placeholder ranges, source status, and substitution notes. It may compare against reviewed pricing memory when available. It may not purchase materials, lock pricing, or turn placeholder data into verified source data.
+
+### Labor Scope Agent
+
+Labor Scope Agent behavior is a controlled draft function.
+
+It may draft labor steps, low/likely/high hour assumptions, access/equipment notes, sequencing issues, hidden-damage risks, and missing evidence. It may not finalize labor, override contractor judgment, or mark contractor-reviewed status without contractor review.
+
 ## Workflow Gating Reference
 
 The existing Workflow Gating Principle remains the controlling value-capture doctrine:

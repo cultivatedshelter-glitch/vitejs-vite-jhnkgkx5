@@ -7,15 +7,26 @@ import {
   type EstimateIntelligenceResult,
 } from '../agents/estimateIntelligence'
 import {
+  ADMIN_TASK_TYPES,
+  buildAdminTaskDraft,
+  type AdminTaskDraft,
+  type AdminTaskReviewStatus,
+  type AdminTaskStatus,
+  type AdminTaskType,
+} from '../agents/adminTaskWorkbench'
+import {
   EXTENDED_REVIEW_CUSTOMER_MESSAGE,
   REVIEW_PACKET_SIZE_LIMIT_BYTES,
   applyReviewPacketToBundle,
   buildBerlinAveWorkGroups,
   buildInspectionIntelligenceDraft,
+  buildOperationalFeedEntriesFromBundles,
   buildRepairBundles,
+  buildRiverRoadWorkGroups,
   createReviewPacketMetadata,
   extractInspectionDate,
   extractInspectionFindings,
+  isRiverRoadInspectionContext,
   type InspectionDraftStatus,
   type InspectionIntelligenceDraft,
   type InspectionRepairBundleDraft,
@@ -2872,6 +2883,9 @@ export default function ShelterPrepWorkspace() {
   const [openReportPreviewByRequest, setOpenReportPreviewByRequest] = useState<Record<string, boolean>>({})
   const [openPropertyLayersByKey, setOpenPropertyLayersByKey] = useState<Record<string, boolean>>({})
   const [inspectionFindingSavingId, setInspectionFindingSavingId] = useState<string | null>(null)
+  const [adminTaskPromptsByKey, setAdminTaskPromptsByKey] = useState<Record<string, string>>({})
+  const [adminTaskTypesByKey, setAdminTaskTypesByKey] = useState<Record<string, AdminTaskType>>({})
+  const [adminTasksByBundleKey, setAdminTasksByBundleKey] = useState<Record<string, AdminTaskDraft[]>>({})
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | RequestStatus>('all')
 
@@ -6892,9 +6906,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     const intelligence = request.inspectionIntelligence
     const propertyId = request.propertyId || getRequestPropertyId(request)
-    const workGroups = isBerlinAveRequest(request)
-      ? buildBerlinAveWorkGroups(intelligence.id || `inspection-${request.id}`, propertyId)
-      : buildRepairBundles(intelligence.repairItems || [], propertyId)
+    const workGroups = isRiverRoadRequest(request)
+      ? buildRiverRoadWorkGroups(intelligence.id || `inspection-${request.id}`, propertyId)
+      : isBerlinAveRequest(request)
+        ? buildBerlinAveWorkGroups(intelligence.id || `inspection-${request.id}`, propertyId)
+        : buildRepairBundles(intelligence.repairItems || [], propertyId)
 
     if (!workGroups.length) {
       alert('No readable inspection findings were available to generate work groups.')
@@ -6906,8 +6922,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       humanReviewStatus: 'needs_review',
       repairBundles: workGroups,
       workGroups,
-      tradeScopes: workGroups.map((bundle) => `${bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`),
-      priorityRoadmap: workGroups.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.risk_explanation}`),
+      tradeScopes: workGroups.map((bundle) => `${bundle.trade_owner || bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`),
+      priorityRoadmap: workGroups.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.finding_summary || bundle.risk_explanation}`),
       estimateLow: workGroups.reduce((sum, bundle) => sum + bundle.estimate_low, 0),
       estimateHigh: workGroups.reduce((sum, bundle) => sum + bundle.estimate_high, 0),
     }
@@ -12300,6 +12316,21 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(text)
   }
 
+  function isRiverRoadRequest(request: WorkRequest) {
+    const text = [
+      request.propertyAddress,
+      request.city,
+      request.state,
+      request.inspectionIntelligence?.propertyAddress,
+      request.inspectionIntelligence?.city,
+      request.inspectionIntelligence?.fileName,
+      safeArray(request.inspectionIntelligence?.repairItems).map((item) => item.source_text).join(' '),
+      safeArray(request.inspectionIntelligence?.repairBundles).map((bundle) => bundle.source_text || bundle.summary).join(' '),
+      safeArray(request.inspectionIntelligence?.workGroups).map((bundle) => bundle.source_text || bundle.summary).join(' '),
+    ].filter(Boolean).join(' ')
+    return isRiverRoadInspectionContext(text)
+  }
+
   function getInspectionWorkGroups(request: WorkRequest) {
     const intelligence = request.inspectionIntelligence
     if (!intelligence) return []
@@ -12309,6 +12340,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       return persistedGroups
         .filter((bundle) => bundle.status !== 'rejected')
         .map((bundle) => bundle.compact_review_packet ? bundle : applyReviewPacketToBundle(bundle, request.propertyAddress || intelligence.propertyAddress))
+    }
+
+    if (isRiverRoadRequest(request)) {
+      return buildRiverRoadWorkGroups(intelligence.id || `inspection-${request.id}`, request.propertyId || getRequestPropertyId(request))
+        .map((bundle) => applyReviewPacketToBundle(bundle, request.propertyAddress || intelligence.propertyAddress || '2681 SE River Rd Unit 10'))
     }
 
     if (isBerlinAveRequest(request)) {
@@ -12431,15 +12467,26 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return {
       id: group.id,
       title: group.title || 'Untitled work group',
-      category: group.recommended_trade || group.system_category || group.work_area,
+      category: group.trade_owner || group.recommended_trade || group.system_category || group.work_area,
       priority: group.priority || group.severity || 'Unknown',
-      reviewStatus: normalizeReportReviewStatus(group.status),
-      whatMatters: group.risk_explanation || group.summary,
-      evidenceSummary: group.evidence_summary || group.source_text || group.summary,
+      reviewStatus: normalizeReportReviewStatus(group.review_status || group.status),
+      whatMatters: group.finding_summary || group.risk_explanation || group.summary,
+      evidenceSummary: uniqueReportStrings([
+        group.evidence_summary,
+        ...safeArray(group.known_facts),
+      ]).join(' ') || group.source_text || group.summary,
       likelyCostImpact: costImpact,
-      recommendedAction: group.recommended_next_action || group.contractor_scope_note || 'Review before client use.',
-      missingInfo: uniqueReportStrings(group.missing_information || []),
-      sourceIds: uniqueReportStrings([group.source_page, ...safeArray(group.finding_ids)]),
+      recommendedAction: group.recommended_next_move || group.recommended_next_action || group.contractor_scope_note || 'Review before client use.',
+      missingInfo: uniqueReportStrings([
+        ...safeArray(group.missing_information),
+        ...safeArray(group.unknowns),
+        ...safeArray(group.next_evidence_needed),
+      ]),
+      sourceIds: uniqueReportStrings([
+        group.source_page,
+        ...safeArray(group.finding_ids),
+        ...safeArray(group.evidence_references),
+      ]),
     }
   }
 
@@ -13050,6 +13097,376 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     )
   }
 
+  function getAdminTaskWorkbenchKey(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    return `${request.id}:${group.id}`
+  }
+
+  function getDefaultAdminTaskPrompt(taskType: AdminTaskType, group: InspectionRepairBundleDraft) {
+    if (taskType === 'generate_material_list') return `Generate a draft material list for ${group.title}.`
+    if (taskType === 'research_material_costs') return `Research draft material-cost assumptions for ${group.title}; mark placeholders until sources are verified.`
+    if (taskType === 'draft_contractor_scope') return `Draft a contractor scope for ${group.title} using knowns, unknowns, and next evidence needed.`
+    if (taskType === 'draft_seller_summary') return `Draft a seller-facing summary for ${group.title}, clearly marked AI Draft until reviewed.`
+    if (taskType === 'identify_missing_info') return `Identify missing information that blocks reliable scope or pricing for ${group.title}.`
+    if (taskType === 'compare_to_memory') return `Compare ${group.title} to reviewed pricing memory if available; do not apply memory automatically.`
+    if (taskType === 'review_contractor_upload') return `Create a contractor-upload review scaffold for ${group.title}.`
+    if (taskType === 'create_repair_vs_credit_options') return `Draft repair-vs-credit options for ${group.title}; keep them Needs Review.`
+    return `Estimate this bundle: ${group.title}.`
+  }
+
+  function createLocalAdminTask(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    const key = getAdminTaskWorkbenchKey(request, group)
+    const taskType = adminTaskTypesByKey[key] || 'estimate_bundle'
+    const prompt = adminTaskPromptsByKey[key] || getDefaultAdminTaskPrompt(taskType, group)
+    const task = buildAdminTaskDraft({
+      propertyId: request.propertyId || getRequestPropertyId(request),
+      bundle: group,
+      taskType,
+      adminPrompt: prompt,
+      inputEvidenceIds: uniqueReportStrings([
+        ...safeArray(group.evidence_references),
+        ...safeArray(group.finding_ids),
+        group.source_page,
+      ]),
+    })
+
+    setAdminTasksByBundleKey((prev) => ({
+      ...prev,
+      [key]: [task, ...safeArray(prev[key])],
+    }))
+    setAdminTaskPromptsByKey((prev) => ({
+      ...prev,
+      [key]: getDefaultAdminTaskPrompt(taskType, group),
+    }))
+  }
+
+  function updateLocalAdminTask(
+    key: string,
+    taskId: string,
+    changes: Partial<AdminTaskDraft> & {
+      outputJsonPatch?: Partial<AdminTaskDraft['output_json']>
+      status?: AdminTaskStatus
+      review_status?: AdminTaskReviewStatus
+    }
+  ) {
+    const { outputJsonPatch, ...taskPatch } = changes
+    setAdminTasksByBundleKey((prev) => ({
+      ...prev,
+      [key]: safeArray(prev[key]).map((task) => (
+        task.id === taskId
+          ? {
+              ...task,
+              ...taskPatch,
+              output_json: {
+                ...task.output_json,
+                ...outputJsonPatch,
+              },
+            }
+          : task
+      )),
+    }))
+  }
+
+  function reviewLocalAdminTask(
+    key: string,
+    task: AdminTaskDraft,
+    status: AdminTaskStatus,
+    reviewStatus: AdminTaskReviewStatus
+  ) {
+    const now = new Date().toISOString()
+    updateLocalAdminTask(key, task.id, {
+      status,
+      review_status: reviewStatus,
+      reviewed_by: currentUserId || 'local-admin',
+      approved_at: status === 'approved' ? now : undefined,
+      outputJsonPatch: {
+        review_status: reviewStatus,
+        admin_notes: status === 'approved'
+          ? 'Human reviewed in local Admin Task Workbench prototype. Not seller-ready, contractor-ready, or memory until a controlled workflow promotes it.'
+          : task.output_json.admin_notes,
+      },
+    })
+  }
+
+  function renderAdminTaskWorkbench(request: WorkRequest, group: InspectionRepairBundleDraft) {
+    if (!hasAdminConsoleAccess) return null
+
+    const key = getAdminTaskWorkbenchKey(request, group)
+    const taskType = adminTaskTypesByKey[key] || 'estimate_bundle'
+    const prompt = adminTaskPromptsByKey[key] || getDefaultAdminTaskPrompt(taskType, group)
+    const tasks = safeArray(adminTasksByBundleKey[key])
+
+    return (
+      <details style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Admin Task Workbench</summary>
+        <div style={styles.noticeBox}>
+          AI Draft task console. Outputs stay local, internal, and Needs Review. They do not finalize pricing, send externally, become seller-ready, become contractor-ready, or write memory.
+        </div>
+        <div style={isCompact ? styles.mobileStack : styles.grid2}>
+          <select
+            style={styles.input}
+            value={taskType}
+            onChange={(event) => {
+              const nextType = event.target.value as AdminTaskType
+              setAdminTaskTypesByKey((prev) => ({ ...prev, [key]: nextType }))
+              setAdminTaskPromptsByKey((prev) => ({ ...prev, [key]: getDefaultAdminTaskPrompt(nextType, group) }))
+            }}
+          >
+            {ADMIN_TASK_TYPES.map((type) => (
+              <option key={type} value={type}>{getLearningDisplayName(type)}</option>
+            ))}
+          </select>
+          <button type="button" style={styles.primaryButton} onClick={() => createLocalAdminTask(request, group)}>
+            Create AI Draft Task
+          </button>
+        </div>
+        <textarea
+          style={{ ...styles.input, minHeight: 78 }}
+          value={prompt}
+          placeholder="Ask for an estimate, material list, missing info, contractor scope, seller summary, or memory comparison."
+          onChange={(event) => setAdminTaskPromptsByKey((prev) => ({ ...prev, [key]: event.target.value }))}
+        />
+
+        {tasks.length === 0 ? (
+          <div style={styles.empty}>No local admin tasks yet for this bundle.</div>
+        ) : (
+          <div style={styles.inspectionTaskGrid}>
+            {tasks.map((task) => {
+              const estimate = task.output_json
+              return (
+                <div key={task.id} style={styles.inspectionTaskCard}>
+                  <div style={styles.buttonRow}>
+                    <div style={{ flex: 1 }}>
+                      <strong>{getLearningDisplayName(task.task_type)}</strong>
+                      <p style={styles.small}>{task.output_summary}</p>
+                      <p style={styles.small}>Prompt: {task.admin_prompt}</p>
+                    </div>
+                    <span style={task.review_status === 'rejected' ? styles.badgeDanger : styles.badgeMuted}>
+                      {getLearningDisplayName(task.review_status)}
+                    </span>
+                  </div>
+                  <div style={styles.noticeBox}>
+                    AI Draft / Needs Review. Material prices are placeholder assumptions until source verified. This is not final pricing.
+                  </div>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 72 }}
+                    value={task.output_summary}
+                    onChange={(event) => updateLocalAdminTask(key, task.id, { output_summary: event.target.value })}
+                  />
+                  <div style={styles.grid3}>
+                    <div style={styles.factCard}>
+                      <span>Labor hours draft</span>
+                      <strong>{estimate.labor_hours_low} / {estimate.labor_hours_likely} / {estimate.labor_hours_high}</strong>
+                    </div>
+                    <div style={styles.factCard}>
+                      <span>Material draft range</span>
+                      <strong>{money(estimate.material_cost_low)} - {money(estimate.material_cost_high)}</strong>
+                    </div>
+                    <div style={styles.factCard}>
+                      <span>Confidence</span>
+                      <strong>{estimate.confidence}</strong>
+                    </div>
+                  </div>
+                  <details style={styles.moreActions}>
+                    <summary style={styles.moreActionsSummary}>Estimate Draft JSON Summary</summary>
+                    <p style={styles.small}>Bundle: {estimate.bundle_id}</p>
+                    <p style={styles.small}>Trade owner: {estimate.trade_owner}</p>
+                    <p style={styles.small}>Scope: {estimate.scope_summary}</p>
+                    <strong>Known facts</strong>
+                    <ul style={styles.smallList}>
+                      {(estimate.known_facts.length ? estimate.known_facts : ['Known facts need review.']).map((item, index) => (
+                        <li key={`${task.id}-known-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                    <strong>Unknowns / missing evidence</strong>
+                    <ul style={styles.smallList}>
+                      {(estimate.missing_info.length ? estimate.missing_info : ['No missing info listed.']).map((item, index) => (
+                        <li key={`${task.id}-missing-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                    <strong>Labor steps</strong>
+                    <ul style={styles.smallList}>
+                      {estimate.labor_steps.map((item, index) => (
+                        <li key={`${task.id}-labor-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                    <strong>Material items</strong>
+                    <ul style={styles.smallList}>
+                      {estimate.material_items.map((item, index) => (
+                        <li key={`${task.id}-material-${index}`}>
+                          {item.material_name}: {item.quantity_assumption}; {money(item.unit_cost_low)} / {money(item.unit_cost_likely)} / {money(item.unit_cost_high)}. Source: {item.source} ({item.source_date}). {item.substitution_notes}
+                        </li>
+                      ))}
+                    </ul>
+                    <strong>Access / hidden risk</strong>
+                    <ul style={styles.smallList}>
+                      {[...estimate.equipment_or_access_notes, ...estimate.hidden_damage_risks].map((item, index) => (
+                        <li key={`${task.id}-risk-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                    <strong>Pricing sources</strong>
+                    <ul style={styles.smallList}>
+                      {estimate.pricing_sources.map((item, index) => (
+                        <li key={`${task.id}-source-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </details>
+                  <textarea
+                    style={{ ...styles.input, minHeight: 68 }}
+                    value={estimate.admin_notes}
+                    placeholder="Admin notes"
+                    onChange={(event) => updateLocalAdminTask(key, task.id, {
+                      outputJsonPatch: { admin_notes: event.target.value },
+                    })}
+                  />
+                  <div style={styles.buttonRow}>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => updateLocalAdminTask(key, task.id, {
+                        status: 'admin_reviewing',
+                        review_status: 'needs_review',
+                        outputJsonPatch: { review_status: 'needs_review' },
+                      })}
+                    >
+                      Save Edits
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => reviewLocalAdminTask(key, task, 'needs_more_info', 'needs_more_info')}
+                    >
+                      Request More Info
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.outlineButton}
+                      onClick={() => reviewLocalAdminTask(key, task, 'rejected', 'rejected')}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.primaryButton}
+                      onClick={() => reviewLocalAdminTask(key, task, 'approved', 'human_reviewed')}
+                    >
+                      Approve Draft
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </details>
+    )
+  }
+
+  function renderBundleOperationalDetails(group: InspectionRepairBundleDraft) {
+    const relatedItems = safeArray(group.related_report_items)
+    const knownFacts = safeArray(group.known_facts)
+    const unknowns = safeArray(group.unknowns)
+    const clues = safeArray(group.clues)
+    const nextEvidence = safeArray(group.next_evidence_needed)
+    const evidenceReferences = safeArray(group.evidence_references)
+    const feedEntries = buildOperationalFeedEntriesFromBundles([group])
+    const hasBundleDetails = [
+      relatedItems,
+      knownFacts,
+      unknowns,
+      clues,
+      nextEvidence,
+      evidenceReferences,
+      feedEntries,
+    ].some((items) => items.length > 0) || Boolean(group.trade_owner || group.recommended_next_move || group.seller_impact)
+
+    if (!hasBundleDetails) return null
+
+    return (
+      <details style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Bundle Logic</summary>
+        <p style={styles.small}>Owner: {group.trade_owner || group.recommended_trade || 'Admin review needed'}</p>
+        <p style={styles.small}>Status: {group.recommended_next_move || group.recommended_next_action || 'Needs review before use.'}</p>
+        <p style={styles.small}>Review: {getLearningDisplayName(group.review_status || group.status)}</p>
+        {group.seller_impact && <p style={styles.small}>Seller impact: {group.seller_impact}</p>}
+        {group.contractor_packet_needed !== undefined && (
+          <p style={styles.small}>Contractor packet needed: {group.contractor_packet_needed ? 'Yes' : 'No'}</p>
+        )}
+        {relatedItems.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Related report items</summary>
+            <ul style={styles.smallList}>
+              {relatedItems.map((item, index) => (
+                <li key={`${group.id}-related-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {knownFacts.length > 0 && (
+          <>
+            <strong>Known facts</strong>
+            <ul style={styles.smallList}>
+              {knownFacts.map((item, index) => (
+                <li key={`${group.id}-known-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {unknowns.length > 0 && (
+          <>
+            <strong>Unknowns</strong>
+            <ul style={styles.smallList}>
+              {unknowns.map((item, index) => (
+                <li key={`${group.id}-unknown-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {clues.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Clues</summary>
+            <ul style={styles.smallList}>
+              {clues.map((item, index) => (
+                <li key={`${group.id}-clue-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {nextEvidence.length > 0 && (
+          <>
+            <strong>Next evidence needed</strong>
+            <ul style={styles.smallList}>
+              {nextEvidence.map((item, index) => (
+                <li key={`${group.id}-next-evidence-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {feedEntries.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Operational Feed</summary>
+            <ul style={styles.smallList}>
+              {feedEntries.map((entry, index) => (
+                <li key={`${group.id}-feed-${index}`}>
+                  Finding: {entry.finding} Move: {entry.move} Owner: {entry.owner} Status: {entry.status}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {evidenceReferences.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Evidence references</summary>
+            <ul style={styles.smallList}>
+              {evidenceReferences.map((item, index) => (
+                <li key={`${group.id}-evidence-reference-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </details>
+    )
+  }
+
   function renderAddressWorkGroups(request: WorkRequest) {
     const workGroups = getInspectionWorkGroups(request)
     const archivedGroups = getArchivedInspectionWorkGroups(request)
@@ -13096,6 +13513,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   <div style={{ flex: 1 }}>
                     <strong>{group.title}</strong>
                     <p style={styles.small}>Store everything. Show only what matters.</p>
+                    <p style={styles.small}>
+                      Owner: {group.trade_owner || group.recommended_trade || 'Admin'} - Status:{' '}
+                      {getLearningDisplayName(group.review_status || group.status)}
+                    </p>
                   </div>
                   <span style={group.priority === 'Critical' ? styles.badgeDanger : styles.badgeMuted}>{group.priority}</span>
                 </div>
@@ -13107,6 +13528,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
                   onResearchNeeded: () => requestResearchForWorkGroup(request, group, 'research_requested'),
                   onReject: () => updateInspectionBundle(request, group.id, { status: 'rejected' }),
                 })}
+                {renderBundleOperationalDetails(group)}
+                {renderAdminTaskWorkbench(request, group)}
 
                 <details style={styles.moreActions}>
                   <summary style={styles.moreActionsSummary}>Show Audit Details</summary>

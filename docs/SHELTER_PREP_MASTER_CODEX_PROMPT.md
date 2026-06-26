@@ -200,6 +200,10 @@ AI may assist with:
 * suggesting repair categories
 * identifying missing information
 * drafting scope structure
+* drafting industry-standard pricing assumptions for admin review
+* drafting material-cost assumptions for admin review
+* drafting labor-scope assumptions for admin review
+* comparing current bundles to reviewed pricing memory
 * structuring contractor-uploaded estimates
 * retrieving similar past jobs
 * surfacing prior human corrections
@@ -224,6 +228,114 @@ Powered by AI. Approved by humans.
 Stronger internal doctrine:
 
 AI notices. Humans approve. Contractors author professional scope. Shelter Prep verifies. Memory learns only from approved outcomes.
+
+---
+
+# 2A. AI Draft Estimating and Admin Task Workbench
+
+The admin side may behave like a property-specific LLM task console, but it must not become autonomous final estimating.
+
+Admins may submit plain-language tasks such as:
+
+* estimate this bundle
+* generate material list
+* research material costs
+* draft contractor scope
+* identify missing information
+* draft seller summary
+* compare to pricing memory
+* review contractor upload
+* create repair-vs-credit options
+
+Core rule:
+
+```text
+AI may draft industry-standard pricing and material-cost assumptions.
+Admin must review, edit, approve, or reject before anything becomes seller-ready, contractor-ready, or memory.
+```
+
+AI Draft Estimating output must include:
+
+* `bundle_id`
+* `trade_owner`
+* `scope_summary`
+* `labor_steps`
+* `labor_hours_low`
+* `labor_hours_likely`
+* `labor_hours_high`
+* `material_items`
+* `material_cost_low`
+* `material_cost_likely`
+* `material_cost_high`
+* `equipment_or_access_notes`
+* `hidden_damage_risks`
+* `missing_info`
+* `pricing_sources`
+* `confidence`
+* `review_status`
+* `admin_notes`
+
+Material items must include:
+
+* `material_name`
+* `quantity_assumption`
+* `unit_cost_low`
+* `unit_cost_likely`
+* `unit_cost_high`
+* `source`
+* `source_date`
+* `confidence`
+* `substitution_notes`
+
+Admin task model:
+
+* `id`
+* `property_id`
+* `bundle_id` optional
+* `task_type`
+* `admin_prompt`
+* `input_evidence_ids`
+* `status`
+* `output_summary`
+* `output_json`
+* `review_status`
+* `created_at`
+* `reviewed_by` optional
+* `approved_at` optional
+
+Task types:
+
+* `estimate_bundle`
+* `generate_material_list`
+* `research_material_costs`
+* `draft_contractor_scope`
+* `draft_seller_summary`
+* `identify_missing_info`
+* `compare_to_memory`
+* `review_contractor_upload`
+* `create_repair_vs_credit_options`
+
+Material Cost Agent:
+
+* drafts material lists, quantity assumptions, source status, and placeholder low/likely/high cost assumptions
+* may compare against reviewed pricing memory
+* may not purchase materials, lock pricing, or treat placeholder assumptions as verified supplier prices
+
+Labor Scope Agent:
+
+* drafts labor steps, low/likely/high hour assumptions, access notes, equipment notes, sequencing risks, and hidden-damage risks
+* may not finalize labor, override contractor judgment, or mark contractor verified without contractor review
+
+Rules:
+
+* No final estimate without admin approval.
+* No seller-ready pricing unless reviewed.
+* No contractor-verified status unless contractor reviewed.
+* No generic unsupported pricing claims.
+* Pricing must show knowns, unknowns, assumptions, and missing evidence.
+* If live source research is not implemented, material prices are placeholder/draft and need source verification.
+* Contractor corrections become memory candidates, not automatic truth.
+* Do not add payment logic or send outputs externally.
 
 ---
 

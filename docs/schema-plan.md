@@ -339,6 +339,87 @@ Fields:
 - `approved_at timestamptz`
 - `created_at timestamptz`
 
+## `admin_tasks`
+
+Purpose: property-specific admin task console for draft AI work.
+
+Fields:
+
+- `id uuid primary key`
+- `property_id uuid`
+- `bundle_id uuid nullable`
+- `task_type text`
+- `admin_prompt text`
+- `input_evidence_ids uuid[]`
+- `status text`
+- `output_summary text`
+- `output_json jsonb`
+- `review_status text`
+- `created_at timestamptz`
+- `reviewed_by uuid nullable`
+- `approved_at timestamptz nullable`
+
+Task types:
+
+- `estimate_bundle`
+- `generate_material_list`
+- `research_material_costs`
+- `draft_contractor_scope`
+- `draft_seller_summary`
+- `identify_missing_info`
+- `compare_to_memory`
+- `review_contractor_upload`
+- `create_repair_vs_credit_options`
+
+## `estimate_drafts`
+
+Purpose: structured AI Draft estimating output. These are not final estimates.
+
+Fields:
+
+- `id uuid primary key`
+- `admin_task_id uuid`
+- `property_id uuid`
+- `bundle_id uuid`
+- `trade_owner text`
+- `scope_summary text`
+- `labor_steps text[]`
+- `labor_hours_low numeric`
+- `labor_hours_likely numeric`
+- `labor_hours_high numeric`
+- `material_items jsonb`
+- `material_cost_low numeric`
+- `material_cost_likely numeric`
+- `material_cost_high numeric`
+- `equipment_or_access_notes text[]`
+- `hidden_damage_risks text[]`
+- `missing_info text[]`
+- `pricing_sources text[]`
+- `confidence text`
+- `review_status text`
+- `admin_notes text`
+- `created_at timestamptz`
+- `reviewed_by uuid nullable`
+- `approved_at timestamptz nullable`
+
+Material item JSON shape:
+
+- `material_name`
+- `quantity_assumption`
+- `unit_cost_low`
+- `unit_cost_likely`
+- `unit_cost_high`
+- `source`
+- `source_date`
+- `confidence`
+- `substitution_notes`
+
+Rules:
+
+- Drafts stay `AI Draft` / `Needs Review` until reviewed.
+- No final pricing, seller-ready pricing, contractor-ready packet, or memory write happens directly from AI output.
+- Contractor corrections become memory candidates, not automatic truth.
+
 ## `reports`
 
 Fields:

@@ -127,6 +127,26 @@ Acceptance:
 - missing info visible
 - contractor review candidates selected
 
+## Stage 6A - Admin Task Workbench Drafts
+
+Build only after operational bundles exist.
+
+Build:
+
+- local/admin task console tied to property and bundle
+- task types for estimate bundle, material list, material cost research, contractor scope, seller summary, missing info, pricing memory comparison, contractor upload review, and repair-vs-credit options
+- AI Draft estimate output shape
+- admin review controls
+
+Acceptance:
+
+- admin creates a task from a bundle
+- task result is AI Draft / Needs Review
+- pricing shows knowns, unknowns, assumptions, missing evidence, source status, and confidence
+- material prices are placeholder/draft unless source-verified
+- admin can approve, edit, reject, or request more information
+- no seller-ready pricing, contractor-ready packet, payment logic, external sending, or memory write happens automatically
+
 ## Stage 7 - Contractor Assignment And No-Login Review Link
 
 Build:

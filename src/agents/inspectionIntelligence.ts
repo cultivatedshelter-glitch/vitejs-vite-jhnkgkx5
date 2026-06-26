@@ -72,11 +72,32 @@ export type InspectionRepairItemDraft = {
   admin_notes: string
 }
 
+export type InspectionOperationalFeedEntry = {
+  finding: string
+  move: string
+  owner: string
+  status: string
+}
+
 export type InspectionRepairBundleDraft = {
   id: string
+  bundle_id?: string
   property_id?: string | number | null
   inspection_report_id: string
   title: string
+  related_report_items?: string[]
+  trade_owner?: string
+  finding_summary?: string
+  known_facts?: string[]
+  unknowns?: string[]
+  clues?: string[]
+  next_evidence_needed?: string[]
+  recommended_next_move?: string
+  review_status?: InspectionDraftStatus
+  seller_impact?: string
+  contractor_packet_needed?: boolean
+  evidence_references?: string[]
+  operational_feed_entries?: InspectionOperationalFeedEntry[]
   work_area?: string
   system_category: string
   summary: string
@@ -172,6 +193,20 @@ function safeFileName(name: string) {
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : []
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return values
+    .map((value) => String(value || '').replace(/\s+/g, ' ').trim())
+    .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index)
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 72)
 }
 
 export const REVIEW_PACKET_VERSION = 'review-packet-v1'
@@ -291,21 +326,32 @@ export function applyReviewPacketToBundle(
   bundle: InspectionRepairBundleDraft,
   propertyAddress = ''
 ): InspectionRepairBundleDraft {
+  const missingInfo = uniqueStrings([
+    ...safeArray(bundle.missing_information),
+    ...safeArray(bundle.unknowns),
+    ...safeArray(bundle.next_evidence_needed),
+  ])
+  const sourceReferenceCount = uniqueStrings([
+    bundle.source_page,
+    bundle.source_text,
+    ...safeArray(bundle.resource_categories),
+    ...safeArray(bundle.evidence_references),
+  ]).length
   const metadata = createReviewPacketMetadata({
     propertyAddress,
     title: bundle.title,
-    tradeCategory: bundle.recommended_trade || bundle.system_category,
+    tradeCategory: bundle.trade_owner || bundle.recommended_trade || bundle.system_category,
     priority: bundle.priority,
     severity: bundle.severity,
-    whatMatters: bundle.risk_explanation || bundle.summary,
-    evidenceSummary: bundle.evidence_summary || bundle.summary,
-    missingInfo: bundle.missing_information || [],
-    nextAction: bundle.recommended_next_action,
+    whatMatters: bundle.finding_summary || bundle.risk_explanation || bundle.summary,
+    evidenceSummary: bundle.evidence_summary || safeArray(bundle.known_facts).join(' ') || bundle.summary,
+    missingInfo,
+    nextAction: bundle.recommended_next_move || bundle.recommended_next_action,
     estimateLow: bundle.estimate_low,
     estimateHigh: bundle.estimate_high,
     estimateNote: bundle.estimate_note,
     researchConfirmationStatus: (bundle.resource_categories || []).length ? 'Source research categories suggested; admin confirmation pending.' : 'No confirmation links reviewed yet.',
-    sourceReferenceCount: [bundle.source_page, bundle.source_text, ...(bundle.resource_categories || [])].filter(Boolean).length,
+    sourceReferenceCount,
     confidence: bundle.confidence,
   })
   return {
@@ -450,6 +496,483 @@ export function buildBerlinAveWorkGroups(
   ]
 }
 
+const RIVER_ROAD_REPORT_LABEL = '2681 SE River Rd Unit 10 inspection report'
+const NO_PRICING_CLAIM_NOTE = 'No pricing claim. Trade review is required before estimating.'
+
+type RiverRoadBundleSeed = {
+  bundleId: string
+  title: string
+  workArea: string
+  systemCategory: string
+  relatedReportItems: string[]
+  tradeOwner: string
+  findingSummary: string
+  knownFacts: string[]
+  unknowns: string[]
+  clues: string[]
+  nextEvidenceNeeded: string[]
+  recommendedNextMove: string
+  priority: string
+  severity: string
+  sellerImpact: string
+  contractorPacketNeeded: boolean
+  safetyConcern?: boolean
+  resourceCategories: string[]
+  contractorScopeNote: string
+}
+
+export const RIVER_ROAD_FINDING_TEXTS = [
+  'Metal roof penetrations have cracked sealant.',
+  'Plumbing vent flashings are deteriorated.',
+  'Gutter leak noted.',
+  'Downspout drainage needs review.',
+  'Living room ceiling sagging may be a related water-intrusion consequence and needs verification.',
+  'Aluminum siding is warped or loose.',
+  'Siding has missing fasteners.',
+  'Gaps are present around windows or trim.',
+  'Manufactured home skirting is damaged.',
+  'Window head flashings are missing.',
+  'Vegetation is against the structure.',
+  'Crawlspace perimeter has pest openings.',
+  'Bathroom floor discoloration has elevated moisture.',
+  'Guest bath P-trap is actively leaking.',
+  'Showerhead or faucet penetrations are loose.',
+  'Shower pan-to-floor caulk is missing.',
+  'Shower surround drainage channels have improper caulking.',
+  'Primary bath toilet has moisture or wax ring concern.',
+  'Sink shutoff valves are missing.',
+  'Corrugated flexible drain lines are present.',
+  'Living room ceiling panel is sagging.',
+  'Adjacent kitchen ceiling area is sagging.',
+  'Damaged belly wrap noted.',
+  'Crawlspace access door does not fit properly.',
+  'Rodent or pest entry points noted.',
+  'Dryer vent is disconnected from exterior vent hood.',
+  'Insulation visibility is limited.',
+  'Heat pump has exposed wiring covered with electrical tape.',
+  'Air filter is dirty.',
+  'Rusted exterior man door noted.',
+  'Primary bedroom sliding closet door needs adjustment.',
+  'Dishwasher was not tested because shutoff valve was off.',
+  'Laundry floor dips or damaged linoleum noted.',
+  'Sink stopper linkages need repair or adjustment.',
+]
+
+const RIVER_ROAD_BUNDLE_SEEDS: RiverRoadBundleSeed[] = [
+  {
+    bundleId: 'roof-water-intrusion',
+    title: 'Roof / Water Intrusion',
+    workArea: 'Metal roof, gutters, downspouts, ceiling clue',
+    systemCategory: 'Roof / water intrusion',
+    relatedReportItems: [
+      'Metal roof penetrations with cracked sealant',
+      'Deteriorated plumbing vent flashings',
+      'Gutter leak',
+      'Downspout drainage',
+      'Living room ceiling sagging as possible related consequence, needs verification',
+    ],
+    tradeOwner: 'Roofer / Admin',
+    findingSummary: 'Roof penetrations, vent flashings, gutter leakage, and downspout drainage are grouped because they may share a water-management consequence. Ceiling sagging is only a clue until verified.',
+    knownFacts: [
+      'Metal roof penetrations have cracked sealant.',
+      'Plumbing vent flashings are deteriorated.',
+      'Gutter leakage and downspout drainage concerns were reported.',
+      'Living room ceiling sagging was reported, but its cause is not verified.',
+    ],
+    unknowns: [
+      'Whether roof or gutter defects are actively leaking.',
+      'Whether the living room ceiling sagging is related to water intrusion.',
+      'Whether sheathing, ceiling cavity, or finish damage exists behind visible surfaces.',
+    ],
+    clues: [
+      'Cracked sealant at roof penetrations is a water-entry clue.',
+      'Deteriorated plumbing vent flashings are a roof-side vulnerability clue.',
+      'Ceiling sagging may be a consequence, but the cause is unknown.',
+    ],
+    nextEvidenceNeeded: [
+      'Roof walk photos of penetrations, vent flashings, gutter leak area, and downspout discharge.',
+      'Interior ceiling photos and moisture/cavity review where safely accessible.',
+      'Roofer note separating roof repair scope from interior verification needs.',
+    ],
+    recommendedNextMove: 'Group these items into one roof/water-intrusion review; request roofer/admin verification before repair scope, seller report, or pricing.',
+    priority: 'High',
+    severity: 'High',
+    sellerImpact: 'Potential water-intrusion issue can affect buyer confidence and should be explained as draft until source and hidden damage are verified.',
+    contractorPacketNeeded: true,
+    resourceCategories: ['roofing contractor', 'moisture/water intrusion', 'gutter/downspout drainage', 'hidden damage verification'],
+    contractorScopeNote: 'Verify roof penetrations, vent flashings, gutter leak, downspout drainage, and whether ceiling sagging relates to water entry.',
+  },
+  {
+    bundleId: 'exterior-envelope-siding-skirting-pest-entry',
+    title: 'Exterior Envelope / Siding / Skirting / Pest Entry',
+    workArea: 'Exterior siding, windows, trim, skirting, vegetation, pest openings',
+    systemCategory: 'Exterior envelope / pest entry',
+    relatedReportItems: [
+      'Warped or loose aluminum siding',
+      'Missing fasteners',
+      'Gaps around windows/trim',
+      'Damaged manufactured home skirting',
+      'Missing window head flashings',
+      'Vegetation against structure',
+      'Crawlspace perimeter pest openings',
+    ],
+    tradeOwner: 'Exterior repair / Pest exclusion / Admin',
+    findingSummary: 'Exterior envelope defects and pest-entry openings are grouped because they affect water shedding, perimeter protection, and access for pests.',
+    knownFacts: [
+      'Aluminum siding is warped or loose and has missing fasteners.',
+      'Gaps exist around windows or trim.',
+      'Manufactured home skirting is damaged.',
+      'Window head flashings are missing.',
+      'Vegetation contacts the structure and crawlspace perimeter pest openings were reported.',
+    ],
+    unknowns: [
+      'Whether wall, trim, or skirting damage has allowed moisture or pest entry behind finishes.',
+      'How many elevations and openings are affected.',
+      'Whether pest exclusion, siding repair, or broader envelope repair should lead the work.',
+    ],
+    clues: [
+      'Missing head flashings can indicate a water-management gap.',
+      'Damaged skirting and perimeter openings are pest-access clues.',
+      'Vegetation contact can hide siding/skirting damage and trap moisture.',
+    ],
+    nextEvidenceNeeded: [
+      'Wide exterior elevation photos and close-ups of each siding, trim, window, skirting, and perimeter opening.',
+      'Pest-exclusion review of crawlspace perimeter and skirting.',
+      'Exterior contractor note on repair sequence before caulk/finish work.',
+    ],
+    recommendedNextMove: 'Bundle exterior defects into one envelope/pest-entry review so repair sequence and access points are verified before seller-facing guidance.',
+    priority: 'High',
+    severity: 'Medium',
+    sellerImpact: 'Exterior defects may read as deferred maintenance and possible moisture/pest risk; keep conclusions draft until extent is verified.',
+    contractorPacketNeeded: true,
+    resourceCategories: ['siding/exterior repair contractor', 'pest exclusion', 'moisture management', 'manufactured home skirting'],
+    contractorScopeNote: 'Review siding, window flashing, skirting, vegetation, and pest openings together; identify priority repairs and pest-exclusion steps.',
+  },
+  {
+    bundleId: 'bathroom-moisture-plumbing',
+    title: 'Bathroom Moisture / Plumbing',
+    workArea: 'Bathrooms, fixtures, drains, shutoffs',
+    systemCategory: 'Bathroom moisture / plumbing',
+    relatedReportItems: [
+      'Bathroom floor discoloration with elevated moisture',
+      'Guest bath active P-trap leak',
+      'Loose showerhead/faucet penetrations',
+      'Missing shower pan-to-floor caulk',
+      'Improper caulking in shower surround drainage channels',
+      'Primary bath toilet moisture/wax ring concern',
+      'Missing sink shutoff valves',
+      'Corrugated flexible drain lines',
+    ],
+    tradeOwner: 'Licensed plumber / Admin',
+    findingSummary: 'Bathroom moisture observations, active leak evidence, fixture penetrations, drain concerns, and missing shutoffs belong in one plumbing/moisture bundle.',
+    knownFacts: [
+      'Bathroom floor discoloration with elevated moisture was reported.',
+      'Guest bath P-trap leak was described as active.',
+      'Shower penetrations, shower pan caulk, and shower surround caulking need correction or review.',
+      'Primary bath toilet moisture/wax ring concern was reported.',
+      'Missing sink shutoff valves and corrugated flexible drain lines were reported.',
+    ],
+    unknowns: [
+      'Whether elevated bathroom floor moisture is localized or indicates hidden subfloor damage.',
+      'Whether the primary toilet concern is wax ring failure, supply leak, condensation, or another source.',
+      'Whether drain-line and shutoff corrections require broader fixture access.',
+    ],
+    clues: [
+      'Active P-trap leak is direct evidence of a plumbing defect.',
+      'Elevated moisture and floor discoloration are hidden-damage clues.',
+      'Loose penetrations and missing caulk can allow water into finishes.',
+    ],
+    nextEvidenceNeeded: [
+      'Plumber photos/notes at P-trap, toilet base, shutoff locations, drain lines, and shower penetrations.',
+      'Moisture readings and photos of bathroom flooring around affected fixtures.',
+      'Admin decision on whether to open/verify subfloor conditions before seller-ready report.',
+    ],
+    recommendedNextMove: 'Route as one bathroom moisture/plumbing review; fix active leak and verify moisture source before any final seller or contractor packet.',
+    priority: 'High',
+    severity: 'High',
+    sellerImpact: 'Active leak and moisture language can raise negotiation risk; keep as AI Draft until plumber/admin review confirms source and repair path.',
+    contractorPacketNeeded: true,
+    resourceCategories: ['licensed plumber', 'moisture verification', 'fixture/drain repair', 'hidden damage verification'],
+    contractorScopeNote: 'Verify active guest bath leak, toilet moisture concern, shower penetrations/caulking, missing shutoffs, and drain-line materials.',
+  },
+  {
+    bundleId: 'ceiling-possible-hidden-damage',
+    title: 'Ceiling / Possible Hidden Damage',
+    workArea: 'Living room and kitchen ceiling areas',
+    systemCategory: 'Ceiling / concealed condition',
+    relatedReportItems: [
+      'Living room ceiling panel sagging',
+      'Adjacent kitchen ceiling area sagging',
+      'Unknown cause: moisture, support, panel failure, or concealed condition',
+      'Requires interior and roof-side/cavity-side review where accessible',
+    ],
+    tradeOwner: 'General contractor / Roofer / Admin',
+    findingSummary: 'Ceiling sagging is separated as a hidden-damage verification bundle because the cause is unknown and should not be guessed from surface evidence.',
+    knownFacts: [
+      'Living room ceiling panel sagging was reported.',
+      'Adjacent kitchen ceiling area sagging was reported.',
+      'The cause has not been verified.',
+    ],
+    unknowns: [
+      'Whether sagging is from moisture, support movement, panel failure, installation condition, or another concealed issue.',
+      'Whether roof-side, attic/cavity-side, or interior-side access can confirm the cause without destructive work.',
+      'Whether repair is cosmetic, moisture-related, or structural/support-related.',
+    ],
+    clues: [
+      'Nearby roof/water-management defects may be relevant but are not proof of cause.',
+      'Sagging across adjacent ceiling areas may indicate a broader concealed condition.',
+    ],
+    nextEvidenceNeeded: [
+      'Interior photos showing ceiling sagging extent and location relationship to roof penetrations or plumbing.',
+      'Moisture readings and accessible cavity/roof-side review where safe.',
+      'Admin decision on whether GC, roofer, or both should inspect before report finalization.',
+    ],
+    recommendedNextMove: 'Flag ceiling sagging as needs verification; do not assign cause until interior and roof-side/cavity-side review supports it.',
+    priority: 'High',
+    severity: 'Needs review',
+    sellerImpact: 'Possible hidden damage can change negotiation posture; seller-facing language should say cause unknown until reviewed.',
+    contractorPacketNeeded: true,
+    resourceCategories: ['general contractor', 'roofing contractor', 'moisture verification', 'concealed condition review'],
+    contractorScopeNote: 'Verify ceiling sagging cause and whether roof, moisture, support, panel failure, or concealed condition is involved.',
+  },
+  {
+    bundleId: 'crawlspace-underfloor-protection',
+    title: 'Crawlspace / Underfloor Protection',
+    workArea: 'Crawlspace, belly wrap, access, dryer vent, insulation visibility',
+    systemCategory: 'Crawlspace / underfloor protection',
+    relatedReportItems: [
+      'Damaged belly wrap',
+      'Crawlspace access door does not fit properly',
+      'Rodent/pest entry points',
+      'Dryer vent disconnected from exterior vent hood',
+      'Insulation visibility limitations',
+    ],
+    tradeOwner: 'Crawlspace / Pest exclusion / Dryer vent / Admin',
+    findingSummary: 'Underfloor protection items are bundled because belly wrap damage, access gaps, pest entry, disconnected dryer venting, and limited visibility affect crawlspace condition and verification.',
+    knownFacts: [
+      'Belly wrap damage was reported.',
+      'Crawlspace access door does not fit properly.',
+      'Rodent/pest entry points were reported.',
+      'Dryer vent is disconnected from the exterior vent hood.',
+      'Insulation visibility was limited.',
+    ],
+    unknowns: [
+      'Whether pests damaged insulation, ducts, wiring, or underfloor components.',
+      'Whether disconnected dryer venting has added lint or moisture to the crawlspace.',
+      'Whether insulation or belly wrap repairs require pest remediation first.',
+    ],
+    clues: [
+      'Damaged belly wrap can expose underfloor insulation or systems.',
+      'Access door gaps and pest openings are entry clues.',
+      'Disconnected dryer vent can create lint/moisture concern.',
+    ],
+    nextEvidenceNeeded: [
+      'Crawlspace photos of belly wrap, access door fit, pest openings, dryer vent route, and visible insulation.',
+      'Contractor note on pest-exclusion and belly-wrap repair sequence.',
+      'Dryer vent reconnection verification to exterior vent hood.',
+    ],
+    recommendedNextMove: 'Route crawlspace items as one underfloor protection review; verify pest/moisture implications before closing scope.',
+    priority: 'Medium',
+    severity: 'Medium',
+    sellerImpact: 'Crawlspace defects can make buyers worry about hidden damage; clear evidence and owner assignment reduce uncertainty.',
+    contractorPacketNeeded: true,
+    resourceCategories: ['crawlspace contractor', 'pest exclusion', 'dryer vent repair', 'insulation/underfloor protection'],
+    contractorScopeNote: 'Inspect belly wrap, pest openings, access door, dryer vent disconnection, and insulation visibility limits together.',
+  },
+  {
+    bundleId: 'hvac-electrical-safety',
+    title: 'HVAC / Electrical Safety',
+    workArea: 'Heat pump and HVAC service items',
+    systemCategory: 'HVAC / electrical safety',
+    relatedReportItems: [
+      'Heat pump exposed wiring covered with electrical tape',
+      'Dirty air filter',
+      'Licensed HVAC review required',
+    ],
+    tradeOwner: 'Licensed HVAC / Electrician / Admin',
+    findingSummary: 'Heat pump wiring and service conditions are grouped because exposed wiring and equipment service concerns require licensed review before use in final guidance.',
+    knownFacts: [
+      'Heat pump exposed wiring covered with electrical tape was reported.',
+      'Air filter is dirty.',
+      'Licensed HVAC review is required before treating the condition as resolved.',
+    ],
+    unknowns: [
+      'Whether exposed wiring is low-voltage/control wiring, line-voltage wiring, or another equipment condition.',
+      'Whether equipment has other service or safety defects beyond visible filter/wiring notes.',
+      'Whether an electrician is also required after HVAC review.',
+    ],
+    clues: [
+      'Electrical tape over exposed heat pump wiring is a safety/service clue.',
+      'Dirty filter suggests maintenance is overdue but does not prove system failure.',
+    ],
+    nextEvidenceNeeded: [
+      'Close-up and wide photos of heat pump wiring condition.',
+      'HVAC technician review note identifying wiring type and correction.',
+      'Service record or filter replacement confirmation if available.',
+    ],
+    recommendedNextMove: 'Request licensed HVAC review first, with electrician follow-up if wiring condition is outside HVAC scope.',
+    priority: 'High',
+    severity: 'High',
+    sellerImpact: 'Safety-adjacent HVAC/electrical language should stay draft until licensed review clarifies risk and repair path.',
+    contractorPacketNeeded: true,
+    safetyConcern: true,
+    resourceCategories: ['licensed HVAC', 'licensed electrician', 'equipment safety', 'manufacturer/service guidance'],
+    contractorScopeNote: 'Verify heat pump wiring condition, filter/service needs, and whether electrical correction is required.',
+  },
+  {
+    bundleId: 'general-maintenance-minor-repairs',
+    title: 'General Maintenance / Minor Repairs',
+    workArea: 'Doors, closet, dishwasher test condition, laundry flooring, sink stoppers',
+    systemCategory: 'General maintenance / minor repairs',
+    relatedReportItems: [
+      'Rusted exterior man door',
+      'Primary bedroom sliding closet door adjustment',
+      'Dishwasher not tested due to shutoff valve off',
+      'Laundry floor dips/damaged linoleum',
+      'Sink stopper linkages',
+    ],
+    tradeOwner: 'Handyman / Admin',
+    findingSummary: 'Minor repair and maintenance items are grouped separately so they do not obscure higher-risk moisture, roof, crawlspace, or safety bundles.',
+    knownFacts: [
+      'Exterior man door is rusted.',
+      'Primary bedroom sliding closet door needs adjustment.',
+      'Dishwasher was not tested because the shutoff valve was off.',
+      'Laundry floor dips or damaged linoleum were reported.',
+      'Sink stopper linkages need repair or adjustment.',
+    ],
+    unknowns: [
+      'Whether dishwasher operates normally once the shutoff valve is turned on.',
+      'Whether laundry floor dips are cosmetic flooring damage or indicate subfloor/support concern.',
+      'Whether door rust is surface-level or requires replacement.',
+    ],
+    clues: [
+      'Dishwasher test limitation is a missing-decision/missing-access clue.',
+      'Laundry floor dips may be cosmetic or may point to a concealed floor condition.',
+    ],
+    nextEvidenceNeeded: [
+      'Photos of door rust, closet door track, laundry flooring, and stopper linkages.',
+      'Admin decision on dishwasher test after shutoff valve is opened by appropriate person.',
+      'Handyman review separating simple adjustments from items needing trade escalation.',
+    ],
+    recommendedNextMove: 'Keep these as a general maintenance bundle; verify dishwasher and laundry floor questions before seller-ready language.',
+    priority: 'Low',
+    severity: 'Low',
+    sellerImpact: 'Useful for seller prep punch-list planning, but should not distract from high-risk review bundles.',
+    contractorPacketNeeded: false,
+    resourceCategories: ['handyman', 'appliance test limitation', 'flooring review', 'maintenance punch list'],
+    contractorScopeNote: 'Review minor repairs and call out any item that needs plumber, appliance, or flooring trade escalation.',
+  },
+]
+
+function buildEvidenceReferences(inspectionReportId: string, bundleId: string, items: string[]) {
+  return items.map((item, index) => `inspection:${inspectionReportId}:${bundleId}:${index + 1}:${slugify(item)}`)
+}
+
+function createOperationalFeedEntry(params: {
+  title: string
+  finding: string
+  owner: string
+  status: string
+}): InspectionOperationalFeedEntry {
+  return {
+    finding: params.finding,
+    move: `Grouped into ${params.title} bundle.`,
+    owner: params.owner,
+    status: params.status,
+  }
+}
+
+export function buildOperationalFeedEntriesFromBundles(bundles: InspectionRepairBundleDraft[]) {
+  return safeArray(bundles).flatMap((bundle) => (
+    safeArray(bundle.operational_feed_entries).length
+      ? safeArray(bundle.operational_feed_entries)
+      : [
+          createOperationalFeedEntry({
+            title: bundle.title,
+            finding: bundle.finding_summary || bundle.evidence_summary || bundle.summary,
+            owner: bundle.trade_owner || bundle.recommended_trade || 'Admin',
+            status: bundle.recommended_next_move || bundle.recommended_next_action || 'Needs review before use.',
+          }),
+        ]
+  ))
+}
+
+export function isRiverRoadInspectionContext(text: string) {
+  return /2681\s+se\s+river|river\s+rd\s+unit\s*10|se\s+river\s+rd/i.test(text) ||
+    (/(metal roof penetrations|deteriorated plumbing vent flashing|cracked sealant)/i.test(text) &&
+      /(belly wrap|manufactured home skirting|guest bath|p-trap|heat pump exposed wiring)/i.test(text))
+}
+
+export function buildRiverRoadWorkGroups(
+  inspectionReportId = 'inspection-2681-se-river-rd-unit-10',
+  propertyId?: string | number | null
+): InspectionRepairBundleDraft[] {
+  return RIVER_ROAD_BUNDLE_SEEDS.map((seed, index) => {
+    const evidenceReferences = buildEvidenceReferences(inspectionReportId, seed.bundleId, seed.relatedReportItems)
+    const sourceText = seed.relatedReportItems.join('; ')
+    const status = seed.title === 'Roof / Water Intrusion'
+      ? 'Needs roof walk and penetration repair quote.'
+      : seed.title === 'Ceiling / Possible Hidden Damage'
+        ? 'Needs interior and roof-side/cavity-side verification; cause unknown.'
+        : seed.title === 'HVAC / Electrical Safety'
+          ? 'Needs licensed HVAC review before final guidance.'
+          : seed.contractorPacketNeeded
+            ? 'Needs contractor/admin verification before external use.'
+            : 'Needs admin review before punch-list use.'
+
+    return {
+      id: `${inspectionReportId}-${seed.bundleId}`,
+      bundle_id: seed.bundleId,
+      property_id: propertyId || null,
+      inspection_report_id: inspectionReportId,
+      title: seed.title,
+      related_report_items: seed.relatedReportItems,
+      trade_owner: seed.tradeOwner,
+      finding_summary: seed.findingSummary,
+      known_facts: seed.knownFacts,
+      unknowns: seed.unknowns,
+      clues: seed.clues,
+      next_evidence_needed: seed.nextEvidenceNeeded,
+      recommended_next_move: seed.recommendedNextMove,
+      review_status: 'needs_review',
+      seller_impact: seed.sellerImpact,
+      contractor_packet_needed: seed.contractorPacketNeeded,
+      evidence_references: evidenceReferences,
+      operational_feed_entries: [
+        createOperationalFeedEntry({
+          title: seed.title,
+          finding: seed.knownFacts[0] || seed.findingSummary,
+          owner: seed.tradeOwner,
+          status,
+        }),
+      ],
+      work_area: seed.workArea,
+      system_category: seed.systemCategory,
+      summary: seed.findingSummary,
+      evidence_summary: seed.knownFacts.join(' '),
+      risk_explanation: seed.sellerImpact,
+      recommended_trade: seed.tradeOwner,
+      likely_contractor_type: seed.tradeOwner,
+      priority: seed.priority,
+      severity: seed.severity,
+      safety_concern: Boolean(seed.safetyConcern),
+      recommended_next_action: seed.recommendedNextMove,
+      missing_information: uniqueStrings([...seed.unknowns, ...seed.nextEvidenceNeeded]),
+      resource_categories: seed.resourceCategories,
+      source_text: sourceText,
+      source_page: RIVER_ROAD_REPORT_LABEL,
+      estimate_low: 0,
+      estimate_high: 0,
+      estimate_note: NO_PRICING_CLAIM_NOTE,
+      contractor_scope_note: seed.contractorScopeNote,
+      confidence: 'medium',
+      status: 'ai_draft',
+      admin_notes: 'AI Draft / Needs Review. Do not mark contractor verified unless a contractor has reviewed. Contractor corrections become memory candidates only after approval.',
+      finding_ids: seed.relatedReportItems.map((_, itemIndex) => `${inspectionReportId}-river-${index}-${itemIndex}`),
+    }
+  })
+}
+
 function firstMatch(text: string, patterns: RegExp[]) {
   for (const pattern of patterns) {
     const match = text.match(pattern)
@@ -466,6 +989,7 @@ export function extractInspectionDate(text: string) {
 }
 
 export function extractInspectionFindings(text: string) {
+  const hasRiverRoadSignal = isRiverRoadInspectionContext(text)
   const chunks = text
     .split(/(?:\.\s+|\n|•|- )/)
     .map((item) => item.trim().replace(/\s{2,}/g, ' '))
@@ -504,7 +1028,10 @@ export function extractInspectionFindings(text: string) {
       ]
     : []
 
-  return Array.from(new Set([...operationalFindings, ...extracted, ...berlinFallback])).slice(0, 8)
+  const riverRoadFindings = hasRiverRoadSignal ? RIVER_ROAD_FINDING_TEXTS : []
+  const limit = hasRiverRoadSignal ? RIVER_ROAD_FINDING_TEXTS.length : 8
+
+  return Array.from(new Set([...riverRoadFindings, ...operationalFindings, ...extracted, ...berlinFallback])).slice(0, limit)
 }
 
 function getInspectionBundleBasics(finding: string): InspectionBundleBasics {
@@ -739,16 +1266,42 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
     if (existing) {
       existing.estimate_low += item.estimate_low
       existing.estimate_high += item.estimate_high
-      existing.finding_ids.push(item.id)
+      existing.finding_ids = uniqueStrings([...existing.finding_ids, item.id])
+      existing.related_report_items = uniqueStrings([...(existing.related_report_items || []), item.source_text])
+      existing.known_facts = uniqueStrings([...(existing.known_facts || []), item.source_text])
+      existing.unknowns = uniqueStrings([...(existing.unknowns || []), ...safeArray(item.missing_info)])
+      existing.next_evidence_needed = uniqueStrings([...(existing.next_evidence_needed || []), ...safeArray(item.missing_info)])
+      existing.evidence_references = uniqueStrings([...(existing.evidence_references || []), item.id, item.inspection_report_id])
       existing.priority = existing.priority.includes('Immediate') ? existing.priority : basics.priority
       return
     }
 
     bundleMap.set(item.repair_bundle_id, applyReviewPacketToBundle({
       id: item.repair_bundle_id,
+      bundle_id: basics.bundleId,
       property_id: propertyId || null,
       inspection_report_id: item.inspection_report_id,
       title: basics.title,
+      related_report_items: [item.source_text],
+      trade_owner: basics.trade,
+      finding_summary: basics.summary,
+      known_facts: [item.source_text],
+      unknowns: item.missing_info,
+      clues: [basics.evidenceSummary],
+      next_evidence_needed: item.missing_info,
+      recommended_next_move: basics.nextAction,
+      review_status: 'needs_review',
+      seller_impact: basics.riskExplanation,
+      contractor_packet_needed: basics.recommendation === 'contractor_review' || basics.severity === 'High',
+      evidence_references: [item.id, item.inspection_report_id],
+      operational_feed_entries: [
+        createOperationalFeedEntry({
+          title: basics.title,
+          finding: item.source_text,
+          owner: basics.trade,
+          status: basics.nextAction,
+        }),
+      ],
       work_area: basics.workArea,
       system_category: basics.systemCategory,
       summary: basics.summary,
@@ -775,7 +1328,7 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
     }, propertyAddress))
   })
 
-  return Array.from(bundleMap.values()).sort((a, b) => {
+  return Array.from(bundleMap.values()).map((bundle) => applyReviewPacketToBundle(bundle, propertyAddress)).sort((a, b) => {
     const order = ['Immediate', 'High', 'Needs']
     return order.findIndex((item) => a.priority.includes(item)) - order.findIndex((item) => b.priority.includes(item))
   })
@@ -810,10 +1363,14 @@ export function buildInspectionIntelligenceDraft(params: {
   propertyId?: string | number | null
 }): InspectionIntelligenceDraft {
   const inspectionReportId = `inspection-${safeFileName(params.fileName)}`
-  const hasBerlinAddress = /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(`${params.propertyAddress} ${params.city} ${params.fileName}`)
   const inputFindings = safeArray(params.findings)
+  const sourceContext = `${params.propertyAddress} ${params.city} ${params.state} ${params.fileName} ${inputFindings.join(' ')}`
+  const hasRiverRoadAddress = isRiverRoadInspectionContext(sourceContext)
+  const hasBerlinAddress = !hasRiverRoadAddress && /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(sourceContext)
   const inputMissingInfo = safeArray(params.missingInfo)
-  const sourceFindings = inputFindings.length || !hasBerlinAddress
+  const sourceFindings = hasRiverRoadAddress
+    ? RIVER_ROAD_FINDING_TEXTS
+    : inputFindings.length || !hasBerlinAddress
     ? inputFindings
     : [
         'Possible roof leaks observed from attic with dark staining on north-facing roof slope and ridge.',
@@ -829,7 +1386,9 @@ export function buildInspectionIntelligenceDraft(params: {
   const builtRepairBundles = buildRepairBundles(repairItems, params.propertyId, params.propertyAddress)
   const normalizedWorkGroups = hasBerlinAddress
     ? buildBerlinAveWorkGroups(inspectionReportId, params.propertyId).map((bundle) => applyReviewPacketToBundle(bundle, '11134 SW Berlin Ave'))
-    : builtRepairBundles
+    : hasRiverRoadAddress
+      ? buildRiverRoadWorkGroups(inspectionReportId, params.propertyId).map((bundle) => applyReviewPacketToBundle(bundle, '2681 SE River Rd Unit 10'))
+      : builtRepairBundles
   const estimateLow = normalizedWorkGroups.reduce((sum, bundle) => sum + bundle.estimate_low, 0)
   const estimateHigh = normalizedWorkGroups.reduce((sum, bundle) => sum + bundle.estimate_high, 0)
   const immediateItems = repairItems.filter((item) => /Immediate|leak|safety|water/i.test(`${item.urgency} ${item.category}`)).map((item) => item.description)
@@ -839,15 +1398,19 @@ export function buildInspectionIntelligenceDraft(params: {
   const missingQuestions = Array.from(new Set([
     ...inputMissingInfo,
     ...repairItems.flatMap((item) => item.missing_info),
+    ...normalizedWorkGroups.flatMap((bundle) => [
+      ...safeArray(bundle.unknowns),
+      ...safeArray(bundle.next_evidence_needed),
+    ]),
   ])).filter(Boolean)
-  const tradeScopes = normalizedWorkGroups.map((bundle) => `${bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`)
-  const priorityRoadmap = normalizedWorkGroups.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.risk_explanation}`)
+  const tradeScopes = normalizedWorkGroups.map((bundle) => `${bundle.trade_owner || bundle.recommended_trade}: ${bundle.summary} Confirm ${bundle.finding_ids.length} finding${bundle.finding_ids.length === 1 ? '' : 's'} before pricing.`)
+  const priorityRoadmap = normalizedWorkGroups.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.finding_summary || bundle.risk_explanation}`)
 
   return {
     id: inspectionReportId,
     fileName: params.fileName,
     reportType: params.reportType,
-    propertyAddress: hasBerlinAddress ? '11134 SW Berlin Ave' : params.propertyAddress,
+    propertyAddress: hasBerlinAddress ? '11134 SW Berlin Ave' : hasRiverRoadAddress ? (params.propertyAddress || '2681 SE River Rd Unit 10') : params.propertyAddress,
     city: hasBerlinAddress ? 'Wilsonville' : params.city,
     state: hasBerlinAddress ? 'OR' : params.state,
     inspectionDate: params.inspectionDate,

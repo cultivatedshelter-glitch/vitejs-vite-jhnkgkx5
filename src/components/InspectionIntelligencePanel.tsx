@@ -81,6 +81,117 @@ function ReviewPacketSummary({
   )
 }
 
+function BundleIntelligenceDetails({
+  bundle,
+  styles,
+}: {
+  bundle: InspectionRepairBundleDraft
+  styles: Styles
+}) {
+  const relatedItems = safeArray(bundle.related_report_items)
+  const knownFacts = safeArray(bundle.known_facts)
+  const unknowns = safeArray(bundle.unknowns)
+  const clues = safeArray(bundle.clues)
+  const nextEvidence = safeArray(bundle.next_evidence_needed)
+  const evidenceReferences = safeArray(bundle.evidence_references)
+  const feedEntries = safeArray(bundle.operational_feed_entries)
+  const hasOperationalDetails = [
+    relatedItems,
+    knownFacts,
+    unknowns,
+    clues,
+    nextEvidence,
+    evidenceReferences,
+    feedEntries,
+  ].some((items) => items.length > 0) || Boolean(bundle.trade_owner || bundle.recommended_next_move || bundle.seller_impact)
+
+  if (!hasOperationalDetails) return null
+
+  return (
+    <details style={styles.moreActions}>
+      <summary style={styles.moreActionsSummary}>Bundle logic</summary>
+      <p style={styles.small}>Owner: {bundle.trade_owner || bundle.recommended_trade || 'Admin review needed'}</p>
+      <p style={styles.small}>Status: {bundle.recommended_next_move || bundle.recommended_next_action || 'Needs review before use.'}</p>
+      {bundle.seller_impact && <p style={styles.small}>Seller impact: {bundle.seller_impact}</p>}
+      {bundle.contractor_packet_needed !== undefined && (
+        <p style={styles.small}>Contractor packet needed: {bundle.contractor_packet_needed ? 'Yes' : 'No'}</p>
+      )}
+      {relatedItems.length > 0 && (
+        <>
+          <strong>Related report items</strong>
+          <ul style={styles.smallList}>
+            {relatedItems.map((item, index) => (
+              <li key={`${bundle.id}-related-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {knownFacts.length > 0 && (
+        <>
+          <strong>Known facts</strong>
+          <ul style={styles.smallList}>
+            {knownFacts.map((item, index) => (
+              <li key={`${bundle.id}-known-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {unknowns.length > 0 && (
+        <>
+          <strong>Unknowns</strong>
+          <ul style={styles.smallList}>
+            {unknowns.map((item, index) => (
+              <li key={`${bundle.id}-unknown-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {clues.length > 0 && (
+        <>
+          <strong>Clues</strong>
+          <ul style={styles.smallList}>
+            {clues.map((item, index) => (
+              <li key={`${bundle.id}-clue-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {nextEvidence.length > 0 && (
+        <>
+          <strong>Next evidence needed</strong>
+          <ul style={styles.smallList}>
+            {nextEvidence.map((item, index) => (
+              <li key={`${bundle.id}-next-evidence-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {feedEntries.length > 0 && (
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Operational Feed</summary>
+          <ul style={styles.smallList}>
+            {feedEntries.map((entry, index) => (
+              <li key={`${bundle.id}-feed-${index}`}>
+                Finding: {entry.finding} Move: {entry.move} Owner: {entry.owner} Status: {entry.status}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {evidenceReferences.length > 0 && (
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Evidence references</summary>
+          <ul style={styles.smallList}>
+            {evidenceReferences.map((item, index) => (
+              <li key={`${bundle.id}-evidence-reference-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </details>
+  )
+}
+
 export function InspectionSummarySection({ intelligence, styles, getStatusLabel }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
   return (
     <details open style={styles.moreActions}>
@@ -245,8 +356,9 @@ export function RepairBundlesSection({ intelligence, styles, money, getStatusLab
               </div>
               <p style={styles.small}>{bundle.risk_explanation}</p>
               <p style={styles.small}>
-                {bundle.recommended_trade} - Draft range {money(bundle.estimate_low)} - {money(bundle.estimate_high)} - {bundle.confidence} confidence
+                {bundle.trade_owner || bundle.recommended_trade} - Draft range {money(bundle.estimate_low)} - {money(bundle.estimate_high)} - {bundle.confidence} confidence
               </p>
+              <BundleIntelligenceDetails bundle={bundle} styles={styles} />
             </div>
           ))}
         </div>
@@ -282,9 +394,14 @@ export function AddressWorkGroupsSection({
               <div style={{ flex: 1 }}>
                 <strong>{bundle.title}</strong>
                 <p style={styles.small}>{bundle.evidence_summary || bundle.summary}</p>
+                <p style={styles.small}>
+                  Owner: {bundle.trade_owner || bundle.recommended_trade || 'Admin'} - Status:{' '}
+                  {getStatusLabel(bundle.review_status || bundle.status)}
+                </p>
               </div>
               <span style={styles.badgeMuted}>{bundle.priority}</span>
             </div>
+            <BundleIntelligenceDetails bundle={bundle} styles={styles} />
             <details style={styles.moreActions}>
               <summary style={styles.moreActionsSummary}>Show Audit Details</summary>
             <p style={styles.small}>Trade: {bundle.recommended_trade}</p>

@@ -114,6 +114,142 @@ Real properties, field evidence, uploaded files, photos, inspection excerpts, co
 
 Contractor corrections become memory candidates with provenance, not automatic truth. AI may draft field observations and organize corrections, but human review decides whether an observation becomes reusable memory.
 
+### 6. AI Draft Estimating
+
+Shelter Prep may draft industry-standard estimating assumptions for admins, but it must not become autonomous final estimating software.
+
+Core rule:
+
+```text
+AI may draft pricing and material assumptions. Admin must review, edit, approve, or reject before anything becomes seller-ready, contractor-ready, or memory.
+```
+
+AI Draft Estimating may support:
+
+- estimating a repair bundle
+- generating material lists
+- researching material costs
+- drafting labor steps
+- identifying missing information
+- drafting contractor scope
+- drafting seller summaries
+- comparing a current bundle to reviewed pricing memory
+
+Estimating output must include:
+
+- `bundle_id`
+- `trade_owner`
+- `scope_summary`
+- `labor_steps`
+- `labor_hours_low`
+- `labor_hours_likely`
+- `labor_hours_high`
+- `material_items`
+- `material_cost_low`
+- `material_cost_likely`
+- `material_cost_high`
+- `equipment_or_access_notes`
+- `hidden_damage_risks`
+- `missing_info`
+- `pricing_sources`
+- `confidence`
+- `review_status`
+- `admin_notes`
+
+Material items must include:
+
+- `material_name`
+- `quantity_assumption`
+- `unit_cost_low`
+- `unit_cost_likely`
+- `unit_cost_high`
+- `source`
+- `source_date`
+- `confidence`
+- `substitution_notes`
+
+Rules:
+
+- No final estimate without admin approval.
+- No seller-ready pricing unless reviewed.
+- No contractor-verified status unless contractor reviewed.
+- No generic unsupported pricing claims.
+- Pricing must show knowns, unknowns, assumptions, and missing evidence.
+- If live source research is not implemented, material prices are placeholder/draft and need source verification.
+- Contractor corrections become memory candidates, not automatic truth.
+
+### 7. Material Cost Agent
+
+The Material Cost Agent is a controlled draft function, not an autonomous buyer or pricing authority.
+
+It may:
+
+- draft material items and quantity assumptions
+- identify likely product categories
+- suggest low/likely/high placeholder material costs
+- note source status and source dates
+- compare to reviewed pricing memory when available
+
+It may not:
+
+- purchase materials
+- lock pricing
+- treat placeholder assumptions as verified supplier pricing
+- promote one property outcome into universal memory
+- expose material pricing as seller-ready without review
+
+### 8. Labor Scope Agent
+
+The Labor Scope Agent is a controlled draft function that turns bundles into reviewable labor assumptions.
+
+It may:
+
+- draft labor steps
+- estimate low/likely/high labor-hour assumptions
+- identify equipment, access, sequencing, and hidden-damage risks
+- identify what contractor/admin input is needed before pricing can be trusted
+
+It may not:
+
+- finalize labor hours
+- override contractor judgment
+- mark contractor verified without contractor review
+- create final estimate totals automatically
+
+### 9. Admin Task Workbench
+
+The admin side should behave like a property-specific LLM task console. Admins can type plain-language requests tied to a property, bundle, evidence set, or contractor upload.
+
+Admin task types:
+
+- `estimate_bundle`
+- `generate_material_list`
+- `research_material_costs`
+- `draft_contractor_scope`
+- `draft_seller_summary`
+- `identify_missing_info`
+- `compare_to_memory`
+- `review_contractor_upload`
+- `create_repair_vs_credit_options`
+
+Admin task model:
+
+- `id`
+- `property_id`
+- `bundle_id` optional
+- `task_type`
+- `admin_prompt`
+- `input_evidence_ids`
+- `status`
+- `output_summary`
+- `output_json`
+- `review_status`
+- `created_at`
+- `reviewed_by` optional
+- `approved_at` optional
+
+Task results must appear as AI Draft / Needs Review until admin action. Admins may approve, edit, reject, or request more information. Approved estimates may later feed pricing memory, but approval does not automatically create memory or externally visible output.
+
 ## Workflow Gating Reference
 
 The existing Workflow Gating Principle remains intact:
