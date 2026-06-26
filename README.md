@@ -72,6 +72,14 @@ Do not use `shelter-prep-agent-intake`; that branch came from a small prototype 
 npm run build
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+The regression suite uses Node's built-in test runner and covers inspection scope bundling plus admin task draft-estimate safety.
+
 ## Security Agent
 
 ```bash

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "node --test tests/*.test.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"No lint tooling configured yet\"",
     "security:agent": "node scripts/security-agent.mjs",
