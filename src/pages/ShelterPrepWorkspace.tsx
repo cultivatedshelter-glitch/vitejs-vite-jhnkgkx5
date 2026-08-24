@@ -49,6 +49,15 @@ import {
   buildInspectionReviewEvent,
 } from '../lib/reviewProvenance'
 import {
+  applyContractorScopeReviewRpc,
+  buildContractorScopeDraft,
+  isScopeEligibleFinding,
+  normalizeContractorScope,
+  prepareContractorScopeRpc,
+  type ContractorScopeItem,
+  type ContractorScopeReviewAction,
+} from '../lib/contractorScope'
+import {
   REQUEST_FILES_BUCKET,
   attachFilesToRequests,
   attachPreviewUrls,
@@ -2888,6 +2897,8 @@ export default function ShelterPrepWorkspace() {
   const [openReportPreviewByRequest, setOpenReportPreviewByRequest] = useState<Record<string, boolean>>({})
   const [openPropertyLayersByKey, setOpenPropertyLayersByKey] = useState<Record<string, boolean>>({})
   const [inspectionFindingSavingId, setInspectionFindingSavingId] = useState<string | null>(null)
+  const [contractorScopeSavingId, setContractorScopeSavingId] = useState<string | null>(null)
+  const [contractorScopeDrafts, setContractorScopeDrafts] = useState<Record<string, ContractorScopeItem>>({})
   const [adminTaskPromptsByKey, setAdminTaskPromptsByKey] = useState<Record<string, string>>({})
   const [adminTaskTypesByKey, setAdminTaskTypesByKey] = useState<Record<string, AdminTaskType>>({})
   const [adminTasksByBundleKey, setAdminTasksByBundleKey] = useState<Record<string, AdminTaskDraft[]>>({})
@@ -3930,9 +3941,24 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       if (error) throw error
 
       const mapped = await attachFilesToRequests((data || []).map(mapLeadRowToWorkRequest))
-      setRequests(mapped)
+      const leadIds = mapped.map((request) => request.id).filter(Boolean)
+      let scopes: ContractorScopeItem[] = []
+      if (leadIds.length > 0) {
+        const { data: scopeRows, error: scopeError } = await supabase
+          .from('contractor_scope_packets')
+          .select('*')
+          .in('lead_id', leadIds)
+          .order('created_at', { ascending: true })
+        if (scopeError) throw scopeError
+        scopes = (scopeRows || []).map((row) => normalizeContractorScope(row as Record<string, unknown>))
+      }
+      const mappedWithScopes = mapped.map((request) => ({
+        ...request,
+        contractorScopes: scopes.filter((scope) => scope.lead_id === request.id),
+      }))
+      setRequests(mappedWithScopes)
       if (autoInterpretEvidence && hasAdminConsoleAccess) {
-        void autoInterpretEvidenceForRequests(mapped)
+        void autoInterpretEvidenceForRequests(mappedWithScopes)
       }
     } catch (error: any) {
       console.error(error)
@@ -13523,6 +13549,217 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     )
   }
 
+  async function prepareContractorScope(request: WorkRequest, finding: InspectionRepairItemDraft) {
+    if (!hasAdminConsoleAccess) return
+    const propertyId = getLinkedPropertyId(request)
+    if (propertyId === null || propertyId === undefined || propertyId === '') {
+      alert('A linked property is required before contractor scope can be prepared.')
+      return
+    }
+    setContractorScopeSavingId(`prepare-${finding.id}`)
+    try {
+      const scope = await prepareContractorScopeRpc({
+        client: supabase,
+        leadId: request.id,
+        expectedPropertyId: propertyId,
+        sourceFindingId: finding.id,
+        draft: buildContractorScopeDraft(finding),
+      })
+      setRequests((previous) => previous.map((item) => item.id === request.id
+        ? { ...item, contractorScopes: [...(item.contractorScopes || []), scope] }
+        : item))
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not prepare contractor scope.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setContractorScopeSavingId(null)
+    }
+  }
+
+  function updateContractorScopeDraft(scope: ContractorScopeItem, changes: Partial<ContractorScopeItem>) {
+    setContractorScopeDrafts((previous) => ({
+      ...previous,
+      [scope.id]: { ...(previous[scope.id] || scope), ...changes },
+    }))
+  }
+
+  async function reviewContractorScope(
+    request: WorkRequest,
+    scope: ContractorScopeItem,
+    action: ContractorScopeReviewAction
+  ) {
+    if (!hasAdminConsoleAccess) return
+    const nextScope = contractorScopeDrafts[scope.id] || scope
+    setContractorScopeSavingId(scope.id)
+    try {
+      const committed = await applyContractorScopeReviewRpc({
+        client: supabase,
+        scopeId: scope.id,
+        previousScope: scope,
+        nextScope,
+        action,
+      })
+      setRequests((previous) => previous.map((item) => item.id === request.id
+        ? {
+            ...item,
+            contractorScopes: (item.contractorScopes || []).map((candidate) => (
+              candidate.id === scope.id ? committed.scope : candidate
+            )),
+          }
+        : item))
+      setContractorScopeDrafts((previous) => {
+        const next = { ...previous }
+        delete next[scope.id]
+        return next
+      })
+    } catch (error: any) {
+      console.error(error)
+      alert(error?.message || 'Could not review contractor scope.')
+      await loadRequestsFromSupabase()
+    } finally {
+      setContractorScopeSavingId(null)
+    }
+  }
+
+  function renderContractorScopeWorkflow(request: WorkRequest) {
+    const findings = request.inspectionIntelligence?.repairItems || []
+    const scopes = request.contractorScopes || []
+    const eligibleFindings = findings.filter(isScopeEligibleFinding)
+    const ineligibleFindings = findings.filter((finding) => !isScopeEligibleFinding(finding))
+
+    if (!findings.length && !scopes.length) return null
+
+    return (
+      <details open={eligibleFindings.length > 0 || scopes.length > 0} style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Contractor Scope ({scopes.length})</summary>
+        <div style={styles.noticeBox}>
+          A generated scope is a human-review draft. Contractor Ready means it may be shared for professional evaluation or execution; it does not approve price, confirm field conditions, or guarantee an outcome.
+        </div>
+        {eligibleFindings.map((finding) => {
+          const existingScope = scopes.find((scope) => scope.source_finding_id === finding.id)
+          if (existingScope) return null
+          return (
+            <div key={`scope-action-${finding.id}`} style={styles.buttonRow}>
+              <div style={{ flex: 1 }}>
+                <strong>{finding.description || finding.category}</strong>
+                <p style={styles.small}>Human-verified finding · evidence and review provenance will be linked server-side.</p>
+              </div>
+              {hasAdminConsoleAccess && (
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  disabled={contractorScopeSavingId === `prepare-${finding.id}`}
+                  onClick={() => prepareContractorScope(request, finding)}
+                >
+                  {contractorScopeSavingId === `prepare-${finding.id}` ? 'Preparing...' : 'Prepare Contractor Scope'}
+                </button>
+              )}
+            </div>
+          )
+        })}
+        {eligibleFindings.length === 0 && scopes.length === 0 && (
+          <p style={styles.small}>Verify an inspection finding before preparing contractor scope.</p>
+        )}
+        {scopes.map((scope) => {
+          const draft = contractorScopeDrafts[scope.id] || scope
+          const editable = hasAdminConsoleAccess && scope.scope_status === 'needs_review'
+          const setLines = (field: keyof ContractorScopeItem, value: string) => updateContractorScopeDraft(scope, {
+            [field]: value.split('\n').map((line) => line.trim()).filter(Boolean),
+          })
+          return (
+            <section key={scope.id} style={styles.inspectionTaskCard}>
+              <div style={styles.buttonRow}>
+                <strong>{draft.title}</strong>
+                <span style={scope.scope_status === 'rejected' ? styles.badgeDanger : styles.badgeMuted}>
+                  {scope.scope_status === 'contractor_ready' ? 'Contractor Ready' : scope.scope_status === 'rejected' ? 'Rejected' : 'Needs Scope Review'}
+                </span>
+              </div>
+
+              <strong>Scope</strong>
+              {editable ? (
+                <>
+                  <input style={styles.input} value={draft.title} onChange={(event) => updateContractorScopeDraft(scope, { title: event.target.value })} aria-label="Scope title" />
+                  <input style={styles.input} value={draft.trade_category} onChange={(event) => updateContractorScopeDraft(scope, { trade_category: event.target.value })} aria-label="Trade category" />
+                  <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.repair_objective} onChange={(event) => updateContractorScopeDraft(scope, { repair_objective: event.target.value })} aria-label="Repair objective" />
+                  <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.reviewed_interpretation} onChange={(event) => updateContractorScopeDraft(scope, { reviewed_interpretation: event.target.value })} aria-label="Reviewed interpretation" />
+                </>
+              ) : (
+                <>
+                  <p style={styles.small}><strong>Repair objective:</strong> {scope.repair_objective}</p>
+                  <p style={styles.small}><strong>Reviewed interpretation:</strong> {scope.reviewed_interpretation}</p>
+                </>
+              )}
+
+              <details style={styles.moreActions}>
+                <summary style={styles.moreActionsSummary}>Evidence</summary>
+                <p style={styles.small}>Known condition accepted from the verified finding:</p>
+                <ul style={styles.smallList}>{scope.known_conditions.map((item, index) => <li key={`${scope.id}-known-${index}`}>{item}</li>)}</ul>
+                <p style={styles.small}>{scope.source_evidence_ids.length} evidence link(s) and {scope.source_references.length} source reference(s) retained.</p>
+              </details>
+
+              <strong>Unknown / Field Verify</strong>
+              {editable ? (
+                <div style={styles.grid2}>
+                  <textarea style={{ ...styles.input, minHeight: 100 }} value={draft.unknown_conditions.join('\n')} onChange={(event) => setLines('unknown_conditions', event.target.value)} aria-label="Unknown conditions" />
+                  <textarea style={{ ...styles.input, minHeight: 100 }} value={draft.field_verification_items.join('\n')} onChange={(event) => setLines('field_verification_items', event.target.value)} aria-label="Field verification items" />
+                </div>
+              ) : (
+                <div style={styles.grid2}>
+                  <div><p style={styles.small}>Unknown</p><ul style={styles.smallList}>{scope.unknown_conditions.map((item, index) => <li key={`${scope.id}-unknown-${index}`}>{item}</li>)}</ul></div>
+                  <div><p style={styles.small}>Field Verify</p><ul style={styles.smallList}>{scope.field_verification_items.map((item, index) => <li key={`${scope.id}-verify-${index}`}>{item}</li>)}</ul></div>
+                </div>
+              )}
+
+              <details style={styles.moreActions}>
+                <summary style={styles.moreActionsSummary}>Access, sequencing, cleanup, and exclusions</summary>
+                {editable ? (
+                  <div style={styles.grid2}>
+                    <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.missing_information.join('\n')} onChange={(event) => setLines('missing_information', event.target.value)} aria-label="Missing information" placeholder="Missing information" />
+                    <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.access_setup_notes.join('\n')} onChange={(event) => setLines('access_setup_notes', event.target.value)} aria-label="Access and setup notes" placeholder="Access and setup notes" />
+                    <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.sequencing_dependencies.join('\n')} onChange={(event) => setLines('sequencing_dependencies', event.target.value)} aria-label="Sequencing dependencies" placeholder="Sequencing dependencies" />
+                    <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.cleanup_disposal_expectations.join('\n')} onChange={(event) => setLines('cleanup_disposal_expectations', event.target.value)} aria-label="Cleanup and disposal expectations" placeholder="Cleanup and disposal expectations" />
+                    <textarea style={{ ...styles.input, minHeight: 84 }} value={draft.exclusions.join('\n')} onChange={(event) => setLines('exclusions', event.target.value)} aria-label="Scope exclusions" placeholder="Scope exclusions" />
+                  </div>
+                ) : (
+                  <>
+                    {scope.access_setup_notes.length > 0 && <p style={styles.small}><strong>Access/setup:</strong> {scope.access_setup_notes.join(' · ')}</p>}
+                    {scope.sequencing_dependencies.length > 0 && <p style={styles.small}><strong>Sequencing:</strong> {scope.sequencing_dependencies.join(' · ')}</p>}
+                    {scope.cleanup_disposal_expectations.length > 0 && <p style={styles.small}><strong>Cleanup/disposal:</strong> {scope.cleanup_disposal_expectations.join(' · ')}</p>}
+                    {scope.exclusions.length > 0 && <p style={styles.small}><strong>Exclusions:</strong> {scope.exclusions.join(' · ')}</p>}
+                  </>
+                )}
+              </details>
+
+              {editable && (
+                <div style={styles.buttonRow}>
+                  <button type="button" style={styles.primaryButton} disabled={contractorScopeSavingId === scope.id} onClick={() => reviewContractorScope(request, scope, 'approve')}>Approve · Contractor Ready</button>
+                  <button type="button" style={styles.outlineButton} disabled={contractorScopeSavingId === scope.id} onClick={() => reviewContractorScope(request, scope, 'return_for_correction')}>Return for correction</button>
+                  <button type="button" style={styles.outlineButton} disabled={contractorScopeSavingId === scope.id} onClick={() => reviewContractorScope(request, scope, 'reject')}>Reject</button>
+                </div>
+              )}
+              <details style={styles.moreActions}>
+                <summary style={styles.moreActionsSummary}>Provenance</summary>
+                <p style={styles.small}>Finding: {scope.source_finding_id}</p>
+                <p style={styles.small}>Finding review event: {scope.source_review_event_id}</p>
+                <p style={styles.small}>Scope generated by: {scope.created_by || 'authoritative RPC'}</p>
+                {scope.reviewed_by && <p style={styles.small}>Scope reviewed by: {scope.reviewed_by}</p>}
+              </details>
+            </section>
+          )
+        })}
+        {ineligibleFindings.length > 0 && (
+          <details style={styles.moreActions}>
+            <summary style={styles.moreActionsSummary}>Excluded findings ({ineligibleFindings.length})</summary>
+            <ul style={styles.smallList}>
+              {ineligibleFindings.map((finding) => <li key={`scope-excluded-${finding.id}`}>{finding.description || finding.id}: status is {finding.status}; human verification is required.</li>)}
+            </ul>
+          </details>
+        )}
+      </details>
+    )
+  }
+
   function renderAddressWorkGroups(request: WorkRequest) {
     const workGroups = getInspectionWorkGroups(request)
     const archivedGroups = getArchivedInspectionWorkGroups(request)
@@ -13746,6 +13983,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             </ul>
           </details>
         )}
+        {renderContractorScopeWorkflow(request)}
       </details>
     )
   }

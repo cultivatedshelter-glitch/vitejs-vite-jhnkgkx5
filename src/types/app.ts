@@ -1,5 +1,6 @@
 import type { PropertyFacts } from '../lib/db/propertyLookup'
 import type { CompactReviewPacket, InspectionIntelligenceDraft, ReviewLane } from '../agents/inspectionIntelligence'
+import type { ContractorScopeItem } from '../lib/contractorScope'
 
 export type RequestStatus = 'new' | 'in_progress' | 'needs_info' | 'pending_approval' | 'estimate_ready'
 
@@ -179,6 +180,7 @@ export type WorkRequest = {
   deletionReason?: string
   aiEstimate?: AiEstimate
   inspectionIntelligence?: InspectionIntelligenceDraft | null
+  contractorScopes?: ContractorScopeItem[]
   inspectionProcessingStatus?: InspectionProcessingStatus
   inspectionExtractionSummary?: string
   inspectionExtractionMessage?: string

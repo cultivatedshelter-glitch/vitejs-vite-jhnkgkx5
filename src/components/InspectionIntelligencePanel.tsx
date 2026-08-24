@@ -757,7 +757,6 @@ export function InspectionIntelligencePanel({
       {safeIntelligence.missingInformationQuestions.length > 0 && <MissingInfoSection intelligence={safeIntelligence} styles={styles} />}
       {(safeIntelligence.estimateLow > 0 || safeIntelligence.estimateHigh > 0) && <EstimateDraftSection intelligence={safeIntelligence} styles={styles} money={money} />}
       {safeIntelligence.sellerPrepSummary && <SellerReportSection intelligence={safeIntelligence} styles={styles} />}
-      {safeIntelligence.contractorReadyScopes.length > 0 && <ContractorScopeSection intelligence={safeIntelligence} styles={styles} />}
     </section>
   )
 }
