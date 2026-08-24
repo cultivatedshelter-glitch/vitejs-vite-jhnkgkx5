@@ -9,7 +9,7 @@ type ReviewableInspectionObject = Record<string, unknown> & {
   admin_notes?: string | null
 }
 
-export type InspectionReviewEventInsert = {
+export type InspectionReviewRequest = {
   property_id: string | number
   work_request_id: string | null
   repair_item_id: string | null
@@ -18,8 +18,6 @@ export type InspectionReviewEventInsert = {
   review_type: 'human_review'
   decision: 'needs_review' | 'approved' | 'rejected' | 'needs_more_info'
   action: string
-  reviewer_id: string | null
-  created_at: string
   previous_status: string | null
   next_status: string | null
   notes: string | null
@@ -85,12 +83,17 @@ function reviewStatus(value: ReviewableInspectionObject) {
   return status ? String(status) : null
 }
 
-function reviewAction(previousStatus: string | null, nextStatus: string | null, notes: string | null) {
+function reviewAction(
+  previousStatus: string | null,
+  nextStatus: string | null,
+  previousNotes: string | null,
+  nextNotes: string | null
+) {
   if (previousStatus !== nextStatus && nextStatus) return nextStatus
-  return notes ? 'noted' : 'edited'
+  return previousNotes !== nextNotes ? 'noted' : 'edited'
 }
 
-function reviewDecision(status: string | null): InspectionReviewEventInsert['decision'] {
+function reviewDecision(status: string | null): InspectionReviewRequest['decision'] {
   if (status === 'approved' || status === 'human_verified') return 'approved'
   if (status === 'rejected') return 'rejected'
   if (status === 'needs_more_info') return 'needs_more_info'
@@ -114,20 +117,21 @@ export function buildInspectionReviewEvent(params: {
   workRequestId: string | null
   repairItemId: string | null
   targetId: string | null
-  reviewerId: string | null
   objectType: InspectionReviewObjectType
   previousValue: ReviewableInspectionObject
   nextValue: ReviewableInspectionObject
-  createdAt?: string
-}): InspectionReviewEventInsert {
+}): InspectionReviewRequest {
   const previousValue = snapshot(params.previousValue)
   const nextValue = snapshot(params.nextValue)
   const previousStatus = reviewStatus(previousValue)
   const nextStatus = reviewStatus(nextValue)
+  const previousNotes = typeof previousValue.admin_notes === 'string' && previousValue.admin_notes.trim()
+    ? previousValue.admin_notes.trim()
+    : null
   const notes = typeof nextValue.admin_notes === 'string' && nextValue.admin_notes.trim()
     ? nextValue.admin_notes.trim()
     : null
-  const action = reviewAction(previousStatus, nextStatus, notes)
+  const action = reviewAction(previousStatus, nextStatus, previousNotes, notes)
   const previousProvenance = provenanceFrom(previousValue)
   const nextProvenance = provenanceFrom(nextValue)
 
@@ -140,8 +144,6 @@ export function buildInspectionReviewEvent(params: {
     review_type: 'human_review',
     decision: reviewDecision(nextStatus),
     action,
-    reviewer_id: params.reviewerId,
-    created_at: params.createdAt || new Date().toISOString(),
     previous_status: previousStatus,
     next_status: nextStatus,
     notes,
@@ -157,11 +159,84 @@ export function buildInspectionReviewEvent(params: {
   }
 }
 
-export async function appendInspectionReviewBeforeMutation(params: {
-  event: InspectionReviewEventInsert
-  insertReviewEvent: (event: InspectionReviewEventInsert) => Promise<void>
-  mutateCurrentState: () => Promise<void>
-}) {
-  await params.insertReviewEvent(params.event)
-  await params.mutateCurrentState()
+export type ApplyInspectionReviewRpcResult = {
+  review_event_id: string
+  property_facts: Record<string, unknown>
+  reviewer_id: string
+  work_request_id: string | null
+  repair_item_id: string | null
+}
+
+type InspectionReviewRpcClient = {
+  rpc: (
+    name: 'apply_inspection_review',
+    args: Record<string, unknown>
+  ) => PromiseLike<{ data: ApplyInspectionReviewRpcResult[] | null; error: { message?: string } | null }>
+}
+
+export async function applyInspectionReviewRpc(params: {
+  client: InspectionReviewRpcClient
+  leadId: string
+  expectedPropertyId: string | number
+  event: InspectionReviewRequest
+  nextInspectionIntelligence: Record<string, unknown>
+}): Promise<ApplyInspectionReviewRpcResult> {
+  const { data, error } = await params.client.rpc('apply_inspection_review', {
+    p_lead_id: params.leadId,
+    p_expected_property_id: params.expectedPropertyId,
+    p_object_type: params.event.payload.object_type,
+    p_object_id: params.event.payload.object_id,
+    p_previous_value: params.event.payload.previous_value,
+    p_next_value: params.event.payload.next_value,
+    p_next_inspection_intelligence: params.nextInspectionIntelligence,
+    p_work_request_id: params.event.work_request_id,
+    p_repair_item_id: params.event.repair_item_id,
+  })
+
+  if (error) throw new Error(error.message || 'Atomic inspection review failed.')
+  const result = data?.[0]
+  if (!result) throw new Error('Atomic inspection review returned no committed result.')
+  return result
+}
+
+export function createInspectionReviewSaveGate() {
+  const pending = new Set<string>()
+
+  return {
+    isPending(key: string) {
+      return pending.has(key)
+    },
+    async run<T>(key: string, save: () => Promise<T>): Promise<{ started: boolean; value?: T }> {
+      if (pending.has(key)) return { started: false }
+      pending.add(key)
+      try {
+        return { started: true, value: await save() }
+      } finally {
+        pending.delete(key)
+      }
+    },
+  }
+}
+
+export type InspectionReviewSaveGate = ReturnType<typeof createInspectionReviewSaveGate>
+
+export function updateInspectionReviewDraft<T extends object>(draft: T, changes: Partial<T>): T {
+  return { ...draft, ...changes }
+}
+
+export async function commitInspectionReviewDraftValue<T>(params: {
+  gate: InspectionReviewSaveGate
+  key: string
+  committedValue: T
+  draftValue: T
+  save: (value: T) => Promise<boolean>
+  rollback: (value: T) => void
+}): Promise<boolean> {
+  if (JSON.stringify(params.draftValue) === JSON.stringify(params.committedValue)) return false
+  const result = await params.gate.run(params.key, () => params.save(params.draftValue))
+  if (!result.started || result.value === false) {
+    params.rollback(params.committedValue)
+    return false
+  }
+  return true
 }

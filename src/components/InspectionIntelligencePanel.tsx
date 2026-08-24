@@ -1,6 +1,11 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, type CompactReviewPacket } from '../agents/inspectionIntelligence'
 import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../agents/inspectionIntelligence'
+import {
+  commitInspectionReviewDraftValue,
+  createInspectionReviewSaveGate,
+  updateInspectionReviewDraft,
+} from '../lib/reviewProvenance'
 
 type Styles = Record<string, CSSProperties>
 
@@ -11,8 +16,8 @@ type InspectionIntelligencePanelProps = {
   getStatusLabel: (value?: string | null) => string
   canEdit?: boolean
   savingFindingId?: string | null
-  onUpdateFinding?: (itemId: string, changes: Partial<InspectionRepairItemDraft>) => void
-  onUpdateBundle?: (bundleId: string, changes: Partial<InspectionRepairBundleDraft>) => void
+  onUpdateFinding?: (itemId: string, changes: Partial<InspectionRepairItemDraft>) => Promise<boolean>
+  onUpdateBundle?: (bundleId: string, changes: Partial<InspectionRepairBundleDraft>) => Promise<boolean>
 }
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
@@ -259,6 +264,41 @@ export function RepairFindingsSection({
   savingFindingId,
   onUpdateFinding,
 }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
+  const [drafts, setDrafts] = useState<Record<string, { description: string; admin_notes: string }>>({})
+  const saveGate = useRef(createInspectionReviewSaveGate())
+
+  useEffect(() => {
+    setDrafts(Object.fromEntries(safeArray(intelligence.repairItems).map((item) => [item.id, {
+      description: item.description || '',
+      admin_notes: item.admin_notes || '',
+    }])))
+  }, [intelligence.repairItems])
+
+  async function commitFindingText(
+    item: InspectionRepairItemDraft,
+    field: 'description' | 'admin_notes'
+  ) {
+    if (!onUpdateFinding) return
+    const committedValue = item[field] || ''
+    const draftValue = drafts[item.id]?.[field] ?? committedValue
+    if (draftValue === committedValue) return
+
+    await commitInspectionReviewDraftValue({
+      gate: saveGate.current,
+      key: item.id,
+      committedValue,
+      draftValue,
+      save: (value) => onUpdateFinding(item.id, { [field]: value }),
+      rollback: (value) => setDrafts((current) => ({
+        ...current,
+        [item.id]: updateInspectionReviewDraft(
+          current[item.id] || { description: item.description || '', admin_notes: item.admin_notes || '' },
+          { [field]: value }
+        ),
+      })),
+    })
+  }
+
   return (
     <details style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Repair findings</summary>
@@ -282,14 +322,23 @@ export function RepairFindingsSection({
                 <>
                   <textarea
                     style={{ ...styles.input, minHeight: 82 }}
-                    defaultValue={item.description}
-                    onBlur={(event) => onUpdateFinding(item.id, { description: event.target.value })}
+                    value={drafts[item.id]?.description ?? item.description ?? ''}
+                    disabled={savingFindingId === item.id}
+                    onChange={(event) => setDrafts((current) => ({
+                      ...current,
+                      [item.id]: updateInspectionReviewDraft(
+                        current[item.id] || { description: item.description || '', admin_notes: item.admin_notes || '' },
+                        { description: event.target.value }
+                      ),
+                    }))}
+                    onBlur={() => void commitFindingText(item, 'description')}
                   />
                   <div style={styles.grid3}>
                     <select
                       style={styles.input}
                       value={item.severity}
-                      onChange={(event) => onUpdateFinding(item.id, { severity: event.target.value })}
+                      disabled={savingFindingId === item.id}
+                      onChange={(event) => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { severity: event.target.value }))}
                     >
                       {['High', 'Medium', 'Low', 'Needs review'].map((value) => (
                         <option key={value} value={value}>{value}</option>
@@ -298,7 +347,8 @@ export function RepairFindingsSection({
                     <select
                       style={styles.input}
                       value={item.urgency}
-                      onChange={(event) => onUpdateFinding(item.id, { urgency: event.target.value })}
+                      disabled={savingFindingId === item.id}
+                      onChange={(event) => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { urgency: event.target.value }))}
                     >
                       {['Immediate review', 'Needs licensed trade review', 'Needs review before estimating', 'Needs review'].map((value) => (
                         <option key={value} value={value}>{value}</option>
@@ -307,7 +357,7 @@ export function RepairFindingsSection({
                     <select
                       style={styles.input}
                       value={item.status}
-                      onChange={(event) => onUpdateFinding(item.id, { status: event.target.value as InspectionDraftStatus })}
+                      onChange={(event) => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { status: event.target.value as InspectionDraftStatus }))}
                       disabled={savingFindingId === item.id}
                     >
                       {['ai_draft', 'needs_review', 'approved', 'rejected'].map((value) => (
@@ -317,9 +367,17 @@ export function RepairFindingsSection({
                   </div>
                   <textarea
                     style={{ ...styles.input, minHeight: 72 }}
-                    defaultValue={item.admin_notes}
+                    value={drafts[item.id]?.admin_notes ?? item.admin_notes ?? ''}
+                    disabled={savingFindingId === item.id}
                     placeholder="Admin review notes"
-                    onBlur={(event) => onUpdateFinding(item.id, { admin_notes: event.target.value })}
+                    onChange={(event) => setDrafts((current) => ({
+                      ...current,
+                      [item.id]: updateInspectionReviewDraft(
+                        current[item.id] || { description: item.description || '', admin_notes: item.admin_notes || '' },
+                        { admin_notes: event.target.value }
+                      ),
+                    }))}
+                    onBlur={() => void commitFindingText(item, 'admin_notes')}
                   />
                 </>
               ) : (
@@ -372,9 +430,45 @@ export function AddressWorkGroupsSection({
   styles,
   getStatusLabel,
   canEdit,
+  savingFindingId,
   onUpdateBundle,
 }: InspectionIntelligencePanelProps & { intelligence: InspectionIntelligenceDraft }) {
   const repairBundles = safeArray(intelligence.repairBundles)
+  const [drafts, setDrafts] = useState<Record<string, InspectionRepairBundleDraft>>({})
+  const saveGate = useRef(createInspectionReviewSaveGate())
+
+  useEffect(() => {
+    setDrafts(Object.fromEntries(repairBundles.map((bundle) => [bundle.id, { ...bundle }])))
+  }, [intelligence.repairBundles])
+
+  function editBundle(bundle: InspectionRepairBundleDraft, changes: Partial<InspectionRepairBundleDraft>) {
+    setDrafts((current) => ({
+      ...current,
+      [bundle.id]: updateInspectionReviewDraft(current[bundle.id] || bundle, changes),
+    }))
+  }
+
+  async function commitBundleField<K extends keyof InspectionRepairBundleDraft>(
+    bundle: InspectionRepairBundleDraft,
+    field: K
+  ) {
+    if (!onUpdateBundle) return
+    const draft = drafts[bundle.id] || bundle
+    if (JSON.stringify(draft[field]) === JSON.stringify(bundle[field])) return
+
+    await commitInspectionReviewDraftValue({
+      gate: saveGate.current,
+      key: bundle.id,
+      committedValue: bundle[field],
+      draftValue: draft[field],
+      save: (value) => onUpdateBundle(bundle.id, { [field]: value }),
+      rollback: (value) => setDrafts((current) => ({
+        ...current,
+        [bundle.id]: updateInspectionReviewDraft(current[bundle.id] || bundle, { [field]: value }),
+      })),
+    })
+  }
+
   const activeBundles = repairBundles.filter((bundle) => bundle.status !== 'rejected')
   const archivedBundles = repairBundles.filter((bundle) => bundle.status === 'rejected')
 
@@ -383,8 +477,11 @@ export function AddressWorkGroupsSection({
   return (
     <>
       <div style={styles.inspectionTaskGrid}>
-        {activeBundles.map((bundle) => (
-          <div key={bundle.id} style={styles.inspectionTaskCard}>
+        {activeBundles.map((bundle) => {
+          const draft = drafts[bundle.id] || bundle
+          const saving = savingFindingId === bundle.id
+          return (
+            <div key={bundle.id} style={styles.inspectionTaskCard}>
             <ReviewPacketSummary
               packet={bundle.compact_review_packet || applyReviewPacketToBundle(bundle, intelligence.propertyAddress).compact_review_packet}
               bundle={bundle.compact_review_packet ? bundle : applyReviewPacketToBundle(bundle, intelligence.propertyAddress)}
@@ -412,27 +509,34 @@ export function AddressWorkGroupsSection({
                 <>
                   <input
                     style={styles.input}
-                    value={bundle.title}
+                    value={draft.title}
+                    disabled={saving}
                     placeholder="Work group title"
-                    onChange={(event) => onUpdateBundle(bundle.id, { title: event.target.value })}
+                    onChange={(event) => editBundle(bundle, { title: event.target.value })}
+                    onBlur={() => void commitBundleField(bundle, 'title')}
                   />
                   <div style={styles.grid3}>
                     <input
                       style={styles.input}
-                      value={bundle.recommended_trade}
+                      value={draft.recommended_trade}
+                      disabled={saving}
                       placeholder="Trade"
-                      onChange={(event) => onUpdateBundle(bundle.id, { recommended_trade: event.target.value })}
+                      onChange={(event) => editBundle(bundle, { recommended_trade: event.target.value })}
+                      onBlur={() => void commitBundleField(bundle, 'recommended_trade')}
                     />
                     <input
                       style={styles.input}
-                      value={bundle.priority}
+                      value={draft.priority}
+                      disabled={saving}
                       placeholder="Priority"
-                      onChange={(event) => onUpdateBundle(bundle.id, { priority: event.target.value })}
+                      onChange={(event) => editBundle(bundle, { priority: event.target.value })}
+                      onBlur={() => void commitBundleField(bundle, 'priority')}
                     />
                     <select
                       style={styles.input}
                       value={bundle.status}
-                      onChange={(event) => onUpdateBundle(bundle.id, { status: event.target.value as InspectionDraftStatus })}
+                      disabled={saving}
+                      onChange={(event) => void saveGate.current.run(bundle.id, () => onUpdateBundle(bundle.id, { status: event.target.value as InspectionDraftStatus }))}
                     >
                       {['ai_draft', 'needs_review', 'approved', 'rejected'].map((value) => (
                         <option key={value} value={value}>{getStatusLabel(value)}</option>
@@ -441,39 +545,51 @@ export function AddressWorkGroupsSection({
                   </div>
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={bundle.evidence_summary || ''}
+                    value={draft.evidence_summary || ''}
+                    disabled={saving}
                     placeholder="Evidence summary"
-                    onChange={(event) => onUpdateBundle(bundle.id, { evidence_summary: event.target.value })}
+                    onChange={(event) => editBundle(bundle, { evidence_summary: event.target.value })}
+                    onBlur={() => void commitBundleField(bundle, 'evidence_summary')}
                   />
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={bundle.recommended_next_action || ''}
+                    value={draft.recommended_next_action || ''}
+                    disabled={saving}
                     placeholder="Next action"
-                    onChange={(event) => onUpdateBundle(bundle.id, { recommended_next_action: event.target.value })}
+                    onChange={(event) => editBundle(bundle, { recommended_next_action: event.target.value })}
+                    onBlur={() => void commitBundleField(bundle, 'recommended_next_action')}
                   />
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={(bundle.missing_information || []).join('\n')}
+                    value={(draft.missing_information || []).join('\n')}
+                    disabled={saving}
                     placeholder="Missing information"
-                    onChange={(event) => onUpdateBundle(bundle.id, { missing_information: event.target.value.split('\n').filter(Boolean) })}
+                    onChange={(event) => editBundle(bundle, { missing_information: event.target.value.split('\n').filter(Boolean) })}
+                    onBlur={() => void commitBundleField(bundle, 'missing_information')}
                   />
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={(bundle.resource_categories || []).join('\n')}
+                    value={(draft.resource_categories || []).join('\n')}
+                    disabled={saving}
                     placeholder="Resource categories"
-                    onChange={(event) => onUpdateBundle(bundle.id, { resource_categories: event.target.value.split('\n').filter(Boolean) })}
+                    onChange={(event) => editBundle(bundle, { resource_categories: event.target.value.split('\n').filter(Boolean) })}
+                    onBlur={() => void commitBundleField(bundle, 'resource_categories')}
                   />
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={bundle.estimate_note || ''}
+                    value={draft.estimate_note || ''}
+                    disabled={saving}
                     placeholder="Estimate note"
-                    onChange={(event) => onUpdateBundle(bundle.id, { estimate_note: event.target.value })}
+                    onChange={(event) => editBundle(bundle, { estimate_note: event.target.value })}
+                    onBlur={() => void commitBundleField(bundle, 'estimate_note')}
                   />
                   <textarea
                     style={{ ...styles.input, minHeight: 70 }}
-                    value={bundle.contractor_scope_note || ''}
+                    value={draft.contractor_scope_note || ''}
+                    disabled={saving}
                     placeholder="Contractor scope note"
-                    onChange={(event) => onUpdateBundle(bundle.id, { contractor_scope_note: event.target.value })}
+                    onChange={(event) => editBundle(bundle, { contractor_scope_note: event.target.value })}
+                    onBlur={() => void commitBundleField(bundle, 'contractor_scope_note')}
                   />
                 </>
               ) : null}
@@ -504,8 +620,9 @@ export function AddressWorkGroupsSection({
                 </details>
               )}
             </details>
-          </div>
-        ))}
+            </div>
+          )
+        })}
       </div>
       {archivedBundles.length > 0 && (
         <details style={styles.moreActions}>

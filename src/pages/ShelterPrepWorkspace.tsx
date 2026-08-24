@@ -44,10 +44,9 @@ import {
   roleViewsForWorkflowState,
 } from '../lib/workflowGating'
 import {
-  appendInspectionReviewBeforeMutation,
+  applyInspectionReviewRpc,
   applyInspectionFindingInterpretationChanges,
   buildInspectionReviewEvent,
-  type InspectionReviewEventInsert,
 } from '../lib/reviewProvenance'
 import {
   REQUEST_FILES_BUCKET,
@@ -6819,11 +6818,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     request: WorkRequest,
     itemId: string,
     changes: Partial<InspectionRepairItemDraft>
-  ) {
-    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
+  ): Promise<boolean> {
+    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return false
 
     const previousItem = request.inspectionIntelligence.repairItems.find((item) => item.id === itemId)
-    if (!previousItem) return
+    if (!previousItem) return false
     const nextItem = applyInspectionFindingInterpretationChanges(previousItem, changes)
 
     const nextIntelligence: InspectionIntelligenceDraft = {
@@ -6834,10 +6833,6 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       ),
     }
 
-    const nextStatus: InspectionProcessingStatus = nextIntelligence.repairItems.every((item) => item.status === 'approved' || item.status === 'rejected')
-      ? 'human_verified'
-      : 'needs_human_review'
-
     setInspectionFindingSavingId(itemId)
     try {
       const propertyId = getLinkedPropertyId(request)
@@ -6846,30 +6841,37 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       }
       const reviewEvent = buildInspectionReviewEvent({
         propertyId,
-        workRequestId: asNullableUuid(request.id),
-        repairItemId: asNullableUuid(previousItem.id),
+        workRequestId: null,
+        repairItemId: null,
         targetId: asNullableUuid(request.id),
-        reviewerId: asNullableUuid(currentUserId),
         objectType: 'inspection_finding',
         previousValue: previousItem,
         nextValue: nextItem,
       })
 
-      await appendInspectionReviewBeforeMutation({
+      const committed = await applyInspectionReviewRpc({
+        client: supabase,
+        leadId: request.id,
+        expectedPropertyId: propertyId,
         event: reviewEvent,
-        insertReviewEvent,
-        mutateCurrentState: () => saveInspectionStateToLead(request, {
-          inspectionIntelligence: nextIntelligence,
-          inspectionProcessingStatus: nextStatus,
-          inspectionExtractionMessage: nextStatus === 'human_verified'
-            ? 'Human Verified'
-            : 'Needs Human Review',
-        }),
+        nextInspectionIntelligence: nextIntelligence as unknown as Record<string, unknown>,
       })
+      const committedStatus = normalizeInspectionProcessingStatus(committed.property_facts.inspectionProcessingStatus)
+      const committedMessage = String(committed.property_facts.inspectionExtractionMessage || '')
+      const nextRequest = {
+        ...request,
+        inspectionIntelligence: nextIntelligence,
+        inspectionProcessingStatus: committedStatus,
+        inspectionExtractionMessage: committedMessage,
+        propertyFacts: committed.property_facts as PropertyFacts,
+      }
+      setRequests((previous) => previous.map((item) => item.id === request.id ? nextRequest : item))
+      return true
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not save inspection finding review.')
       await loadRequestsFromSupabase()
+      return false
     } finally {
       setInspectionFindingSavingId(null)
     }
@@ -6879,13 +6881,13 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     request: WorkRequest,
     bundleId: string,
     changes: Partial<InspectionRepairBundleDraft>
-  ) {
-    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
+  ): Promise<boolean> {
+    if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return false
 
     const existingWorkGroups = request.inspectionIntelligence.workGroups || request.inspectionIntelligence.repairBundles || []
     const previousBundle = existingWorkGroups.find((bundle) => bundle.id === bundleId)
       || request.inspectionIntelligence.repairBundles.find((bundle) => bundle.id === bundleId)
-    if (!previousBundle) return
+    if (!previousBundle) return false
     const reviewStartedAt = changes.status === 'in_review' ? new Date().toISOString() : undefined
     const updatedBundle = {
       ...previousBundle,
@@ -6911,12 +6913,6 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       repairBundles: updateBundles(request.inspectionIntelligence.repairBundles),
       workGroups: updateBundles(existingWorkGroups),
     }
-    const activeGroups = (nextIntelligence.workGroups || nextIntelligence.repairBundles || [])
-      .filter((bundle) => bundle.status !== 'rejected')
-    const nextStatus: InspectionProcessingStatus = activeGroups.length > 0 && activeGroups.every((bundle) => isHumanVerifiedStatus(bundle.status))
-      ? 'human_verified'
-      : 'needs_human_review'
-
     setInspectionFindingSavingId(bundleId)
     try {
       const propertyId = getLinkedPropertyId(request)
@@ -6925,36 +6921,40 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       }
       const reviewEvent = buildInspectionReviewEvent({
         propertyId,
-        workRequestId: asNullableUuid(request.id),
+        workRequestId: null,
         repairItemId: null,
         targetId: asNullableUuid(request.id),
-        reviewerId: asNullableUuid(currentUserId),
         objectType: 'inspection_bundle',
         previousValue: previousBundle,
         nextValue: nextBundle,
       })
 
-      await appendInspectionReviewBeforeMutation({
+      const committed = await applyInspectionReviewRpc({
+        client: supabase,
+        leadId: request.id,
+        expectedPropertyId: propertyId,
         event: reviewEvent,
-        insertReviewEvent,
-        mutateCurrentState: () => saveInspectionStateToLead(request, {
-          inspectionIntelligence: nextIntelligence,
-          inspectionProcessingStatus: nextStatus,
-          inspectionExtractionMessage: nextStatus === 'human_verified' ? 'Human Verified' : 'Needs Human Review',
-        }),
+        nextInspectionIntelligence: nextIntelligence as unknown as Record<string, unknown>,
       })
+      const committedStatus = normalizeInspectionProcessingStatus(committed.property_facts.inspectionProcessingStatus)
+      const committedMessage = String(committed.property_facts.inspectionExtractionMessage || '')
+      const nextRequest = {
+        ...request,
+        inspectionIntelligence: nextIntelligence,
+        inspectionProcessingStatus: committedStatus,
+        inspectionExtractionMessage: committedMessage,
+        propertyFacts: committed.property_facts as PropertyFacts,
+      }
+      setRequests((previous) => previous.map((item) => item.id === request.id ? nextRequest : item))
+      return true
     } catch (error: any) {
       console.error(error)
       alert(error?.message || 'Could not save work group review.')
       await loadRequestsFromSupabase()
+      return false
     } finally {
       setInspectionFindingSavingId(null)
     }
-  }
-
-  async function insertReviewEvent(event: InspectionReviewEventInsert) {
-    const { error } = await supabase.from('review_events').insert(event)
-    if (error) throw error
   }
 
   async function generateInspectionWorkGroups(request: WorkRequest) {
