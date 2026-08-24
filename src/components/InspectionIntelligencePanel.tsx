@@ -283,7 +283,7 @@ export function RepairFindingsSection({
                   <textarea
                     style={{ ...styles.input, minHeight: 82 }}
                     defaultValue={item.description}
-                    onBlur={(event) => onUpdateFinding(item.id, { description: event.target.value, source_text: event.target.value })}
+                    onBlur={(event) => onUpdateFinding(item.id, { description: event.target.value })}
                   />
                   <div style={styles.grid3}>
                     <select

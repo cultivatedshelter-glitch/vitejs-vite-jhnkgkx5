@@ -44,6 +44,12 @@ import {
   roleViewsForWorkflowState,
 } from '../lib/workflowGating'
 import {
+  appendInspectionReviewBeforeMutation,
+  applyInspectionFindingInterpretationChanges,
+  buildInspectionReviewEvent,
+  type InspectionReviewEventInsert,
+} from '../lib/reviewProvenance'
+import {
   REQUEST_FILES_BUCKET,
   attachFilesToRequests,
   attachPreviewUrls,
@@ -6816,11 +6822,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   ) {
     if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
 
+    const previousItem = request.inspectionIntelligence.repairItems.find((item) => item.id === itemId)
+    if (!previousItem) return
+    const nextItem = applyInspectionFindingInterpretationChanges(previousItem, changes)
+
     const nextIntelligence: InspectionIntelligenceDraft = {
       ...request.inspectionIntelligence,
       humanReviewStatus: 'needs_review',
       repairItems: request.inspectionIntelligence.repairItems.map((item) =>
-        item.id === itemId ? { ...item, ...changes } : item
+        item.id === itemId ? nextItem : item
       ),
     }
 
@@ -6830,12 +6840,31 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     setInspectionFindingSavingId(itemId)
     try {
-      await saveInspectionStateToLead(request, {
-        inspectionIntelligence: nextIntelligence,
-        inspectionProcessingStatus: nextStatus,
-        inspectionExtractionMessage: nextStatus === 'human_verified'
-          ? 'Human Verified'
-          : 'Needs Human Review',
+      const propertyId = getLinkedPropertyId(request)
+      if (propertyId === null || propertyId === undefined || propertyId === '') {
+        throw new Error('A linked property is required before inspection review history can be saved.')
+      }
+      const reviewEvent = buildInspectionReviewEvent({
+        propertyId,
+        workRequestId: asNullableUuid(request.id),
+        repairItemId: asNullableUuid(previousItem.id),
+        targetId: asNullableUuid(request.id),
+        reviewerId: asNullableUuid(currentUserId),
+        objectType: 'inspection_finding',
+        previousValue: previousItem,
+        nextValue: nextItem,
+      })
+
+      await appendInspectionReviewBeforeMutation({
+        event: reviewEvent,
+        insertReviewEvent,
+        mutateCurrentState: () => saveInspectionStateToLead(request, {
+          inspectionIntelligence: nextIntelligence,
+          inspectionProcessingStatus: nextStatus,
+          inspectionExtractionMessage: nextStatus === 'human_verified'
+            ? 'Human Verified'
+            : 'Needs Human Review',
+        }),
       })
     } catch (error: any) {
       console.error(error)
@@ -6853,26 +6882,29 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   ) {
     if (!hasAdminConsoleAccess || !request.inspectionIntelligence) return
 
-    const updateBundles = (bundles: InspectionRepairBundleDraft[] = []) =>
-      bundles.map((bundle) => {
-        if (bundle.id !== bundleId) return bundle
-        const reviewStartedAt = changes.status === 'in_review' ? new Date().toISOString() : undefined
-        const updated = {
-          ...bundle,
-          ...changes,
-          ...(reviewStartedAt ? { review_started_at: reviewStartedAt } : {}),
-        }
-        const sources = getBestWorkGroupResearchTask(request, updated)
-          ? agentResearchSourcesByTask[getBestWorkGroupResearchTask(request, updated)?.id || ''] || []
-          : []
-        const packetMetadata = buildWorkGroupReviewPacket(request, updated, sources)
-        return {
-          ...updated,
-          ...packetMetadata,
-          ...(reviewStartedAt ? { review_started_at: reviewStartedAt, review_due_at: getReviewDueAt(reviewStartedAt, packetMetadata.target_review_time_seconds) } : {}),
-        }
-      })
     const existingWorkGroups = request.inspectionIntelligence.workGroups || request.inspectionIntelligence.repairBundles || []
+    const previousBundle = existingWorkGroups.find((bundle) => bundle.id === bundleId)
+      || request.inspectionIntelligence.repairBundles.find((bundle) => bundle.id === bundleId)
+    if (!previousBundle) return
+    const reviewStartedAt = changes.status === 'in_review' ? new Date().toISOString() : undefined
+    const updatedBundle = {
+      ...previousBundle,
+      ...changes,
+      ...(reviewStartedAt ? { review_started_at: reviewStartedAt } : {}),
+    }
+    const researchTask = getBestWorkGroupResearchTask(request, updatedBundle)
+    const sources = researchTask ? agentResearchSourcesByTask[researchTask.id] || [] : []
+    const packetMetadata = buildWorkGroupReviewPacket(request, updatedBundle, sources)
+    const nextBundle: InspectionRepairBundleDraft = {
+      ...updatedBundle,
+      ...packetMetadata,
+      ...(reviewStartedAt ? {
+        review_started_at: reviewStartedAt,
+        review_due_at: getReviewDueAt(reviewStartedAt, packetMetadata.target_review_time_seconds),
+      } : {}),
+    }
+    const updateBundles = (bundles: InspectionRepairBundleDraft[] = []) =>
+      bundles.map((bundle) => bundle.id === bundleId ? nextBundle : bundle)
     const nextIntelligence: InspectionIntelligenceDraft = {
       ...request.inspectionIntelligence,
       humanReviewStatus: 'needs_review',
@@ -6887,10 +6919,29 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     setInspectionFindingSavingId(bundleId)
     try {
-      await saveInspectionStateToLead(request, {
-        inspectionIntelligence: nextIntelligence,
-        inspectionProcessingStatus: nextStatus,
-        inspectionExtractionMessage: nextStatus === 'human_verified' ? 'Human Verified' : 'Needs Human Review',
+      const propertyId = getLinkedPropertyId(request)
+      if (propertyId === null || propertyId === undefined || propertyId === '') {
+        throw new Error('A linked property is required before inspection review history can be saved.')
+      }
+      const reviewEvent = buildInspectionReviewEvent({
+        propertyId,
+        workRequestId: asNullableUuid(request.id),
+        repairItemId: null,
+        targetId: asNullableUuid(request.id),
+        reviewerId: asNullableUuid(currentUserId),
+        objectType: 'inspection_bundle',
+        previousValue: previousBundle,
+        nextValue: nextBundle,
+      })
+
+      await appendInspectionReviewBeforeMutation({
+        event: reviewEvent,
+        insertReviewEvent,
+        mutateCurrentState: () => saveInspectionStateToLead(request, {
+          inspectionIntelligence: nextIntelligence,
+          inspectionProcessingStatus: nextStatus,
+          inspectionExtractionMessage: nextStatus === 'human_verified' ? 'Human Verified' : 'Needs Human Review',
+        }),
       })
     } catch (error: any) {
       console.error(error)
@@ -6899,6 +6950,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     } finally {
       setInspectionFindingSavingId(null)
     }
+  }
+
+  async function insertReviewEvent(event: InspectionReviewEventInsert) {
+    const { error } = await supabase.from('review_events').insert(event)
+    if (error) throw error
   }
 
   async function generateInspectionWorkGroups(request: WorkRequest) {
