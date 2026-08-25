@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, type CompactReviewPacket } from '../agents/inspectionIntelligence'
+import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, sequenceInspectionFindings, type CompactReviewPacket, type InvestigationPriority } from '../agents/inspectionIntelligence'
 import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../agents/inspectionIntelligence'
 import {
   commitInspectionReviewDraftValue,
@@ -664,6 +664,62 @@ export function MissingInfoSection({ intelligence, styles }: { intelligence: Ins
   )
 }
 
+const INVESTIGATION_LABELS: Record<InvestigationPriority, string> = {
+  investigate_first: 'Investigate First',
+  price_next: 'Price Next',
+  can_wait: 'Can Wait',
+  unknown: 'Needs Review',
+}
+
+export function InvestigationSequenceSection({
+  intelligence,
+  styles,
+}: {
+  intelligence: InspectionIntelligenceDraft
+  styles: Styles
+}) {
+  const sequenced = sequenceInspectionFindings(
+    safeArray(intelligence.workGroups).filter((bundle) => bundle.status !== 'rejected')
+  )
+  const supported = sequenced.filter((bundle) => bundle.investigation_priority && bundle.investigation_priority !== 'unknown')
+  if (supported.length === 0) return null
+  const first = supported[0]
+
+  return (
+    <details open style={styles.moreActions}>
+      <summary style={styles.moreActionsSummary}>What to Investigate First</summary>
+      <div style={styles.noticeBox}>
+        <strong>Next: {first.investigation_priority === 'investigate_first'
+          ? safeArray(first.next_evidence_needed)[0] || first.recommended_next_action || first.recommended_next_move || `Review ${first.title}`
+          : `Review ${first.title}`}</strong>
+        <p style={styles.small}>AI Draft · Human review required before transaction, negotiation, scope, or spending decisions.</p>
+      </div>
+      <div style={styles.inspectionTaskGrid}>
+        {supported.map((bundle) => (
+          <div key={`investigation-${bundle.id}`} style={styles.inspectionTaskCard}>
+            <div style={styles.buttonRow}>
+              <strong>{bundle.title}</strong>
+              <span style={bundle.investigation_priority === 'investigate_first' ? styles.badgeDanger : styles.badgeMuted}>
+                {INVESTIGATION_LABELS[bundle.investigation_priority || 'unknown']}
+              </span>
+            </div>
+            <p style={styles.small}>
+              Transaction impact: {bundle.transaction_impact || 'unknown'} · Potential cost exposure: {bundle.potential_cost_exposure || 'unknown'}
+            </p>
+            {bundle.dependency_reason && <p style={styles.small}>{bundle.dependency_reason}</p>}
+            <details style={styles.moreActions}>
+              <summary style={styles.moreActionsSummary}>Evidence and uncertainty</summary>
+              <p style={styles.small}><strong>Known:</strong> {safeArray(bundle.known_facts).join(' ') || bundle.evidence_summary || 'No reviewed condition established.'}</p>
+              <p style={styles.small}><strong>Unknown:</strong> {safeArray(bundle.unknowns).join(' ') || 'No additional unknown recorded.'}</p>
+              <p style={styles.small}><strong>Sources:</strong> {safeArray(bundle.evidence_references).length} linked reference{safeArray(bundle.evidence_references).length === 1 ? '' : 's'}.</p>
+            </details>
+          </div>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 export function EstimateDraftSection({ intelligence, styles, money }: Pick<InspectionIntelligencePanelProps, 'styles' | 'money'> & { intelligence: InspectionIntelligenceDraft }) {
   return (
     <details style={styles.moreActions}>
@@ -730,6 +786,7 @@ export function InspectionIntelligencePanel({
   return (
     <section style={styles.inspectionTaskPanel}>
       <InspectionSummarySection intelligence={safeIntelligence} styles={styles} getStatusLabel={getStatusLabel} />
+      <InvestigationSequenceSection intelligence={safeIntelligence} styles={styles} />
       <details open={safeIntelligence.repairBundles.length > 0} style={styles.moreActions}>
         <summary style={styles.moreActionsSummary}>Work Groups ({activeRepairBundles.length})</summary>
         <AddressWorkGroupsSection

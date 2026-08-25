@@ -1,6 +1,18 @@
 export type InspectionRepairRecommendation = 'repair_before_listing' | 'buyer_credit' | 'optional' | 'monitor' | 'contractor_review'
 export type ReviewLane = 'standard' | 'deep' | 'extended'
 export type ReviewConfidence = 'low' | 'medium' | 'high'
+export type TransactionImpact = 'low' | 'medium' | 'high' | 'unknown'
+export type PotentialCostExposure = 'low' | 'medium' | 'high' | 'unknown'
+export type InvestigationPriority = 'investigate_first' | 'price_next' | 'can_wait' | 'unknown'
+
+export type InspectionConsequence = {
+  transaction_impact: TransactionImpact
+  potential_cost_exposure: PotentialCostExposure
+  investigation_priority: InvestigationPriority
+  specialist_review_required: boolean
+  blocks_downstream_scope: boolean
+  dependency_reason: string
+}
 export type InspectionDraftStatus =
   | 'ai_draft'
   | 'needs_review'
@@ -68,6 +80,12 @@ export type InspectionRepairItemDraft = {
   full_source_refs?: Array<Record<string, unknown>>
   extended_review_message?: string | null
   missing_info: string[]
+  transaction_impact?: TransactionImpact
+  potential_cost_exposure?: PotentialCostExposure
+  investigation_priority?: InvestigationPriority
+  specialist_review_required?: boolean
+  blocks_downstream_scope?: boolean
+  dependency_reason?: string
   status: InspectionDraftStatus
   admin_notes: string
 }
@@ -134,6 +152,12 @@ export type InspectionRepairBundleDraft = {
   status: InspectionDraftStatus
   admin_notes: string
   finding_ids: string[]
+  transaction_impact?: TransactionImpact
+  potential_cost_exposure?: PotentialCostExposure
+  investigation_priority?: InvestigationPriority
+  specialist_review_required?: boolean
+  blocks_downstream_scope?: boolean
+  dependency_reason?: string
 }
 
 export type InspectionIntelligenceDraft = {
@@ -199,6 +223,87 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return values
     .map((value) => String(value || '').replace(/\s+/g, ' ').trim())
     .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index)
+}
+
+function investigationEvidenceRequest(text: string) {
+  if (/sewer/i.test(text)) return 'Complete sewer scope to establish actual sewer condition before finalizing lower-priority bids.'
+  if (/septic/i.test(text)) return 'Complete specialist septic evaluation to establish system condition before finalizing downstream repair scope.'
+  if (/\bwell\b/i.test(text)) return 'Complete specialist well evaluation and testing before finalizing downstream repair scope.'
+  if (/foundation|structural/i.test(text)) return 'Complete structural specialist evaluation to establish condition and repair extent before downstream bidding.'
+  if (/roof|water intrusion|active leak|moisture/i.test(text)) return 'Complete specialist moisture/roof investigation to establish source and hidden extent before finalizing dependent scope.'
+  if (/electrical service|service panel|serious electrical|exposed wiring/i.test(text)) return 'Complete licensed electrical evaluation before finalizing dependent repair scope.'
+  return 'Complete the identified specialist investigation before finalizing dependent repair scope.'
+}
+
+export function classifyInspectionConsequence(input: {
+  sourceText?: string
+  category?: string
+  knownFacts?: string[]
+  unknowns?: string[]
+  missingInfo?: string[]
+  severity?: string
+}): InspectionConsequence & { next_evidence_needed: string[] } {
+  const evidenceText = uniqueStrings([input.sourceText, ...(input.knownFacts || [])]).join(' ')
+  const uncertaintyText = uniqueStrings([...(input.unknowns || []), ...(input.missingInfo || [])]).join(' ')
+  const text = `${evidenceText} ${input.category || ''} ${uncertaintyText}`.toLowerCase()
+  const hasEvidence = evidenceText.trim().length > 0
+  const recommendsInvestigation = /(recommend|further evaluation|scope|inspect|investigat|specialist|licensed|unknown|not (?:visible|determined|evaluated|tested))/i.test(text)
+  const specialistSystem = /(sewer|septic|\bwell\b|foundation|structural|roof|water intrusion|active leak|major moisture|electrical service|service panel|exposed wiring)/i.test(text)
+  const highTransactionSystem = /(sewer|septic|\bwell\b|foundation|structural|significant active water intrusion|major moisture|serious electrical)/i.test(text)
+  const highCostLanguage = /(replace(?:ment)?|collapsed|failed|extensive|major|foundation|structural|sewer|septic|roof replacement|electrical service|service panel|hvac replacement|whole[- ]house|waterproofing)/i.test(text)
+  const mediumCostLanguage = /(roof|hvac|electrical|plumbing|water intrusion|moisture|envelope)/i.test(text)
+  const boundedCondition = /(documented|observed|active|failed|damaged|defect|crack|collapse|leak|staining|corrosion|not functional|end of life)/i.test(evidenceText)
+  const lowConsequence = /(minor|cosmetic|routine maintenance|clean|filter|caulk|vegetation)/i.test(text) && !specialistSystem
+
+  const transactionImpact: TransactionImpact = !hasEvidence
+    ? 'unknown'
+    : highTransactionSystem
+      ? 'high'
+      : /(roof replacement|active leak|electrical|hvac|plumbing|water intrusion)/i.test(text)
+        ? 'medium'
+        : lowConsequence
+          ? 'low'
+          : 'unknown'
+  const potentialCostExposure: PotentialCostExposure = !hasEvidence
+    ? 'unknown'
+    : highCostLanguage
+      ? 'high'
+      : mediumCostLanguage
+        ? 'medium'
+        : lowConsequence
+          ? 'low'
+          : 'unknown'
+  const investigationPriority: InvestigationPriority = specialistSystem && (recommendsInvestigation || !boundedCondition)
+    ? 'investigate_first'
+    : highCostLanguage && boundedCondition
+      ? 'price_next'
+      : lowConsequence
+        ? 'can_wait'
+        : 'unknown'
+  const blocksDownstreamScope = investigationPriority === 'investigate_first'
+  const dependencyReason = blocksDownstreamScope
+    ? `${investigationEvidenceRequest(text)} Specialist findings may materially change repair exposure, negotiation, or timeline; this does not establish that a defect exists.`
+    : ''
+
+  return {
+    transaction_impact: transactionImpact,
+    potential_cost_exposure: potentialCostExposure,
+    investigation_priority: investigationPriority,
+    specialist_review_required: specialistSystem,
+    blocks_downstream_scope: blocksDownstreamScope,
+    dependency_reason: dependencyReason,
+    next_evidence_needed: blocksDownstreamScope ? [investigationEvidenceRequest(text)] : [],
+  }
+}
+
+export function sequenceInspectionFindings<T extends Partial<InspectionConsequence>>(items: T[]) {
+  const order: Record<InvestigationPriority, number> = {
+    investigate_first: 0,
+    price_next: 1,
+    can_wait: 2,
+    unknown: 3,
+  }
+  return [...items].sort((left, right) => order[left.investigation_priority || 'unknown'] - order[right.investigation_priority || 'unknown'])
 }
 
 function slugify(value: string) {
@@ -326,7 +431,16 @@ export function applyReviewPacketToBundle(
   bundle: InspectionRepairBundleDraft,
   propertyAddress = ''
 ): InspectionRepairBundleDraft {
+  const consequence = classifyInspectionConsequence({
+    sourceText: bundle.source_text || bundle.evidence_summary || bundle.summary,
+    category: `${bundle.system_category} ${bundle.title}`,
+    knownFacts: bundle.known_facts,
+    unknowns: bundle.unknowns,
+    missingInfo: bundle.missing_information,
+    severity: bundle.severity,
+  })
   const missingInfo = uniqueStrings([
+    ...consequence.next_evidence_needed,
     ...safeArray(bundle.missing_information),
     ...safeArray(bundle.unknowns),
     ...safeArray(bundle.next_evidence_needed),
@@ -355,8 +469,11 @@ export function applyReviewPacketToBundle(
     confidence: bundle.confidence,
   })
   return {
+    ...consequence,
     ...bundle,
     ...metadata,
+    missing_information: missingInfo,
+    next_evidence_needed: uniqueStrings([...consequence.next_evidence_needed, ...safeArray(bundle.next_evidence_needed)]),
     status: bundle.status,
     confidence: metadata.confidence,
   }
@@ -366,6 +483,13 @@ export function applyReviewPacketToItem(
   item: InspectionRepairItemDraft,
   propertyAddress = ''
 ): InspectionRepairItemDraft {
+  const consequence = classifyInspectionConsequence({
+    sourceText: item.source_text,
+    category: `${item.category} ${item.trade}`,
+    missingInfo: item.missing_info,
+    severity: item.severity,
+  })
+  const missingInfo = uniqueStrings([...consequence.next_evidence_needed, ...item.missing_info])
   const metadata = createReviewPacketMetadata({
     propertyAddress,
     title: item.category,
@@ -374,7 +498,7 @@ export function applyReviewPacketToItem(
     severity: item.severity,
     whatMatters: item.description,
     evidenceSummary: item.source_text,
-    missingInfo: item.missing_info || [],
+    missingInfo,
     nextAction: item.recommendation.replace(/_/g, ' '),
     estimateLow: item.estimate_low,
     estimateHigh: item.estimate_high,
@@ -382,8 +506,10 @@ export function applyReviewPacketToItem(
     confidence: item.confidence,
   })
   return {
+    ...consequence,
     ...item,
     ...metadata,
+    missing_info: missingInfo,
     status: item.status,
     confidence: metadata.confidence,
   }
