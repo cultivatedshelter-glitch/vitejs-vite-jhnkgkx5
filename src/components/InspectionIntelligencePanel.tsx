@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, sequenceInspectionFindings, type CompactReviewPacket, type InvestigationPriority } from '../agents/inspectionIntelligence'
+import { EXTENDED_REVIEW_CUSTOMER_MESSAGE, applyReviewPacketToBundle, buildInspectionReviewOverview, sequenceInspectionFindings, type CompactReviewPacket, type InvestigationPriority } from '../agents/inspectionIntelligence'
 import type { InspectionDraftStatus, InspectionIntelligenceDraft, InspectionRepairBundleDraft, InspectionRepairItemDraft } from '../agents/inspectionIntelligence'
 import {
   commitInspectionReviewDraftValue,
@@ -198,6 +198,9 @@ function BundleIntelligenceDetails({
 }
 
 export function InspectionSummarySection({ intelligence, styles, getStatusLabel }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
+  const evidenceSources = safeArray(intelligence.evidenceSources)
+  const partialCount = evidenceSources.filter((source) => source.extraction_status === 'partial').length
+  const failedCount = evidenceSources.filter((source) => source.extraction_status === 'failed').length
   return (
     <details open style={styles.moreActions}>
       <summary style={styles.moreActionsSummary}>Inspection summary</summary>
@@ -206,16 +209,67 @@ export function InspectionSummarySection({ intelligence, styles, getStatusLabel 
           <strong>Inspection Intelligence</strong>
           <p style={styles.small}>{intelligence.executiveSummary}</p>
           <p style={styles.small}>
-            Source: {intelligence.fileName} - {intelligence.reportType || 'Inspection report'} -{' '}
+            Evidence received: {evidenceSources.length || 1} source{(evidenceSources.length || 1) === 1 ? '' : 's'} - {intelligence.fileName} -{' '}
             {intelligence.inspectionDate || 'Inspection date needs review'}
           </p>
         </div>
         <ReviewStatusBadge status={intelligence.humanReviewStatus} styles={styles} getStatusLabel={getStatusLabel} />
       </div>
-      <div style={styles.noticeBox}>
-        AI Draft only. Admin review is required before pricing, seller report, contractor scope, or final repair recommendation.
-      </div>
+      <p style={styles.small}>AI Draft · Needs Review</p>
+      {(partialCount > 0 || failedCount > 0) && (
+        <details style={styles.moreActions}>
+          <summary style={styles.moreActionsSummary}>Evidence extraction status</summary>
+          {evidenceSources.map((source) => (
+            <p key={source.file_id || source.file_name} style={styles.small}>
+              {source.file_name}: {source.extraction_status}{source.page_count ? ` · ${source.page_count} pages detected` : ''}
+              {source.warning ? ` · ${source.warning}` : ''}
+            </p>
+          ))}
+        </details>
+      )}
     </details>
+  )
+}
+
+function BaselineReviewSections({ intelligence, styles }: { intelligence: InspectionIntelligenceDraft; styles: Styles }) {
+  const overview = buildInspectionReviewOverview(intelligence)
+  return (
+    <>
+      <section style={styles.noticeBox}>
+        <strong>What We Know</strong>
+        <p style={styles.small}>Evidence-backed draft observations; human verification is still required.</p>
+        {overview.known.length ? (
+          <ul style={styles.smallList}>{overview.known.slice(0, 8).map((item, index) => <li key={`known-${index}`}>{item}</li>)}</ul>
+        ) : <p style={styles.small}>Evidence was received, but no clear repair observation was extracted.</p>}
+      </section>
+      <section style={styles.noticeBox}>
+        <strong>What We Don't Know Yet</strong>
+        {overview.unknown.length ? (
+          <ul style={styles.smallList}>{overview.unknown.slice(0, 8).map((item, index) => <li key={`unknown-${index}`}>{item}</li>)}</ul>
+        ) : <p style={styles.small}>No additional uncertainty has been recorded.</p>}
+      </section>
+      <section style={styles.noticeBox}>
+        <strong>What We Need Next</strong>
+        {overview.nextNeeded.length ? (
+          <ul style={styles.smallList}>{overview.nextNeeded.map((item, index) => <li key={`next-${index}`}>{item}</li>)}</ul>
+        ) : <p style={styles.small}>Review the evidence-backed draft findings.</p>}
+      </section>
+      <details open style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Priority Findings ({overview.priorityFindings.length})</summary>
+        <div style={styles.inspectionTaskGrid}>
+          {overview.priorityFindings.map((bundle) => (
+            <div key={`priority-${bundle.id}`} style={styles.inspectionTaskCard}>
+              <div style={styles.buttonRow}>
+                <strong>{bundle.title}</strong>
+                <ReviewStatusBadge status={bundle.status} styles={styles} getStatusLabel={(value) => String(value || '').replace(/_/g, ' ')} />
+              </div>
+              <p style={styles.small}>{bundle.finding_summary || bundle.evidence_summary || bundle.summary}</p>
+              <p style={styles.small}><strong>Next:</strong> {bundle.recommended_next_action || bundle.recommended_next_move || 'Human review required.'}</p>
+            </div>
+          ))}
+        </div>
+      </details>
+    </>
   )
 }
 
@@ -265,6 +319,7 @@ export function RepairFindingsSection({
   onUpdateFinding,
 }: Omit<InspectionIntelligencePanelProps, 'money'> & { intelligence: InspectionIntelligenceDraft }) {
   const [drafts, setDrafts] = useState<Record<string, { description: string; admin_notes: string }>>({})
+  const [editingId, setEditingId] = useState<string | null>(null)
   const saveGate = useRef(createInspectionReviewSaveGate())
 
   useEffect(() => {
@@ -301,7 +356,7 @@ export function RepairFindingsSection({
 
   return (
     <details style={styles.moreActions}>
-      <summary style={styles.moreActionsSummary}>Repair findings</summary>
+      <summary style={styles.moreActionsSummary}>Review findings</summary>
       {safeArray(intelligence.repairItems).length === 0 ? (
         <div style={styles.empty}>No repair findings extracted yet.</div>
       ) : (
@@ -318,7 +373,7 @@ export function RepairFindingsSection({
                 <ReviewStatusBadge status={item.status} styles={styles} getStatusLabel={getStatusLabel} />
               </div>
 
-              {canEdit && onUpdateFinding ? (
+              {canEdit && onUpdateFinding && editingId === item.id ? (
                 <>
                   <textarea
                     style={{ ...styles.input, minHeight: 82 }}
@@ -354,16 +409,7 @@ export function RepairFindingsSection({
                         <option key={value} value={value}>{value}</option>
                       ))}
                     </select>
-                    <select
-                      style={styles.input}
-                      value={item.status}
-                      onChange={(event) => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { status: event.target.value as InspectionDraftStatus }))}
-                      disabled={savingFindingId === item.id}
-                    >
-                      {['ai_draft', 'needs_review', 'approved', 'rejected'].map((value) => (
-                        <option key={value} value={value}>{getStatusLabel(value)}</option>
-                      ))}
-                    </select>
+                    <button type="button" style={styles.outlineButton} onClick={() => setEditingId(null)}>Done Editing</button>
                   </div>
                   <textarea
                     style={{ ...styles.input, minHeight: 72 }}
@@ -385,6 +431,14 @@ export function RepairFindingsSection({
                   <p style={styles.small}>{item.description}</p>
                   {item.admin_notes && <p style={styles.small}>Admin notes: {item.admin_notes}</p>}
                 </>
+              )}
+              {canEdit && onUpdateFinding && editingId !== item.id && (
+                <div style={styles.buttonRow}>
+                  <button type="button" style={styles.primaryButton} disabled={savingFindingId === item.id} onClick={() => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { status: 'approved' }))}>Verify</button>
+                  <button type="button" style={styles.outlineButton} disabled={savingFindingId === item.id} onClick={() => setEditingId(item.id)}>Edit</button>
+                  <button type="button" style={styles.outlineButton} disabled={savingFindingId === item.id} onClick={() => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { status: 'needs_more_info' }))}>Need More Info</button>
+                  <button type="button" style={styles.outlineButton} disabled={savingFindingId === item.id} onClick={() => void saveGate.current.run(item.id, () => onUpdateFinding(item.id, { status: 'rejected' }))}>Reject</button>
+                </div>
               )}
             </div>
           ))}
@@ -786,9 +840,10 @@ export function InspectionIntelligencePanel({
   return (
     <section style={styles.inspectionTaskPanel}>
       <InspectionSummarySection intelligence={safeIntelligence} styles={styles} getStatusLabel={getStatusLabel} />
+      <BaselineReviewSections intelligence={safeIntelligence} styles={styles} />
       <InvestigationSequenceSection intelligence={safeIntelligence} styles={styles} />
-      <details open={safeIntelligence.repairBundles.length > 0} style={styles.moreActions}>
-        <summary style={styles.moreActionsSummary}>Work Groups ({activeRepairBundles.length})</summary>
+      <details style={styles.moreActions}>
+        <summary style={styles.moreActionsSummary}>Review work groups ({activeRepairBundles.length})</summary>
         <AddressWorkGroupsSection
           intelligence={safeIntelligence}
           styles={styles}

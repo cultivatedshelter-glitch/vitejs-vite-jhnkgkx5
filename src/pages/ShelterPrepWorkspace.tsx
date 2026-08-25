@@ -20,6 +20,7 @@ import {
   applyReviewPacketToBundle,
   buildBerlinAveWorkGroups,
   buildInspectionIntelligenceDraft,
+  mergeInspectionIntelligenceDrafts,
   buildOperationalFeedEntriesFromBundles,
   buildRepairBundles,
   buildRiverRoadWorkGroups,
@@ -33,6 +34,7 @@ import {
   type InspectionRepairItemDraft,
   type CompactReviewPacket,
   type ReviewLane,
+  type InspectionEvidenceSource,
 } from '../agents/inspectionIntelligence'
 import { InspectionIntelligencePanel } from '../components/InspectionIntelligencePanel'
 import { ReportPreview, type ReportPreviewData, type ReportPreviewWorkGroup } from '../components/ReportPreview'
@@ -57,6 +59,15 @@ import {
   type ContractorScopeItem,
   type ContractorScopeReviewAction,
 } from '../lib/contractorScope'
+import {
+  classifyPdfExtraction,
+  deterministicProcessingId,
+  extractPdfLiteralText,
+  inspectPdfProcessingCoverage,
+  requestSubmissionKey,
+  sha256Hex,
+  uniqueEligibleEvidence,
+} from '../lib/requestReviewCompression'
 import {
   REQUEST_FILES_BUCKET,
   attachFilesToRequests,
@@ -1853,7 +1864,7 @@ function buildSourceLessonDraftFromNotes(input: SourceLessonDraft, notes: string
 const STORAGE_KEY = 'shelter-prep-requests-v1'
 const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || ''
 const INVOICE_BUCKET = 'invoices'
-const INSPECTION_FRONT_PAGE_MAX_BYTES = 240 * 1024
+const INSPECTION_EXTRACTED_TEXT_MAX_CHARACTERS = 200_000
 
 const AGENT_API_URL =
   import.meta.env.VITE_AGENT_API_URL || 'https://shelter-prep-agent-production.up.railway.app'
@@ -1971,30 +1982,22 @@ function isInspectionPdf(file: File) {
   return lowerName.endsWith('.pdf') || file.type === 'application/pdf'
 }
 
-function normalizeInspectionReportText(value = '') {
-  return value
-    .replace(/\u0000/g, ' ')
-    .replace(/\\r|\\n|\\t|\r|\n|\t/g, ' ')
-    .replace(/\\([()\\])/g, '$1')
-    .replace(/[<>[\]{}]/g, ' ')
-    .replace(/Tj|TJ|ET|BT|Td|Tm/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 async function readInspectionPdfText(file: File) {
-  const frontPageSlice = file.slice(0, Math.min(file.size, INSPECTION_FRONT_PAGE_MAX_BYTES))
-  const raw = await frontPageSlice.text()
-  const literalStrings = Array.from(raw.matchAll(/\(([^()]{3,})\)/g))
-    .map((match) => match[1])
-    .join(' ')
-  const arrayStrings = Array.from(raw.matchAll(/\[((?:\s*\([^()]{2,}\)\s*){2,})\]/g))
-    .map((match) => Array.from(match[1].matchAll(/\(([^()]{2,})\)/g)).map((item) => item[1]).join(' '))
-    .join(' ')
-  const text = normalizeInspectionReportText(`${literalStrings} ${arrayStrings} ${raw.slice(0, 12000)}`)
+  const raw = await file.text()
+  const text = extractPdfLiteralText(raw, INSPECTION_EXTRACTED_TEXT_MAX_CHARACTERS)
+  const coverage = inspectPdfProcessingCoverage(raw)
+  const processing = classifyPdfExtraction({
+    fileName: file.name,
+    bytesRead: file.size,
+    totalBytes: file.size,
+    ...coverage,
+    extractedText: text,
+  })
   return {
-    text: text.slice(0, 24000),
-    payloadBytes: frontPageSlice.size,
+    text,
+    payloadBytes: file.size,
+    pageCount: coverage.pageCount,
+    processing,
   }
 }
 
@@ -3339,7 +3342,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     try {
       const file = inspectionFiles[0]
-      const { text, payloadBytes } = await readInspectionPdfText(file)
+      const { text, payloadBytes, processing } = await readInspectionPdfText(file)
       const address = extractInspectionAddress(text)
       const clientName = firstMatch(text, [
         /(?:Client|Customer|Prepared\s+For|Report\s+Prepared\s+For)\s*:?\s*([A-Z][A-Za-z .'-]{2,80})/i,
@@ -3380,6 +3383,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         inspectorCompany,
         findings: summaryItems,
         missingInfo,
+        evidenceSources: [{ ...processing, file_id: null }],
       })
 
       if (intelligence.propertyAddress || address.propertyAddress) setPropertyAddress(intelligence.propertyAddress || address.propertyAddress)
@@ -3396,7 +3400,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         notes: 'AI Draft from uploaded inspection report. Human review required.',
         verificationNotes: [
           `AI Draft from ${file.name}.`,
-          `Front-page extraction payload: ${payloadBytes} bytes.`,
+          `Complete file read: ${payloadBytes} bytes. Extraction status: ${processing.extraction_status}.`,
           inspectionDate ? `Inspection date: ${inspectionDate}.` : '',
           inspectorName || inspectorCompany ? `Inspector/company: ${[inspectorName, inspectorCompany].filter(Boolean).join(' / ')}.` : '',
           reportType ? `Report/source: ${reportType}.` : '',
@@ -3435,7 +3439,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       console.warn('Inspection PDF extraction failed.', error)
       setInspectionReportDraft({
         fileName: inspectionFiles[0].name,
-        frontPagePayloadBytes: Math.min(inspectionFiles[0].size, INSPECTION_FRONT_PAGE_MAX_BYTES),
+        frontPagePayloadBytes: inspectionFiles[0].size,
         propertyAddress: '',
         city: '',
         state: '',
@@ -3983,7 +3987,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         if (evidenceInspectionStatusByKey[key]) continue
         if (getEvidenceFindingsForFile(request, file).length > 0) continue
         setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [key]: 'queued_for_interpretation' }))
-        await inspectEvidenceFile(request, file, mode)
+        await inspectEvidenceFile(request, file, mode, '', true)
       }
     }
   }
@@ -4263,7 +4267,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     type: 'photo' | 'document',
     leadId?: string,
     propertyId?: string | number | null,
-    workRequestId?: string | null
+    workRequestId?: string | null,
+    contentHashes?: Map<File, string>
   ) {
     const uploaded: StoredFile[] = []
     const linkedWorkRequestId = asNullableUuid(workRequestId || '')
@@ -4273,6 +4278,24 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       : String(propertyId)
 
     for (const file of files) {
+      const contentSha256 = contentHashes?.get(file) || await sha256Hex(file)
+      const existingQuery = supabase
+        .from('files')
+        .select('id, created_at, property_id, linked_property_id, work_request_id, linked_request_id, lead_id, original_name, original_filename, file_name, storage_bucket, bucket, storage_path, file_kind, file_type, mime_type, file_size, size_bytes, uploaded_by, review_status, metadata')
+        .contains('metadata', { content_sha256: contentSha256 })
+        .limit(1)
+      const { data: existingFileRow, error: existingFileError } = propertyIdValue
+        ? await existingQuery.eq('property_id', propertyIdValue).maybeSingle()
+        : await existingQuery.eq('lead_id', linkedLeadId).maybeSingle()
+      if (existingFileError) throw existingFileError
+      if (existingFileRow) {
+        const existingFile = mapFileRowToStoredFile(existingFileRow) as StoredFile & { contentSha256?: string }
+        existingFile.contentSha256 = contentSha256
+        const [hydratedExisting] = await attachPreviewUrls([existingFile])
+        uploaded.push(hydratedExisting)
+        continue
+      }
+
       const path = [
         'properties',
         propertyIdValue || 'unlinked',
@@ -4314,6 +4337,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           visibility: 'private',
           metadata: {
             upload_source: 'shelter_prep_intake',
+            content_sha256: contentSha256,
           },
         })
         .select('id, created_at, property_id, linked_property_id, work_request_id, linked_request_id, lead_id, original_name, original_filename, file_name, storage_bucket, bucket, storage_path, file_kind, file_type, mime_type, file_size, size_bytes, uploaded_by, review_status')
@@ -4325,6 +4349,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       }
 
       const savedFile = mapFileRowToStoredFile(fileRow)
+      ;(savedFile as StoredFile & { contentSha256?: string }).contentSha256 = contentSha256
       const [hydratedFile] = await attachPreviewUrls([savedFile])
       uploaded.push(hydratedFile)
     }
@@ -4485,7 +4510,27 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     )
     if (existing) return existing
 
+    if (sourceFileId) {
+      const { data: persisted, error: persistedError } = await supabase
+        .from('property_media_analysis')
+        .select('*')
+        .eq('lead_id', request.id)
+        .eq('source_file_id', sourceFileId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      if (persistedError) throw persistedError
+      if (persisted) return persisted as PropertyMediaAnalysis
+    }
+
+    const analysisId = await deterministicProcessingId([
+      'evidence-analysis',
+      request.id,
+      sourceFileId || file?.path || file?.name || 'manual',
+    ])
+
     const record = {
+      id: analysisId,
       property_id: getLinkedPropertyId(request),
       lead_id: asNullableUuid(request.id),
       source_type: file?.type === 'document' ? 'other' : 'uploaded_photo',
@@ -4511,16 +4556,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     const { data, error } = await supabase
       .from('property_media_analysis')
-      .insert(record)
+      .upsert(record, { onConflict: 'id', ignoreDuplicates: true })
       .select()
-      .single()
+      .maybeSingle()
 
     if (error) throw error
-
-    const saved = data as PropertyMediaAnalysis
+    let saved = data as PropertyMediaAnalysis | null
+    if (!saved) {
+      const { data: persisted, error: persistedError } = await supabase
+        .from('property_media_analysis')
+        .select('*')
+        .eq('id', analysisId)
+        .maybeSingle()
+      if (persistedError) throw persistedError
+      saved = persisted as PropertyMediaAnalysis | null
+    }
+    if (!saved) throw new Error('Evidence analysis could not be loaded after idempotent save.')
     setSiteMediaAnalysesByRequest((prev) => ({
       ...prev,
-      [request.id]: [saved, ...(prev[request.id] || [])],
+      [request.id]: [saved!, ...(prev[request.id] || []).filter((item) => item.id !== saved!.id)],
     }))
     return saved
   }
@@ -5814,6 +5868,33 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     setLocalEvidenceStatus('uploading')
 
     try {
+      const inputFiles = Array.from(new Set([...photoFiles, ...documentFiles]))
+      const contentHashes = new Map<File, string>()
+      for (const file of inputFiles) contentHashes.set(file, await sha256Hex(file))
+      const submissionKey = await requestSubmissionKey({
+        address: propertyAddress,
+        city,
+        state: stateValue,
+        zip,
+        description: safeDescription,
+        fileHashes: Array.from(contentHashes.values()),
+      })
+      const { data: existingSubmission, error: existingSubmissionError } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('property_facts->>requestSubmissionKey', submissionKey)
+        .limit(1)
+        .maybeSingle()
+      if (existingSubmissionError) throw existingSubmissionError
+      if (existingSubmission?.id) {
+        await loadRequestsFromSupabase()
+        setSearch(propertyAddress)
+        setActiveTab('properties')
+        setSuccessMessage('This exact request was already saved. Opened the existing property review instead of creating a duplicate.')
+        resetForm()
+        return
+      }
+
       const { data: leadRow, error: leadError } = await supabase
         .from('leads')
         .insert({
@@ -5841,6 +5922,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         verified: true,
         verificationNotes,
         inspectionIntelligence: inspectionReportDraft?.intelligence || null,
+        requestSubmissionKey: submissionKey,
       }
 
       const propertyRecordId = await ensureRequestProperty(
@@ -5882,8 +5964,8 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         status: 'new',
       })
 
-      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id, linkedPropertyId, canonicalWorkRequestId)
-      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id, linkedPropertyId, canonicalWorkRequestId)
+      const photos = await uploadRequestFiles(photoFiles, 'photos', 'photo', leadRow.id, linkedPropertyId, canonicalWorkRequestId, contentHashes)
+      const documents = await uploadRequestFiles(documentFiles, 'documents', 'document', leadRow.id, linkedPropertyId, canonicalWorkRequestId, contentHashes)
 
       const newRequest: WorkRequest = {
         id: leadRow?.id || makeId(),
@@ -5913,9 +5995,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       setRequests((prev) => [newRequest, ...prev])
       void savePropertyAgentOutputs(newRequest, buildPropertyAgentDrafts(newRequest))
       if (hasAdminConsoleAccess) {
-        void autoInterpretEvidenceForRequests([newRequest])
+        setSuccessMessage('Evidence saved. Preparing the property review...')
+        await autoInterpretEvidenceForRequests([newRequest])
       }
-      setSuccessMessage('Request submitted. Shelter Prep will review and follow up.')
+      await loadRequestsFromSupabase()
+      setSearch(propertyAddress)
+      setActiveTab('properties')
+      setSuccessMessage(hasAdminConsoleAccess
+        ? 'Request submitted. Unique evidence processed into an AI Draft property review.'
+        : 'Request submitted. Evidence is saved and waiting for authorized review processing.')
       resetForm()
     } catch (error: any) {
       console.error(error)
@@ -6316,34 +6404,30 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     return { label: `page ${page}`, pageNumber: page, pageRange: null as string | null }
   }
 
-  function estimatePdfPageCount(raw: string) {
-    const matches = raw.match(/\/Type\s*\/Page\b/g)
-    if (matches?.length) return matches.length
-    return null
-  }
-
   async function extractStoredPdfEvidenceText(file: StoredFile, pageLabel = '') {
     const signedUrl = await resolveStoredFileUrl(file)
     const response = await fetch(signedUrl)
     if (!response.ok) throw new Error(`Could not download PDF for evidence inspection (${response.status}).`)
     const blob = await response.blob()
-    const raw = await blob.slice(0, Math.min(blob.size, INSPECTION_FRONT_PAGE_MAX_BYTES)).text()
-    const literalStrings = Array.from(raw.matchAll(/\(([^()]{3,})\)/g))
-      .map((match) => match[1])
-      .join(' ')
-    const arrayStrings = Array.from(raw.matchAll(/\[((?:\s*\([^()]{2,}\)\s*){2,})\]/g))
-      .map((match) => Array.from(match[1].matchAll(/\(([^()]{2,})\)/g)).map((item) => item[1]).join(' '))
-      .join(' ')
-    const pageCount = estimatePdfPageCount(raw)
-    const text = normalizeInspectionReportText(`${literalStrings} ${arrayStrings} ${raw.slice(0, 12000)}`).slice(0, 24000)
+    const raw = await blob.text()
+    const coverage = inspectPdfProcessingCoverage(raw)
+    const text = extractPdfLiteralText(raw, INSPECTION_EXTRACTED_TEXT_MAX_CHARACTERS)
+    const processing = classifyPdfExtraction({
+      fileId: file.id,
+      fileName: file.name,
+      bytesRead: blob.size,
+      totalBytes: blob.size,
+      ...coverage,
+      extractedText: text,
+    })
     const warning = [
       pageLabel ? `Requested ${pageLabel}.` : '',
-      pageCount ? `Estimated PDF page count: ${pageCount}.` : 'Page count could not be confirmed.',
-      'Partial extraction only. Some findings may be missing.',
+      coverage.pageCount ? `PDF page count: ${coverage.pageCount}; processed: ${coverage.processedPageCount}.` : 'Page count could not be confirmed.',
+      processing.warning || '',
       text.length < 120 ? 'Low readable text. Try inspecting page images or upload clearer pages.' : '',
     ].filter(Boolean).join(' ')
 
-    return { text, pageCount, warning, payloadBytes: Math.min(blob.size, INSPECTION_FRONT_PAGE_MAX_BYTES) }
+    return { text, pageCount: coverage.pageCount, warning, payloadBytes: blob.size, processing }
   }
 
   function getInspectionStatusLabel(status?: InspectionProcessingStatus) {
@@ -6363,6 +6447,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     text: string
     payloadBytes: number
     request?: WorkRequest
+    sourceFileId?: string | null
+    evidenceId?: string | null
+    evidenceSource?: InspectionEvidenceSource
   }): InspectionReportDraft {
     const address = extractInspectionAddress(params.text)
     const clientName = firstMatch(params.text, [
@@ -6405,6 +6492,9 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       findings: summaryItems,
       missingInfo,
       propertyId: params.request?.propertyId || null,
+      sourceFileId: params.sourceFileId,
+      evidenceId: params.evidenceId,
+      evidenceSources: params.evidenceSource ? [params.evidenceSource] : [],
     })
 
     return {
@@ -6432,9 +6522,12 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     extractedText?: string
     extractionSummary: string
     payloadBytes?: number
+    processing?: InspectionEvidenceSource
   }) {
     try {
-      await supabase.from('inspection_extractions').insert({
+      const extractionId = await deterministicProcessingId(['inspection-extraction', params.request.id, params.file.id || params.file.path || params.file.name])
+      const record = {
+        id: extractionId,
         lead_id: asNullableUuid(params.request.id),
         property_id: getLinkedPropertyId(params.request),
         source_file_id: asNullableUuid(params.file.id || ''),
@@ -6444,6 +6537,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         extracted_text: params.extractedText?.slice(0, 24000) || null,
         extraction_summary: params.extractionSummary,
         human_review_status: params.status === 'extraction_failed' ? 'needs_review' : 'ai_draft',
+        admin_notes: params.processing ? JSON.stringify({ evidence_processing: params.processing }) : null,
         ...createReviewPacketMetadata({
           propertyAddress: params.request.propertyAddress,
           title: params.file.name,
@@ -6456,7 +6550,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           sourceReferenceCount: 1,
           confidence: params.status === 'extraction_failed' ? 'low' : 'medium',
         }),
-      })
+      }
+      const { data: existing } = await supabase
+        .from('inspection_extractions')
+        .select('status')
+        .eq('id', extractionId)
+        .maybeSingle()
+
+      if (!existing) {
+        await supabase.from('inspection_extractions').insert(record)
+      } else if (existing.status === 'extraction_failed' && params.status !== 'extraction_failed') {
+        await supabase.from('inspection_extractions').update(record).eq('id', extractionId)
+      }
     } catch (error) {
       console.warn('inspection_extractions table unavailable; saved extraction on lead property_facts.', error)
     }
@@ -6505,53 +6610,69 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     if (error) throw error
   }
 
-  async function processInspectionPdf(request: WorkRequest, file: StoredFile) {
+  async function processInspectionPdf(
+    request: WorkRequest,
+    file: StoredFile,
+    options: { persistState?: boolean; quiet?: boolean } = {}
+  ): Promise<InspectionIntelligenceDraft | null> {
     if (!hasAdminConsoleAccess) {
-      alert('Sign in as admin/owner before processing inspection PDFs.')
-      return
+      if (!options.quiet) alert('Sign in as admin/owner before processing inspection PDFs.')
+      return null
     }
 
-    setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extracting_pdf' }))
-    await saveInspectionStateToLead(request, {
-      inspectionProcessingStatus: 'extracting_pdf',
-      inspectionExtractionMessage: `Extracting PDF text from ${file.name}.`,
-    })
+    const persistState = options.persistState !== false
+    if (persistState) {
+      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extracting_pdf' }))
+      await saveInspectionStateToLead(request, {
+        inspectionProcessingStatus: 'extracting_pdf',
+        inspectionExtractionMessage: `Reading the complete uploaded file ${file.name}.`,
+      })
+    }
 
     try {
-      const signedUrl = await resolveStoredFileUrl(file)
-      const response = await fetch(signedUrl)
-      if (!response.ok) throw new Error(`Could not download PDF for extraction (${response.status}).`)
-      const blob = await response.blob()
-      const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
-      const { text, payloadBytes } = await readInspectionPdfText(pdfFile)
+      const { text, payloadBytes, processing, warning } = await extractStoredPdfEvidenceText(file)
       const extractedText = text.trim()
 
-      if (!extractedText || extractedText.length < 20) {
-        throw new Error('PDF text could not be extracted. Upload clearer PDF, images, or manually add findings.')
+      if (processing.extraction_status === 'failed') {
+        throw new Error('PDF could not be retrieved or parsed into usable evidence. Upload a valid PDF or manually add evidence-backed findings.')
       }
+
+      const evidenceId = await persistEvidenceItem({
+        request,
+        file,
+        mode: 'full_pdf',
+        status: 'interpretation_drafted',
+        extractedText,
+        extractionWarning: warning,
+      })
 
       const draft = buildInspectionDraftFromExtractedText({
         fileName: file.name,
         text: extractedText,
         payloadBytes,
         request,
+        sourceFileId: file.id || null,
+        evidenceId,
+        evidenceSource: processing,
       })
       const status: InspectionProcessingStatus = draft.intelligence.repairItems.length
         ? 'needs_human_review'
         : 'inspection_review_drafted'
       const extractionSummary = draft.intelligence.executiveSummary
 
-      await saveInspectionStateToLead(request, {
-        propertyAddress: draft.propertyAddress || request.propertyAddress,
-        city: draft.city || request.city,
-        state: draft.state || request.state,
-        inspectionIntelligence: draft.intelligence,
-        inspectionProcessingStatus: status,
-        inspectionExtractionSummary: extractionSummary,
-        inspectionExtractionMessage: draft.missingInfo.length
-          ? `Missing Info: ${draft.missingInfo.join(', ')}`
-          : 'Inspection Review Drafted. Admin review required.',
-      })
+      if (persistState) {
+        await saveInspectionStateToLead(request, {
+          propertyAddress: draft.propertyAddress || request.propertyAddress,
+          city: draft.city || request.city,
+          state: draft.state || request.state,
+          inspectionIntelligence: draft.intelligence,
+          inspectionProcessingStatus: status,
+          inspectionExtractionSummary: extractionSummary,
+          inspectionExtractionMessage: processing.extraction_status === 'partial'
+            ? 'Inspection Review Drafted. Extraction is partial; review the source status once and resolve resulting unknowns.'
+            : 'Inspection Review Drafted. Human review required.',
+        })
+      }
       await persistInspectionExtraction({
         request,
         file,
@@ -6559,33 +6680,86 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         extractedText,
         extractionSummary,
         payloadBytes,
+        processing,
       })
-      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: status }))
+      if (persistState) setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: status }))
+      return draft.intelligence
     } catch (error: any) {
       const message = error?.message || 'PDF text could not be extracted. Upload clearer PDF, images, or manually add findings.'
-      await saveInspectionStateToLead(request, {
-        inspectionProcessingStatus: 'extraction_failed',
-        inspectionExtractionMessage: message,
-      })
+      if (persistState) {
+        await saveInspectionStateToLead(request, {
+          inspectionProcessingStatus: 'extraction_failed',
+          inspectionExtractionMessage: message,
+        })
+      }
       await persistInspectionExtraction({
         request,
         file,
         status: 'extraction_failed',
         extractionSummary: message,
       })
-      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extraction_failed' }))
-      alert(message)
+      if (persistState) setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extraction_failed' }))
+      if (!options.quiet) alert(message)
+      return null
     }
   }
 
-  async function processInspectionPdfsForRequest(request: WorkRequest) {
-    const pdfs = safeArray(request.documents).filter(isPdfEvidence)
+  async function processInspectionPdfsForRequest(request: WorkRequest, allEvidence = getUniqueUploadedFiles(request)) {
+    if (request.inspectionIntelligence?.humanReviewStatus === 'human_verified') {
+      alert('This inspection review is already human verified. Start an explicit new review before replacing its evidence interpretation.')
+      return null
+    }
+    const pdfs = uniqueEligibleEvidence(safeArray(request.documents).filter(isPdfEvidence))
     if (!pdfs.length) {
       alert('No uploaded PDF evidence is attached to this request.')
       return
     }
-
-    await processInspectionPdf(request, pdfs[0])
+    setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extracting_pdf' }))
+    await saveInspectionStateToLead(request, {
+      inspectionProcessingStatus: 'extracting_pdf',
+      inspectionExtractionMessage: `Processing ${pdfs.length} unique inspection source${pdfs.length === 1 ? '' : 's'}.`,
+    })
+    const drafts: InspectionIntelligenceDraft[] = []
+    for (const pdf of pdfs) {
+      const draft = await processInspectionPdf(request, pdf, { persistState: false, quiet: true })
+      if (draft) drafts.push(draft)
+    }
+    const pdfIds = new Set(pdfs.map((file) => file.id || file.path || file.name))
+    const evidenceSources: InspectionEvidenceSource[] = [
+      ...drafts.flatMap((draft) => safeArray(draft.evidenceSources)),
+      ...allEvidence.filter((file) => !pdfIds.has(file.id || file.path || file.name)).map((file) => ({
+        file_id: file.id || null,
+        file_name: file.name,
+        upload_status: 'uploaded' as const,
+        retrieval_status: 'retrieved' as const,
+        extraction_status: 'not_applicable' as const,
+        bytes_read: 0,
+        total_bytes: file.sizeBytes || 0,
+        page_count: null,
+        extracted_character_count: 0,
+        warning: null,
+      })),
+    ]
+    const merged = mergeInspectionIntelligenceDrafts(drafts, evidenceSources)
+    if (!merged) {
+      await saveInspectionStateToLead(request, {
+        inspectionProcessingStatus: 'extraction_failed',
+        inspectionExtractionMessage: 'No uploaded PDF produced readable findings. Review source status and add clearer evidence.',
+      })
+      setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'extraction_failed' }))
+      return null
+    }
+    await saveInspectionStateToLead(request, {
+      propertyAddress: merged.propertyAddress || request.propertyAddress,
+      city: merged.city || request.city,
+      state: merged.state || request.state,
+      inspectionIntelligence: merged,
+      inspectionProcessingStatus: 'needs_human_review',
+      inspectionExtractionSummary: merged.executiveSummary,
+      inspectionExtractionMessage: 'Unique inspection evidence processed. Human review required.',
+    })
+    setPdfProcessingByRequest((prev) => ({ ...prev, [request.id]: 'needs_human_review' }))
+    return merged
   }
 
   async function runFirstPassEvidenceInterpretation(request: WorkRequest, files = getUniqueUploadedFiles(request)) {
@@ -6593,11 +6767,10 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     const pdf = files.find(isPdfEvidence)
     if (pdf) {
-      await saveInspectionStateToLead(request, {
-        inspectionProcessingStatus: 'extracting_pdf',
-        inspectionExtractionMessage: 'Media uploaded. Interpretation pending.',
-      })
-      await processInspectionPdf(request, pdf)
+      await processInspectionPdfsForRequest({
+        ...request,
+        documents: files.filter(isPdfEvidence),
+      }, files)
       return
     }
 
@@ -6624,6 +6797,18 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
       findings,
       missingInfo: ['Review uploaded evidence and confirm exact work area, trade, quantity, and source file.'],
       propertyId: request.propertyId || getRequestPropertyId(request),
+      evidenceSources: files.map((file) => ({
+        file_id: file.id || null,
+        file_name: file.name,
+        upload_status: 'uploaded',
+        retrieval_status: 'retrieved',
+        extraction_status: 'not_applicable',
+        bytes_read: 0,
+        total_bytes: file.sizeBytes || 0,
+        page_count: null,
+        extracted_character_count: 0,
+        warning: null,
+      })),
     })
 
     await saveInspectionStateToLead(request, {
@@ -6644,8 +6829,17 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     extractedText?: string
     extractionWarning?: string
   }) {
+    const evidenceId = await deterministicProcessingId([
+      'evidence-item',
+      params.request.id,
+      params.file.id || params.file.path || params.file.name,
+      params.mode,
+      params.pageNumber,
+      params.pageRange,
+    ])
     try {
-      await supabase.from('evidence_items').insert({
+      const { error } = await supabase.from('evidence_items').upsert({
+        id: evidenceId,
         property_id: getLinkedPropertyId(params.request),
         lead_id: asNullableUuid(params.request.id),
         file_id: asNullableUuid(params.file.id || ''),
@@ -6675,10 +6869,12 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
           sourceReferenceCount: 1,
           confidence: params.extractedText ? 'medium' : 'low',
         }),
-      })
+      }, { onConflict: 'id', ignoreDuplicates: true })
+      if (error) throw error
     } catch (error) {
       console.warn('evidence_items table unavailable; evidence inspection finding still saved in property_media_findings.', error)
     }
+    return evidenceId
   }
 
   async function createEvidenceFinding(params: {
@@ -6694,7 +6890,15 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     adminNotes: string
   }) {
     const analysis = await ensureSiteMediaAnalysis(params.request, params.file)
+    const findingId = await deterministicProcessingId([
+      'evidence-finding',
+      params.request.id,
+      params.file.id || params.file.path || params.file.name,
+      params.findingType,
+      params.observation,
+    ])
     const record = {
+      id: findingId,
       property_media_analysis_id: analysis.id,
       property_id: analysis.property_id ?? getLinkedPropertyId(params.request),
       lead_id: analysis.lead_id ?? asNullableUuid(params.request.id),
@@ -6713,15 +6917,25 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
 
     const { data, error } = await supabase
       .from('property_media_findings')
-      .insert(record)
+      .upsert(record, { onConflict: 'id', ignoreDuplicates: true })
       .select()
-      .single()
+      .maybeSingle()
 
     if (error) throw error
-    const saved = data as PropertyMediaFinding
+    let saved = data as PropertyMediaFinding | null
+    if (!saved) {
+      const { data: existing, error: existingError } = await supabase
+        .from('property_media_findings')
+        .select('*')
+        .eq('id', findingId)
+        .maybeSingle()
+      if (existingError) throw existingError
+      saved = existing as PropertyMediaFinding | null
+    }
+    if (!saved) throw new Error('Evidence finding could not be loaded after idempotent save.')
     setSiteMediaFindingsByRequest((prev) => ({
       ...prev,
-      [params.request.id]: [saved, ...(prev[params.request.id] || [])],
+      [params.request.id]: [saved!, ...(prev[params.request.id] || []).filter((item) => item.id !== saved!.id)],
     }))
     return saved
   }
@@ -6730,10 +6944,11 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
     request: WorkRequest,
     file: StoredFile,
     mode: 'full_pdf' | 'page' | 'range' | 'image' | 'file' = 'file',
-    pageInput = ''
+    pageInput = '',
+    quiet = false
   ) {
     if (!hasAdminConsoleAccess) {
-      alert('Sign in as admin/owner before inspecting evidence.')
+      if (!quiet) alert('Sign in as admin/owner before inspecting evidence.')
       return
     }
 
@@ -6836,7 +7051,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
         extractionWarning: error?.message || 'Evidence inspection failed.',
       })
       setEvidenceInspectionStatusByKey((prev) => ({ ...prev, [evidenceKey]: 'failed' }))
-      alert(error?.message || 'Could not inspect this evidence file.')
+      if (!quiet) alert(error?.message || 'Could not inspect this evidence file.')
     }
   }
 
@@ -12472,12 +12687,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
   }
 
   function getUniqueUploadedFiles(request: WorkRequest) {
-    const uniqueFiles = new Map<string, StoredFile>()
-    ;[...safeArray(request.photos), ...safeArray(request.documents)].forEach((file) => {
-      const key = (file.path || file.url || file.id || file.name).toLowerCase()
-      if (!uniqueFiles.has(key)) uniqueFiles.set(key, file)
-    })
-    return Array.from(uniqueFiles.values())
+    return uniqueEligibleEvidence([...safeArray(request.photos), ...safeArray(request.documents)])
   }
 
   function compactReportText(value?: string | null, maxLength = 240) {
@@ -14332,7 +14542,7 @@ const [sellerPrepReview, setSellerPrepReview] = useState<any | null>(null)
             <div style={styles.noticeBox}>
               <strong>Report type/source:</strong> {inspectionReportDraft.reportType || 'Inspection report'}
               <br />
-              <strong>Front-page payload:</strong> {Math.round(inspectionReportDraft.frontPagePayloadBytes / 1024)} KB of {Math.round(INSPECTION_FRONT_PAGE_MAX_BYTES / 1024)} KB max
+              <strong>File processed:</strong> {Math.round(inspectionReportDraft.frontPagePayloadBytes / 1024)} KB read from the uploaded source
               <br />
               <strong>Extraction status:</strong>{' '}
               {inspectionReportDraft.missingInfo.length

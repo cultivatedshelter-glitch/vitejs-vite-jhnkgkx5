@@ -4,6 +4,23 @@ export type ReviewConfidence = 'low' | 'medium' | 'high'
 export type TransactionImpact = 'low' | 'medium' | 'high' | 'unknown'
 export type PotentialCostExposure = 'low' | 'medium' | 'high' | 'unknown'
 export type InvestigationPriority = 'investigate_first' | 'price_next' | 'can_wait' | 'unknown'
+export type InspectionEvidenceSource = {
+  file_id: string | null
+  file_name: string
+  upload_status: 'uploaded'
+  retrieval_status: 'retrieved' | 'failed'
+  extraction_status: 'complete' | 'partial' | 'failed' | 'not_applicable'
+  bytes_read: number
+  total_bytes: number
+  page_count: number | null
+  processed_page_count?: number
+  page_representation_count?: number
+  attempted_all_pages?: boolean
+  parser_error_count?: number
+  extraction_terminated_early?: boolean
+  extracted_character_count: number
+  warning: string | null
+}
 
 export type InspectionConsequence = {
   transaction_impact: TransactionImpact
@@ -54,6 +71,9 @@ export type InspectionRepairItemDraft = {
   inspection_report_id: string
   repair_bundle_id: string
   source_text: string
+  source_file_id?: string | null
+  source_page?: string | null
+  evidence_ids?: string[]
   category: string
   trade: string
   description: string
@@ -189,6 +209,14 @@ export type InspectionIntelligenceDraft = {
   sellerPrepSummary: string
   contractorReadyScopes: string[]
   internalAdminReviewRecord: string
+  evidenceSources?: InspectionEvidenceSource[]
+}
+
+export type InspectionReviewOverview = {
+  known: string[]
+  unknown: string[]
+  nextNeeded: string[]
+  priorityFindings: InspectionRepairBundleDraft[]
 }
 
 type InspectionBundleBasics = {
@@ -1130,9 +1158,8 @@ export function extractInspectionFindings(text: string) {
       seen.add(key)
       return true
     })
-    .slice(0, 6)
+    .slice(0, 80)
 
-  const lower = text.toLowerCase()
   const operationalFindings = [
     /(roof|attic|leak|dark staining|north-facing|ridge)/i.test(text) && /(roof|attic|leak|staining)/i.test(text)
       ? 'Possible roof leaks observed from attic with dark staining on north-facing roof slope and ridge.'
@@ -1155,7 +1182,7 @@ export function extractInspectionFindings(text: string) {
     : []
 
   const riverRoadFindings = hasRiverRoadSignal ? RIVER_ROAD_FINDING_TEXTS : []
-  const limit = hasRiverRoadSignal ? RIVER_ROAD_FINDING_TEXTS.length : 8
+  const limit = hasRiverRoadSignal ? RIVER_ROAD_FINDING_TEXTS.length : 80
 
   return Array.from(new Set([...riverRoadFindings, ...operationalFindings, ...extracted, ...berlinFallback])).slice(0, limit)
 }
@@ -1355,6 +1382,8 @@ export function buildRepairItemsFromFindings(params: {
   findings: string[]
   propertyId?: string | number | null
   propertyAddress?: string
+  sourceFileId?: string | null
+  evidenceId?: string | null
 }) {
   return params.findings.map((finding, index): InspectionRepairItemDraft => {
     const basics = getInspectionBundleBasics(finding)
@@ -1365,6 +1394,9 @@ export function buildRepairItemsFromFindings(params: {
       inspection_report_id: params.inspectionReportId,
       repair_bundle_id: `${params.inspectionReportId}-${basics.bundleId}`,
       source_text: finding,
+      source_file_id: params.sourceFileId || null,
+      source_page: 'Full inspection report; page reference needs review',
+      evidence_ids: params.evidenceId ? [params.evidenceId] : [],
       category: basics.systemCategory,
       trade: basics.trade,
       description: finding,
@@ -1397,7 +1429,18 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
       existing.known_facts = uniqueStrings([...(existing.known_facts || []), item.source_text])
       existing.unknowns = uniqueStrings([...(existing.unknowns || []), ...safeArray(item.missing_info)])
       existing.next_evidence_needed = uniqueStrings([...(existing.next_evidence_needed || []), ...safeArray(item.missing_info)])
-      existing.evidence_references = uniqueStrings([...(existing.evidence_references || []), item.id, item.inspection_report_id])
+      existing.evidence_references = uniqueStrings([
+        ...(existing.evidence_references || []),
+        item.id,
+        item.inspection_report_id,
+        item.source_file_id,
+        ...safeArray(item.evidence_ids),
+      ])
+      existing.full_source_refs = [
+        ...safeArray(existing.full_source_refs),
+        ...(item.source_file_id ? [{ type: 'source_file', id: item.source_file_id }] : []),
+        ...safeArray(item.evidence_ids).map((id) => ({ type: 'evidence_item', id })),
+      ]
       existing.priority = existing.priority.includes('Immediate') ? existing.priority : basics.priority
       return
     }
@@ -1419,7 +1462,11 @@ export function buildRepairBundles(repairItems: InspectionRepairItemDraft[], pro
       review_status: 'needs_review',
       seller_impact: basics.riskExplanation,
       contractor_packet_needed: basics.recommendation === 'contractor_review' || basics.severity === 'High',
-      evidence_references: [item.id, item.inspection_report_id],
+      evidence_references: uniqueStrings([item.id, item.inspection_report_id, item.source_file_id, ...safeArray(item.evidence_ids)]),
+      full_source_refs: [
+        ...(item.source_file_id ? [{ type: 'source_file', id: item.source_file_id }] : []),
+        ...safeArray(item.evidence_ids).map((id) => ({ type: 'evidence_item', id })),
+      ],
       operational_feed_entries: [
         createOperationalFeedEntry({
           title: basics.title,
@@ -1487,12 +1534,15 @@ export function buildInspectionIntelligenceDraft(params: {
   findings: string[]
   missingInfo: string[]
   propertyId?: string | number | null
+  sourceFileId?: string | null
+  evidenceId?: string | null
+  evidenceSources?: InspectionEvidenceSource[]
 }): InspectionIntelligenceDraft {
   const inspectionReportId = `inspection-${safeFileName(params.fileName)}`
   const inputFindings = safeArray(params.findings)
   const sourceContext = `${params.propertyAddress} ${params.city} ${params.state} ${params.fileName} ${inputFindings.join(' ')}`
   const hasRiverRoadAddress = isRiverRoadInspectionContext(sourceContext)
-  const hasBerlinAddress = !hasRiverRoadAddress && /11134\s+sw\s+berlin|berlin ave|wilsonville|inspection pages/i.test(sourceContext)
+  const hasBerlinAddress = !hasRiverRoadAddress && /11134\s+sw\s+berlin|berlin ave|wilsonville/i.test(sourceContext)
   const inputMissingInfo = safeArray(params.missingInfo)
   const sourceFindings = hasRiverRoadAddress
     ? RIVER_ROAD_FINDING_TEXTS
@@ -1508,6 +1558,8 @@ export function buildInspectionIntelligenceDraft(params: {
     findings: sourceFindings,
     propertyId: params.propertyId,
     propertyAddress: params.propertyAddress,
+    sourceFileId: params.sourceFileId,
+    evidenceId: params.evidenceId,
   })
   const builtRepairBundles = buildRepairBundles(repairItems, params.propertyId, params.propertyAddress)
   const normalizedWorkGroups = hasBerlinAddress
@@ -1544,7 +1596,7 @@ export function buildInspectionIntelligenceDraft(params: {
     inspectorCompany: params.inspectorCompany,
     executiveSummary: normalizedWorkGroups.length
       ? `AI Draft: ${normalizedWorkGroups.length} operational work group${normalizedWorkGroups.length === 1 ? '' : 's'} found from visible inspection text. Human/admin review required before final pricing, seller reporting, or contractor routing.`
-      : 'AI Draft: inspection report uploaded, but no clear findings were extracted from the front-page payload. Request the missing report pages or clearer text.',
+      : 'AI Draft: inspection report uploaded, but no clear findings were extracted from readable document text. Request clearer pages/images or add a manual evidence-backed finding.',
     priorityRoadmap,
     immediateItems,
     deferredMaintenanceItems: deferredItems,
@@ -1563,5 +1615,69 @@ export function buildInspectionIntelligenceDraft(params: {
     sellerPrepSummary: buildSellerPrepSummary(normalizedWorkGroups),
     contractorReadyScopes: buildContractorScopeDraft(normalizedWorkGroups),
     internalAdminReviewRecord: 'AI Draft inspection intelligence created from uploaded inspection text. Admin must approve, edit, or reject every item before external use.',
+    evidenceSources: safeArray(params.evidenceSources),
+  }
+}
+
+export function mergeInspectionIntelligenceDrafts(
+  drafts: InspectionIntelligenceDraft[],
+  evidenceSources: InspectionEvidenceSource[] = []
+): InspectionIntelligenceDraft | null {
+  const usable = safeArray(drafts)
+  if (!usable.length) return null
+  const first = usable[0]
+  const repairItems = Array.from(new Map(
+    usable.flatMap((draft) => safeArray(draft.repairItems)).map((item) => [`${item.source_file_id || item.inspection_report_id}:${item.source_text.toLowerCase()}`, item])
+  ).values())
+  const repairBundles = buildRepairBundles(repairItems, first.repairItems[0]?.property_id || null, first.propertyAddress)
+  const unique = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+
+  return {
+    ...first,
+    id: usable.map((draft) => draft.id).join('+'),
+    fileName: unique(usable.map((draft) => draft.fileName)).join(', '),
+    reportType: unique(usable.map((draft) => draft.reportType)).join(' + '),
+    inspectionDate: unique(usable.map((draft) => draft.inspectionDate))[0] || '',
+    inspectorName: unique(usable.map((draft) => draft.inspectorName))[0] || '',
+    inspectorCompany: unique(usable.map((draft) => draft.inspectorCompany))[0] || '',
+    executiveSummary: repairBundles.length
+      ? `AI Draft: ${repairBundles.length} priority work group${repairBundles.length === 1 ? '' : 's'} organized from ${usable.length} unique inspection source${usable.length === 1 ? '' : 's'}. Human review remains required.`
+      : 'AI Draft: inspection evidence was received, but no clear repair findings were extracted.',
+    repairItems,
+    repairBundles,
+    workGroups: repairBundles,
+    priorityRoadmap: repairBundles.map((bundle, index) => `${index + 1}. ${bundle.title}: ${bundle.priority}. ${bundle.finding_summary || bundle.risk_explanation}`),
+    immediateItems: unique(usable.flatMap((draft) => draft.immediateItems)),
+    deferredMaintenanceItems: unique(usable.flatMap((draft) => draft.deferredMaintenanceItems)),
+    budgetToReplaceItems: unique(usable.flatMap((draft) => draft.budgetToReplaceItems)),
+    diyMaintenanceItems: unique(usable.flatMap((draft) => draft.diyMaintenanceItems)),
+    buyerCreditCandidates: unique(usable.flatMap((draft) => draft.buyerCreditCandidates)),
+    missingInformationQuestions: unique(usable.flatMap((draft) => draft.missingInformationQuestions)),
+    estimateLow: repairBundles.reduce((sum, bundle) => sum + bundle.estimate_low, 0),
+    estimateHigh: repairBundles.reduce((sum, bundle) => sum + bundle.estimate_high, 0),
+    estimateConfidence: repairItems.length ? 'Low - evidence interpretation requires human and trade review' : 'Needs Review',
+    humanReviewStatus: 'ai_draft',
+    tradeScopes: repairBundles.map((bundle) => `${bundle.trade_owner || bundle.recommended_trade}: ${bundle.summary}`),
+    sellerPrepSummary: buildSellerPrepSummary(repairBundles),
+    contractorReadyScopes: buildContractorScopeDraft(repairBundles),
+    evidenceSources: Array.from(new Map(evidenceSources.map((source) => [source.file_id || source.file_name, source])).values()),
+  }
+}
+
+export function buildInspectionReviewOverview(intelligence: InspectionIntelligenceDraft): InspectionReviewOverview {
+  const activeItems = safeArray(intelligence.repairItems).filter((item) => item.status !== 'rejected')
+  const activeBundles = safeArray(intelligence.workGroups).filter((bundle) => bundle.status !== 'rejected')
+  const unique = (values: string[]) => Array.from(new Set(values.map((value) => value.replace(/\s+/g, ' ').trim()).filter(Boolean)))
+  return {
+    known: unique(activeItems.map((item) => item.source_text)),
+    unknown: unique([
+      ...safeArray(intelligence.missingInformationQuestions),
+      ...activeBundles.flatMap((bundle) => safeArray(bundle.unknowns)),
+    ]),
+    nextNeeded: unique(activeBundles.flatMap((bundle) => [
+      ...safeArray(bundle.next_evidence_needed),
+      bundle.recommended_next_action || bundle.recommended_next_move || '',
+    ])).slice(0, 4),
+    priorityFindings: sequenceInspectionFindings(activeBundles).slice(0, 6),
   }
 }
