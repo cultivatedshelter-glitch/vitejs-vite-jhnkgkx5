@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "inspection-benchmark-case.v1",
+  "reportId": "example-report-id",
+  "filename": "original-inspection-report.pdf",
+  "reportCharacteristics": [
+    "real_report",
+    "short_report",
+    "photo_heavy"
+  ],
+  "sourceDocument": {
+    "path": "../../private-reports/example-report-id/original-inspection-report.pdf",
+    "documentType": "real_inspection_report",
+    "containsPrivateData": true
+  },
+  "truthPath": "expected-truth.json",
+  "systemOutputPath": "system-output.json",
+  "notes": "Do not put real report excerpts in committed files unless sanitized."
+}

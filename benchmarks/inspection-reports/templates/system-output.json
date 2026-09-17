@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "inspection-benchmark-system-output.v1",
+  "reportId": "example-report-id",
+  "pipeline": {
+    "name": "current-shelter-prep-inspection-pipeline",
+    "runId": "",
+    "startedAt": null,
+    "completedAt": null,
+    "notes": "Paste or export system output here. This is not ground truth."
+  },
+  "sourceDocument": {
+    "filename": "original-inspection-report.pdf",
+    "pageCount": null
+  },
+  "extraction": {
+    "status": "not_measured",
+    "pages": [],
+    "failedPages": [],
+    "emptyPagesWhereContentExpected": null,
+    "textCharacterCount": null,
+    "latencyMs": null
+  },
+  "findings": [],
+  "organization": {
+    "groups": [],
+    "knownUnknownSupported": false,
+    "latencyMs": null
+  },
+  "cost": {
+    "status": "NOT MEASURED",
+    "amountUsd": null,
+    "currency": "USD",
+    "source": ""
+  }
+}

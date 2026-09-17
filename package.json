@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "node --test scripts/*.test.mjs",
+    "benchmark:inspection": "node scripts/inspection-report-benchmark.mjs run --all",
+    "benchmark:inspection:init": "node scripts/inspection-report-benchmark.mjs init-case",
     "preview": "vite preview"
   },
   "dependencies": {

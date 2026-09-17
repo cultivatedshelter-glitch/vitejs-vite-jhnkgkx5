@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "inspection-benchmark-truth.v1",
+  "reportId": "example-report-id",
+  "truthStatus": "draft",
+  "reviewer": "",
+  "reviewedAt": null,
+  "expectedPageCount": null,
+  "pagesExpectedToHaveContent": [],
+  "meaningfulFindingsExpected": [
+    {
+      "truthId": "T1",
+      "title": "",
+      "critical": false,
+      "expectedPages": [],
+      "expectedEvidence": [
+        {
+          "sourceDocument": "",
+          "page": null,
+          "excerpt": ""
+        }
+      ],
+      "tradeCategory": "",
+      "systemCategory": "",
+      "known": [],
+      "unknown": [],
+      "systemMatch": {
+        "status": "not_reviewed",
+        "systemFindingIds": [],
+        "notes": ""
+      },
+      "notes": ""
+    }
+  ],
+  "manualAssessment": {
+    "missedFindings": [],
+    "unsupportedClaims": [],
+    "duplicateFindings": [],
+    "incorrectClassifications": [],
+    "evidenceLinkageErrors": [],
+    "organizationErrors": [],
+    "knownUnknownErrors": [],
+    "evidenceFidelity": "not_reviewed",
+    "knownUnknownFidelity": "not_reviewed",
+    "organizationUsefulnessScore": null,
+    "humanCorrectionBurden": "not_reviewed",
+    "reviewTimeMinutes": null,
+    "correctionCount": null,
+    "finalAcceptance": "needs_work",
+    "notes": ""
+  }
+}

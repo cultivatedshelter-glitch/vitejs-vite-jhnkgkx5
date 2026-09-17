@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Shelter Prep capability benchmark private data
+local-fixtures/
+benchmarks/inspection-reports/private-reports/
+benchmarks/inspection-reports/runs/
+__pycache__/
+*.py[cod]
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
