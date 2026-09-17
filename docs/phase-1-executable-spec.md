@@ -243,6 +243,18 @@ The UI must not claim durable persistence, live pricing, live weather, or comple
 
 Round 1H does not authorize new migrations, production writes, autonomous repair decisions, contractor routing, a marketplace, homeowner features, monitoring, predictive maintenance, or expansion beyond this single Phase 1 vertical slice.
 
+## Round 1I Dynamic Reasoning-to-UX Boundary
+
+Round 1I may replace the hard-coded Round 1H finding presentation with a frontend adapter that consumes the existing Round 1 reasoning artifact and Round 1G source-integration bundle contracts. The adapter may normalize those contracts into UI view models, but it must not recreate or change reasoning, pricing, provenance, review, or relationship rules in React.
+
+Normal mode must obtain structured reasoning output from an explicitly configured application boundary. It must never silently substitute deterministic fixture findings. Fixture-backed output is permitted only in explicit development/test mode, must remain visibly labeled, and must be rejected when supplied to normal mode.
+
+The UI must derive finding counts, categories, titles, review states, pricing states, geography labels, weather relevance, contractor input, source links, and range history from returned structured data. Null or blocked contract states remain visible and must not be filled with invented values. Environmental context is omitted when irrelevant and may show a quiet unavailable state only when the artifact marks it relevant but no sourced result is available.
+
+The processing view may report only request states the application actually knows: waiting for structured output, output received, mapping complete, failure, or ready. It may not simulate granular backend work or percentage progress when the backend exposes none.
+
+Round 1I may reuse the existing local evidence-selection state while durable upload and processing authority remain unverified. It does not authorize a second upload system, production persistence, new migrations, verification authority, new product modules, new pricing providers, monitoring, predictive maintenance, marketplace behavior, or autonomous dispatch.
+
 ## Phase 1 Finding-Card Contract
 
 The reasoning artifact must expose, or explicitly mark blocked when sourced pricing is absent:

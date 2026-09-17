@@ -16,7 +16,8 @@ test('guided flow exposes the six Phase 1 stages without replacing the legacy ap
   for (const label of ['Property', 'Add evidence', 'Processing', 'Review findings', 'Close gaps', 'Next steps']) {
     assert.match(component, new RegExp(label, 'i'))
   }
-  assert.match(main, /showLegacyApp \? <App \/> : <Phase1Experience \/>/)
+  assert.match(main, /showLegacyApp \? <App \/> : <Phase1Experience fixtureMode=\{fixtureMode\} \/>/)
+  assert.match(main, /import\.meta\.env\.DEV.*fixture/)
 })
 
 test('intake stays minimal and accepts the required evidence formats', () => {
@@ -30,31 +31,42 @@ test('intake stays minimal and accepts the required evidence formats', () => {
   }
 })
 
-test('moisture finding preserves epistemic, pricing, weather, and review boundaries', () => {
+test('finding UI renders adapter fields without embedding fixture findings', () => {
   for (const required of [
     'Development fixture',
+    'Observation',
     'What we know',
     'What we do not know',
     'Recommended next step',
-    'Relevant weather context',
-    'does not establish the cause',
-    'City-level example pricing',
-    'not a contractor bid or a ZIP-specific claim',
+    'Weather and environment',
     'Contractor input',
-    'not contractor verification',
-    'Needs Human Review',
-    'Not yet sourced',
+    'does not verify this finding',
+    'Price basis',
     'Range history',
+    'Related findings',
   ]) {
     assert.match(component, new RegExp(required, 'i'))
   }
+  assert.match(component, /artifact\.findings\.length/)
+  assert.match(component, /finding\.price\.label/)
+  assert.match(component, /finding\.reviewStatusLabel/)
+  assert.match(component, /finding\.weather &&/)
+  assert.match(component, /loadPhase1ReasoningArtifact/)
+  assert.doesNotMatch(component, /\$900|\$3,000|\$1,475|Ceiling water staining|Crawlspace moisture/)
   assert.doesNotMatch(component, /human_verified|contractor_verified/)
 })
 
-test('secondary evidence, sources, and range history use collapsed disclosure controls', () => {
+test('secondary evidence, sources, context, and history use collapsed disclosure controls', () => {
   const details = component.match(/<details>/g) ?? []
-  assert.equal(details.length, 3)
+  assert.ok(details.length >= 5)
   assert.doesNotMatch(component, /<details\s+open/)
+})
+
+test('processing reflects artifact request state without simulated timers', () => {
+  assert.match(component, /Request structured reasoning output/)
+  assert.match(component, /Map returned findings and sources/)
+  assert.match(component, /Reasoning output is not available/)
+  assert.doesNotMatch(component, /setTimeout|activeTask|PROCESSING_TASKS/)
 })
 
 test('layout is mobile-first with stable controls and a single primary action class', () => {

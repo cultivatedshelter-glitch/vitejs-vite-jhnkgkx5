@@ -154,6 +154,11 @@ button { letter-spacing: 0; }
 .phase1-price-band strong { font-size: 30px; }
 .phase1-price-band p { align-self: end; margin: 0; color: #59645c; line-height: 1.5; }
 
+.phase1-observation { margin: 34px 0 0; }
+.phase1-observation h2 { margin: 0 0 10px; font-size: 18px; }
+.phase1-observation p { margin: 0; color: #515e55; line-height: 1.6; }
+.phase1-detail-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; color: #515e55; line-height: 1.55; }
+
 .phase1-two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin: 36px 0; }
 .phase1-two-column > div { padding-left: 16px; border-left: 3px solid #a9b8ad; }
 .phase1-two-column p, .phase1-next-move p, .phase1-context-strip p, .phase1-contractor-input p { margin: 0; color: #515e55; line-height: 1.6; }
@@ -168,6 +173,11 @@ button { letter-spacing: 0; }
 .phase1-disclosures details { border-bottom: 1px solid #d8ded8; }
 .phase1-disclosures summary { min-height: 52px; padding: 16px 0; color: #294f3a; font-weight: 750; cursor: pointer; }
 .phase1-disclosures p { margin: 0 0 18px; color: #566159; line-height: 1.6; }
+.phase1-source-list { display: grid; gap: 14px; margin: 0 0 18px; padding: 0; list-style: none; }
+.phase1-source-list li { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.phase1-source-list a { color: #24563e; font-weight: 700; }
+.phase1-source-list span, .phase1-quiet-state { color: #717a73; font-size: 13px; }
+.phase1-history-entry + .phase1-history-entry { padding-top: 14px; border-top: 1px solid #e1e4e0; }
 .phase1-gap { text-align: left; }
 .phase1-gap h1 { max-width: 690px; }
 .phase1-hidden-input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }

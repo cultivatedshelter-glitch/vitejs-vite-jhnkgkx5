@@ -1,0 +1,121 @@
+{
+  "schema_version": "shelter-prep-phase1-live-source-integration.v1",
+  "property_id": "fixture-property-1",
+  "inspection_report_id": "fixture-report-1",
+  "finding_id": "fixture-moisture-finding-1",
+  "external_sources": [
+    {
+      "record_type": "pricing_source_evidence",
+      "source_id": "fixture-city-repair-benchmark",
+      "source_name": "Fixture city repair benchmark",
+      "source_type": "reputable_local_benchmark",
+      "source_reference": "fixture://pricing/city-moisture-repair",
+      "source_geography": { "level": "city", "label": "Exampletown" },
+      "price_low": 900,
+      "price_high": 3000,
+      "review_status": "external_source_retrieved"
+    },
+    {
+      "record_type": "pricing_source_evidence",
+      "source_id": "fixture-contractor-quote",
+      "source_name": "Fixture contractor quote",
+      "source_type": "contractor_quote",
+      "source_reference": "fixture://contractor/quote-1",
+      "point_value": 1475,
+      "review_status": "external_source_retrieved"
+    },
+    {
+      "record_type": "weather_source_evidence",
+      "source_id": "weather-source-61fe69b84e7f79140f74",
+      "provider": "Deterministic historical weather fixture",
+      "source_reference": "fixture://wet-48-hour-window",
+      "fixture_backed": true,
+      "observation_timestamp": "2030-01-03T12:00:00+00:00",
+      "measurements": { "precipitation_total": 1.4 },
+      "measurement_units": { "precipitation_total": "inch" },
+      "review_status": "external_source_retrieved"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "fixture-price-claim-1",
+      "claim_type": "repair_cost_range",
+      "claim_text": "Fixture-backed Shelter Prep range: $900-$3,000.",
+      "source_refs": ["fixture-city-repair-benchmark"],
+      "linked_finding_id": "fixture-moisture-finding-1",
+      "review_status": "needs_human_review"
+    },
+    {
+      "claim_id": "weather-claim-2722fcc419b159e9d1ae",
+      "claim_type": "environmental_context",
+      "claim_text": "1.4 inch of precipitation was recorded during the relevant pre-observation period. Exterior water intrusion remains a relevant hypothesis, but weather correlation does not establish cause.",
+      "source_refs": ["weather-source-61fe69b84e7f79140f74"],
+      "linked_finding_id": "fixture-moisture-finding-1",
+      "causal_status": "correlation_context_only",
+      "review_status": "needs_human_review"
+    }
+  ],
+  "finding_card": {
+    "finding_title": "Water staining is documented on ceiling drywall.",
+    "price_low": 900,
+    "price_high": 3000,
+    "price_stage": "fixture_evidence_informed",
+    "price_geography": { "level": "city", "label": "Exampletown", "match_quality": "city" },
+    "price_source_refs": ["fixture-city-repair-benchmark"],
+    "price_range_explanation": "Fixture city evidence supports a planning range, while concealed damage, access, equipment, and permit needs remain unknown.",
+    "range_history": [
+      {
+        "revision_id": "fixture-price-revision-1",
+        "prior_low": null,
+        "prior_high": null,
+        "new_low": 900,
+        "new_high": 3000,
+        "movement": "initial",
+        "evidence_causing_change": ["fixture city source supplied", "repair category matched"],
+        "source_refs": ["fixture-city-repair-benchmark"],
+        "review_status": "needs_human_review"
+      }
+    ],
+    "what_we_know": ["Water staining is documented.", "The observation date is 2030-01-03."],
+    "what_we_dont_know": ["Whether the area is currently wet.", "The exact water-entry point is not established."],
+    "recommended_next_step": "Obtain an attic-side photo and moisture reading above the stain.",
+    "next_step_owner": "field reviewer",
+    "why_next_step": "These checks most directly distinguish active moisture from an older stain and localize the pathway.",
+    "review_status": "needs_human_review",
+    "evidence_refs": { "source_evidence_ids": ["fixture-inspection-evidence-1", "weather-source-61fe69b84e7f79140f74"] },
+    "source_refs": {
+      "source_file_id": "fixture-inspection-report",
+      "source_page": 12,
+      "source_section": "Moisture Damage",
+      "source_item_number": "M.1"
+    },
+    "pricing_contract_status": "READY_FOR_UI_CONTRACT",
+    "contractor_quote": {
+      "source_id": "fixture-contractor-quote",
+      "amount": 1475,
+      "source_reference": "fixture://contractor/quote-1",
+      "review_status": "external_source_retrieved"
+    },
+    "weather_context": {
+      "source": {
+        "source_id": "weather-source-61fe69b84e7f79140f74",
+        "provider": "Deterministic historical weather fixture",
+        "source_reference": "fixture://wet-48-hour-window",
+        "fixture_backed": true
+      },
+      "claim": {
+        "claim_text": "1.4 inch of precipitation was recorded during the relevant pre-observation period. Exterior water intrusion remains a relevant hypothesis, but weather correlation does not establish cause.",
+        "source_refs": ["weather-source-61fe69b84e7f79140f74"],
+        "causal_status": "correlation_context_only",
+        "review_status": "needs_human_review"
+      }
+    }
+  },
+  "state_separation": {
+    "external_source_retrieved": true,
+    "ai_interpretation": "needs_human_review",
+    "human_reviewed": false,
+    "verified_operational_knowledge": false
+  },
+  "database_write_executed": false
+}

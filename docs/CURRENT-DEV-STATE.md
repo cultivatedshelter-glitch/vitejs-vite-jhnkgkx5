@@ -218,3 +218,22 @@ Date: 2026-09-17
 - `npm run build` passed after Round 1H. The repository defines no lint script.
 - Browser verification completed across the full flow at the default desktop viewport and at `390x844`. The range-history disclosure, one-question gap screen, and final property next-step summary rendered successfully with no browser console warnings or errors.
 - No migration was created or applied. No Supabase write, production system, Railway service, live source retrieval, private fixture processing, or verified-memory action occurred.
+
+## Round 1I Dynamic Reasoning-to-UX Integration
+
+- Created local checkpoint commit `21d88e9` (`Checkpoint Shelter Prep Phase 1 through Round 1H`) containing only the verified Phase 1 benchmark, reasoning, pricing, live-source, schema, UX, documentation, and test files. Pre-existing dependency-lock churn, agent instructions, backup patches, and unrelated security artifacts were excluded.
+- Added `src/phase1ReasoningAdapter.ts` as the single frontend boundary from existing Round 1 reasoning artifacts or Round 1G source-integration bundles to `Phase1ExperienceViewModel` and `Phase1FindingViewModel` records.
+- The adapter maps finding identity, title, observation, Known/Unknown, missing information, next step, owner, rationale, review status, evidence references, linked sources, conditional weather context, pricing state/geography/basis, range history, contractor quote, categories, property address, and potential related findings without recreating reasoning rules in React.
+- Normal mode no longer contains or silently loads deterministic finding values. It requests structured output only from `VITE_PHASE1_REASONING_ARTIFACT_URL`; when no endpoint is configured, the processing view reports the blocker and states that selected evidence remains local to the browser.
+- Explicit development mode is available only when Vite is running in development with `?fixture=1`. Fixture-backed artifacts are visibly labeled and the adapter rejects them when presented as live output.
+- Added `public/phase1-round1g-moisture.fixture.json` as the explicit deterministic test/development payload. A test invokes the Python Round 1G `--print-fixture` path and checks the UI payload's contract-critical values against the actual integration output to prevent drift.
+- The overview now derives finding count, findings needing evidence, system count, titles, categories, statuses, prices, and geography from returned data. No fixed eight-finding summary remains.
+- Finding cards now render returned observation, Known/Unknown, next step, owner, rationale, review status, supported or blocked price state, price basis, contractor quote, evidence, claim-linked sources, conditional weather/environment, actual range history, and related findings.
+- Pricing with `BLOCKED_MISSING_SOURCED_RANGE` renders `Not yet sourced` and no dollar values. Irrelevant weather is omitted; relevant weather without a sourced result renders a quiet unavailable state. Contractor quotes remain separate from Shelter Prep ranges.
+- Processing now reflects only artifact request, mapping, ready, or failure states. The timed simulated task progression from Round 1H was removed.
+- Human review remains display-only. No frontend path can grant `human_verified` or `contractor_verified` authority.
+- Existing Supabase upload behavior remains in the preserved legacy application. It was not duplicated or invoked because durable storage, private-bucket policy, processing handoff, and server authority are not proven for this guided flow.
+- Browser verification proved the normal-mode blocker and the explicit Round 1G fixture path through dynamic overview, finding card, localized range, Known/Unknown, weather claim, next step/rationale, linked-source expansion, range history, contractor input, and Needs Human Review status. Desktop and `390x844` rendering completed with no browser console warnings or errors.
+- `npm test` passed after Round 1I: 41 tests passed, 0 failed.
+- `npm run build` passed after Round 1I. The repository defines no lint script.
+- No migration was created or applied. No Supabase write, production system, Railway service, private fixture processing, verification event, or verified-memory action occurred.
