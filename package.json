@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:processing": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/phase1-processing-server.mjs",
     "build": "tsc && vite build",
     "test": "node --test scripts/*.test.mjs",
     "benchmark:inspection": "node scripts/inspection-report-benchmark.mjs run --all",

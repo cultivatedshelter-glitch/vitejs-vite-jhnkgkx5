@@ -388,17 +388,13 @@ export function adaptPhase1ReasoningArtifact(
 
 export async function loadPhase1ReasoningArtifact({
   mode,
-  artifactUrl,
   signal,
 }: {
   mode: Phase1ArtifactMode
-  artifactUrl?: string
   signal?: AbortSignal
 }): Promise<Phase1ExperienceViewModel> {
-  const url = mode === 'fixture' ? '/phase1-round1g-moisture.fixture.json' : artifactUrl?.trim()
-  if (!url) {
-    throw new Phase1ArtifactError('No Phase 1 reasoning-output endpoint is configured. Selected evidence remains local to this browser.')
-  }
+  if (mode !== 'fixture') throw new Phase1ArtifactError('Live artifacts must come through the authenticated Phase 1 processing boundary.')
+  const url = '/phase1-round1g-moisture.fixture.json'
   const response = await fetch(url, { headers: { Accept: 'application/json' }, signal })
   if (!response.ok) throw new Phase1ArtifactError(`The reasoning-output request failed with status ${response.status}.`)
   const contentType = response.headers.get('content-type') ?? ''

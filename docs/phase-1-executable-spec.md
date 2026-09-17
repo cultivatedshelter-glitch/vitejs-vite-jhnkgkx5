@@ -150,6 +150,30 @@ When provider credentials or network access are unavailable, the provider interf
 
 No retrieved source becomes verified memory automatically. External source retrieval, AI interpretation, human review, and verified operational knowledge remain distinct states.
 
+## Round 1J Live Processing Boundary
+
+Round 1J may add the smallest authenticated server boundary needed to carry private property evidence through the existing Round 1 reasoning workflow and return the existing Phase 1 artifact contract to the Round 1I frontend adapter.
+
+The boundary may accept a property identifier, stable private evidence references, and an optional note; verify the requesting user's property access; retrieve only authorized evidence; invoke the existing reasoning implementation without duplicating it; validate the resulting artifact; and expose truthful `uploaded`, `queued`, `processing`, `completed`, or `failed` states. Upload time and source observation/report date must remain distinct.
+
+The normal frontend path may upload private evidence, submit a processing request, poll its real status, and pass the completed artifact to the existing adapter. Fixture mode must remain explicit. Live failures must never fall back to fixture data.
+
+Persistence may use or prepare mappings for the existing inspection report, pipeline run, and model run records. AI output must remain `AI Draft` or `Needs Review`; only a later server-authoritative review mutation may establish a trusted review state. No review mutation is authorized in this gate.
+
+If an explicitly confirmed non-production Supabase target, private bucket policy, or required credentials are unavailable, implement and verify the boundary with deterministic repository doubles and report Supabase runtime verification as `BLOCKED`. Do not apply migrations, weaken RLS, use public evidence URLs, or touch production.
+
+## Round 1K Visual UX Refinement
+
+Round 1K may refine the existing guided Phase 1 presentation without changing reasoning, pricing, provenance, persistence, review authority, or product scope. It may simplify user-facing progress, separate property selection from evidence selection, replace form-like evidence controls with large action cards, strengthen the findings overview, and present localized price context and one recommended next step earlier in finding detail.
+
+The underlying workflow and adapter contracts must remain intact. Fixture mode must remain explicit. Known/Unknown, source and weather provenance, contractor-quote separation, blocked pricing, review states, and live failure behavior must remain accessible. Mobile is the primary layout; desktop may use a restrained two-column finding detail rather than a dashboard.
+
+## Round 1L Property Context Handoff
+
+Round 1L may connect the guided address intake to the existing `properties` model through the authenticated server boundary. Continue must resolve an accessible normalized-address match or create a real RLS-governed property owned by the current user, then retain the returned UUID through evidence upload and processing. Address changes must invalidate retained context, and refresh/back behavior must never silently attach evidence to a different property.
+
+The browser may retain a returned property context for continuity but may not generate a property UUID or bypass server authorization. Review and processing remain blocked without property context. If the server, confirmed non-production Supabase target, credentials, migration, or private storage policy is unavailable, the live flow must remain blocked and report that dependency rather than substituting fixture or local-only identity.
+
 ## Phase 1 Localized Repair-Cost Range Contract
 
 Every material finding should show a localized repair-cost range once a supportable price source is available. Missing sourced pricing is an explicit blocked state; it must never be filled with an invented range merely to satisfy the UI contract.

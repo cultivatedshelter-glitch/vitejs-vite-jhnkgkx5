@@ -5,7 +5,7 @@ Date: 2026-09-17
 ## Checkout
 
 - Active branch: `auto-button-from-current-main`
-- Active app path: `src/main.tsx` renders `src/App.tsx` directly.
+- Active app path: `src/main.tsx` renders the guided `Phase1Experience` by default; the preserved legacy `App` is development-only behind `?legacy=1`.
 - Dirty worktree before this benchmark task included user/untracked artifacts: `package-lock.json`, `codex-backups/`, and `security-audit-fixes.patch`.
 - This checkout did not contain `AGENTS.md`, `docs/phase-1-executable-spec.md`, `docs/codex-build-spec.md`, `docs/SHELTER_PREP_MASTER_CODEX_PROMPT.md`, or this file before the benchmark task.
 - The sibling `import/request-to-review` worktree contains the Phase 1 instruction/spec documents that were read as repository context.
@@ -237,3 +237,53 @@ Date: 2026-09-17
 - `npm test` passed after Round 1I: 41 tests passed, 0 failed.
 - `npm run build` passed after Round 1I. The repository defines no lint script.
 - No migration was created or applied. No Supabase write, production system, Railway service, private fixture processing, verification event, or verified-memory action occurred.
+
+## Round 1J Live Processing Boundary
+
+- Created checkpoint commit `c672da6` (`Checkpoint Shelter Prep Phase 1 Round 1I`) containing only the verified Round 1I adapter, UI, fixture, tests, and documentation. Pre-existing `package-lock.json` churn and unrelated untracked files remained outside the checkpoint.
+- Added an authenticated HTTP boundary for private evidence upload, processing-request creation, and request-status retrieval under `/api/phase1`. It accepts a property ID, stable evidence references, and an optional note.
+- Added a Supabase repository implementation that uses the caller's JWT for RLS-governed property/report reads and private-bucket upload/download. It never creates public evidence URLs. A server-only Supabase secret is required for pipeline/model persistence and is not referenced by frontend code.
+- Prepared persistence against the existing `inspection_reports`, `inspection_pipeline_runs`, and `model_runs` tables. Processing requests retain property/evidence relationships, state, timestamps, errors, input references, artifact version, and completed artifact. Model output remains `draft_created`, requires review, and is never memory-eligible.
+- The server invokes `scripts/phase1_round1_reasoning_benchmark.py`; it does not duplicate inspection reasoning. The current runner truthfully supports exactly one PDF inspection report. Photo-only, document-only, video-only, and note-only reasoning remain unsupported by this processor.
+- Added server-side artifact validation for observation/interpretation separation, Known/Unknown, next step/rationale, source/evidence links, observation chronology, pricing range/provenance or explicit blocked state, contractor-quote separation, weather non-causality, and untrusted review status. Malformed or fixture-backed live artifacts become explicit failed requests.
+- The guided frontend now uploads evidence, submits a processing request, displays only `uploaded`, `queued`, `processing`, `completed`, or `failed` states received from the live path, and sends the completed artifact through the existing Round 1I adapter. `VITE_PHASE1_REASONING_ARTIFACT_URL` is no longer used. Live failure never falls back to fixture data; `?fixture=1` remains the only fixture path.
+- A deterministic non-fixture test generates a real PDF, passes it through multipart upload, authorization, the actual Round 1 Python workflow, server validation, and the actual TypeScript frontend adapter. It also proves stable evidence/property association and that the 2030-01-02 inspection date is distinct from the later upload timestamp.
+- Tests cover authorized processing, unauthorized property access, malformed artifact rejection, fixture rejection in live mode, explicit failed state, and absence of silent frontend fallback.
+- `npm test` passed after Round 1J: 45 tests passed, 0 failed.
+- `npm run build` passed after Round 1J. The repository defines no lint script.
+- Supabase runtime verification is `BLOCKED`: no explicitly confirmed non-production target, private `phase1-evidence` bucket/policies, applied inspection schema, or server secret was authorized for this run. No migration was created or applied, no Supabase write executed, and no production system was touched.
+- Human review remains read-only in this UI. No frontend or new endpoint can set `human_verified`, `human_reviewed`, `contractor_verified`, `seller_ready`, or `finalized`.
+
+## Round 1K Visual UX Refinement
+
+- Refined the existing guided experience without changing the reasoning adapter, pricing logic, live processing boundary, persistence mapping, or review authority.
+- Step 1 now asks only for the property address. Step 2 presents four large evidence actions for an inspection, photos/video, a note/question, or a camera photo, followed by one optional note and one primary action.
+- Simplified the visible progress model to `Property`, `Evidence`, and `Review` while preserving the existing internal workflow states.
+- Reworked processing into a calm five-item list using only truthful coarse state mapping; later substeps remain pending until the server reports completion.
+- Reworked the overview into compact status summaries and directly selectable repair rows derived from adapter data.
+- Reworked finding detail so localized cost context, price sources, range history, one next step, rationale, and missing information appear before deeper reasoning on mobile. Desktop uses a restrained two-column layout with source evidence and Known/Unknown on the left and price/action context on the right.
+- Preserved fixture labeling, blocked-price behavior, source/weather disclosures, contractor-quote separation, read-only review status, and live failure isolation.
+- Updated the UX contract tests for the new visual and interaction contract. The complete suite and production build pass after this refinement.
+
+## Round 1L Property Context Handoff
+
+- Diagnosed the guided intake failure: the address existed only in React state, while live processing read `propertyId` exclusively from a manually supplied `?property=` query parameter. No guided property create/resolve call existed.
+- Added `POST /api/phase1/properties/resolve` to the authenticated server boundary. It conservatively normalizes the supplied address, reuses exactly one RLS-visible match, rejects ambiguous duplicates, or inserts a real `properties` row through the caller's JWT with `created_by` set to that actor.
+- The frontend now waits for the server-returned property UUID before entering Evidence. It never creates a UUID locally and no longer reads property context from the URL.
+- Returned `{id,address}` context is retained in session storage for refresh continuity. Any address mismatch clears it immediately, and Continue always re-resolves through the server so retained context does not bypass current authorization.
+- Evidence upload and processing now receive the retained server-issued property UUID. Existing server authorization still verifies property access and evidence ownership before processing.
+- Added tests for address-to-property creation/reuse, property retention, evidence/property linkage, missing-context rejection, guided intake without a manual workspace URL, and refresh/address-change safety.
+- Runtime verification remains `BLOCKED`. `npm run dev:processing` fails because `SUPABASE_SECRET_KEY` is absent; no confirmed non-production target is authorized, and the Phase 1 schema plus private `phase1-evidence` bucket policies remain unapplied/unverified. No database write or production action was attempted.
+
+## Round 1M Clean Nonproduction Supabase Bootstrap
+
+- The only Supabase project used was the explicitly authorized nonproduction project `oivzalfsjoyycbqunblk` (`shelter-prep-phase1-dev`). No other project was accessed or modified during this bootstrap gate.
+- The target was `ACTIVE_HEALTHY` and clean before application writes: no public application tables, project migrations, storage buckets, or application data existed.
+- Applied `phase1_inspection_intelligence_schema`, creating the repository's UUID-based Property trust spine. `public.properties.id` is `uuid default gen_random_uuid()`, and Phase 1 property relationships use UUID foreign keys.
+- Added and applied `phase1_evidence_storage`. The `phase1-evidence` bucket is private, limited to 50 MiB per object, and has authenticated insert/select/delete policies tied to the existing `actor_id/property_id/file` path contract and `private.phase1_user_has_property_access`.
+- Added and applied `phase1_runtime_grants` because this clean project does not automatically grant new Data API tables to `service_role`. Browser roles retain only the narrower repository grants; server persistence tables have explicit service-role DML grants.
+- Revoked browser execution of the clean-project `public.rls_auto_enable()` security-definer event-trigger helper. The Supabase security advisor reports no remaining findings after the change.
+- Project URL and publishable key are configured in ignored `.env.local`. The processing script now loads `.env.local` after tracked `.env`. No server secret is present in Git diff, source files, tests, fixtures, logs, or a `VITE_*` browser variable.
+- StackBlitz stores `SUPABASE_SECRET_KEY` as a masked variable scoped to `cultivatedshelter-glitch/vitejs-vite-jhnkgkx5`. That StackBlitz-only variable is not injected into this local Codex checkout or its processing server.
+- `npm test` passes with 50 tests, the focused Phase 1 schema/processing suite passes with 17 tests, `npm run build` passes, and `git diff --check` passes.
+- Live Supabase runtime verification remains `BLOCKED` in this checkout: `npm run dev:processing` exits with `SUPABASE_SECRET_KEY is required`. No real test identities, Property row, storage object, processing request, or artifact row were created, so RLS/storage allow-deny behavior and the non-fixture Property-to-UI path are not yet claimed as proven.

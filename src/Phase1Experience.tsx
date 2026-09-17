@@ -1,123 +1,105 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel } from './phase1ReasoningAdapter'
-import { loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
+import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
+import { processPhase1Evidence, resolvePhase1Property, type LiveProcessingState } from './phase1ProcessingClient'
+import { clearPhase1PropertyContext, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import './Phase1Experience.css'
 
 type Step = 'property' | 'evidence' | 'processing' | 'overview' | 'finding' | 'gap' | 'next'
-type EvidenceMode = 'inspection' | 'photos' | 'question'
-type ProcessingState = 'idle' | 'loading' | 'ready' | 'error'
+type ProcessingState = 'idle' | LiveProcessingState
 
-const STEP_LABELS: Record<Step, string> = {
-  property: 'Property',
-  evidence: 'Add evidence',
-  processing: 'Processing',
-  overview: 'Review findings',
-  finding: 'Review findings',
-  gap: 'Close gaps',
-  next: 'Next steps',
+const PROGRESS_STAGES = ['Property', 'Evidence', 'Review']
+
+function progressStage(step: Step) {
+  if (step === 'property') return 0
+  if (step === 'evidence') return 1
+  return 2
 }
-
-const STEP_NUMBERS: Record<Step, number> = {
-  property: 1,
-  evidence: 2,
-  processing: 3,
-  overview: 4,
-  finding: 4,
-  gap: 5,
-  next: 6,
-}
-
-const EVIDENCE_MODES: Array<{ value: EvidenceMode; title: string; copy: string }> = [
-  { value: 'inspection', title: 'Inspection report', copy: 'PDF, document, or scan' },
-  { value: 'photos', title: 'Photos or video', copy: 'Images from the property' },
-  { value: 'question', title: 'Repair question', copy: 'A note or focused concern' },
-]
 
 function PhaseHeader({ step }: { step: Step }) {
-  const number = STEP_NUMBERS[step]
+  const activeStage = progressStage(step)
   return (
     <header className="phase1-header">
-      <div className="phase1-brand">Shelter Prep</div>
-      <div className="phase1-progress" aria-label={`Step ${number} of 6: ${STEP_LABELS[step]}`}>
-        <span>Step {number} of 6</span>
-        <strong>{STEP_LABELS[step]}</strong>
+      <div className="phase1-brand"><strong>SHELTER PREP</strong><span>Repair clarity. Higher value.</span></div>
+      <div className="phase1-progress" aria-label={`${PROGRESS_STAGES[activeStage]} stage, ${activeStage + 1} of 3`}>
+        {PROGRESS_STAGES.map((label, index) => (
+          <span className={index === activeStage ? 'is-current' : index < activeStage ? 'is-complete' : ''} key={label}>{label}</span>
+        ))}
       </div>
-      <div className="phase1-progress-track" aria-hidden="true"><span style={{ width: `${(number / 6) * 100}%` }} /></div>
     </header>
   )
 }
 
 function PropertyStep({
   address,
-  mode,
+  resolving,
+  error,
   onAddressChange,
-  onModeChange,
   onContinue,
 }: {
   address: string
-  mode: EvidenceMode | null
+  resolving: boolean
+  error: string
   onAddressChange: (value: string) => void
-  onModeChange: (value: EvidenceMode) => void
   onContinue: () => void
 }) {
   return (
-    <main className="phase1-main">
-      <p className="phase1-kicker">Start with the property</p>
-      <h1>What are we looking at?</h1>
-      <p className="phase1-lede">Add the address and the kind of evidence you have today.</p>
-      <label className="phase1-field">
+    <main className="phase1-main phase1-property">
+      <p className="phase1-kicker">Let's get started</p>
+      <h1>Add the property address.</h1>
+      <p className="phase1-lede">You can add more details later.</p>
+      <label className="phase1-field phase1-address-field">
         <span>Property address</span>
-        <input autoComplete="street-address" value={address} onChange={(event) => onAddressChange(event.target.value)} placeholder="Street address" />
+        <input autoFocus autoComplete="street-address" value={address} onChange={(event) => onAddressChange(event.target.value)} placeholder="1234 Main Street, Portland, OR" />
       </label>
-      <fieldset className="phase1-choice-group">
-        <legend>What do you have?</legend>
-        {EVIDENCE_MODES.map((item) => (
-          <label className={`phase1-choice${mode === item.value ? ' is-selected' : ''}`} key={item.value}>
-            <input type="radio" name="evidence-mode" value={item.value} checked={mode === item.value} onChange={() => onModeChange(item.value)} />
-            <span><strong>{item.title}</strong><small>{item.copy}</small></span>
-          </label>
-        ))}
-      </fieldset>
+      {error && <p className="phase1-inline-error" role="alert">{error}</p>}
       <div className="phase1-actions">
-        <button className="phase1-primary" type="button" disabled={!address.trim() || !mode} onClick={onContinue}>Continue</button>
+        <button className="phase1-primary" type="button" disabled={!address.trim() || resolving} onClick={onContinue}>{resolving ? 'Creating property workspace…' : <>Continue <span aria-hidden="true">→</span></>}</button>
       </div>
     </main>
   )
 }
 
 function EvidenceStep({
-  mode,
   files,
   note,
   onFiles,
   onNote,
   onContinue,
 }: {
-  mode: EvidenceMode
   files: File[]
   note: string
   onFiles: (files: File[]) => void
   onNote: (value: string) => void
   onContinue: () => void
 }) {
+  const inspectionRef = useRef<HTMLInputElement>(null)
+  const mediaRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const noteRef = useRef<HTMLTextAreaElement>(null)
   const canContinue = files.length > 0 || note.trim().length > 0
   return (
-    <main className="phase1-main">
-      <p className="phase1-kicker">Add what you have</p>
-      <h1>{mode === 'question' ? 'Describe the repair question' : 'Choose evidence to review'}</h1>
-      <p className="phase1-lede">One report, a few photos, or a short note is enough to begin.</p>
-      <label className="phase1-upload">
-        <input type="file" multiple accept=".pdf,.doc,.docx,.txt,image/*,video/*" onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
-        <strong>Choose files</strong>
-        <span>PDF, document, photo, or video</span>
-      </label>
+    <main className="phase1-main phase1-evidence">
+      <p className="phase1-kicker">Evidence</p>
+      <h1>What do you have?</h1>
+      <p className="phase1-lede">Add whatever you've got. We'll organize it.</p>
+      <input ref={inspectionRef} className="phase1-hidden-input" type="file" accept=".pdf,.doc,.docx,.txt" onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
+      <input ref={mediaRef} className="phase1-hidden-input" type="file" multiple accept="image/*,video/*" onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
+      <input ref={cameraRef} className="phase1-hidden-input" type="file" accept="image/*" capture="environment" onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
+      <div className="phase1-evidence-grid" aria-label="Evidence options">
+        <button className="phase1-evidence-option" type="button" onClick={() => inspectionRef.current?.click()}><span className="phase1-option-icon" aria-hidden="true">PDF</span><strong>Upload inspection</strong><small>PDF, document, or scan</small></button>
+        <button className="phase1-evidence-option" type="button" onClick={() => mediaRef.current?.click()}><span className="phase1-option-icon" aria-hidden="true">+</span><strong>Add photos / video</strong><small>Images from the property</small></button>
+        <button className="phase1-evidence-option" type="button" onClick={() => noteRef.current?.focus()}><span className="phase1-option-icon" aria-hidden="true">?</span><strong>Type a note or question</strong><small>Describe the repair concern</small></button>
+        <button className="phase1-evidence-option" type="button" onClick={() => cameraRef.current?.click()}><span className="phase1-option-icon phase1-camera-icon" aria-hidden="true" /><strong>Take a photo</strong><small>Use your camera</small></button>
+      </div>
       {files.length > 0 && <ul className="phase1-file-list" aria-label="Selected evidence">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}</li>)}</ul>}
       <label className="phase1-field">
-        <span>{mode === 'question' ? 'Repair question' : 'Optional note'}</span>
-        <textarea rows={4} value={note} onChange={(event) => onNote(event.target.value)} placeholder="What should the review pay attention to?" />
+        <span>Anything specific we should know? <small>Optional</small></span>
+        <textarea ref={noteRef} rows={3} value={note} onChange={(event) => onNote(event.target.value)} placeholder="Add a note or repair question" />
       </label>
+      <p className="phase1-privacy"><span aria-hidden="true">✓</span> Your files are secure and private.</p>
       <div className="phase1-actions">
-        <button className="phase1-primary" type="button" disabled={!canContinue} onClick={onContinue}>Organize evidence</button>
+        <button className="phase1-primary" type="button" disabled={!canContinue} onClick={onContinue}>Continue <span aria-hidden="true">→</span></button>
       </div>
     </main>
   )
@@ -129,44 +111,55 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
   onContinue: () => void
   onBack: () => void
 }) {
-  const ready = state === 'ready'
-  const failed = state === 'error'
+  const ready = state === 'completed'
+  const failed = state === 'failed'
+  const statusCopy: Record<ProcessingState, string> = {
+    idle: 'Uploading your evidence securely.',
+    uploaded: 'Your evidence is uploaded.',
+    queued: 'Your review is ready to begin.',
+    processing: 'Reviewing and organizing the evidence.',
+    completed: 'Your repair summary is ready.',
+    failed: error,
+  }
+  const activeIndex = state === 'idle' ? 0 : ['uploaded', 'queued', 'processing'].includes(state) ? 1 : ready ? 5 : -1
+  const tasks = ['Uploading files', 'Reading inspection report', 'Finding and grouping issues', 'Checking relevant context', 'Building your summary']
   return (
     <main className="phase1-main phase1-processing" aria-live="polite">
-      <p className="phase1-kicker">Preparing the review</p>
-      <h1>{ready ? 'The review is ready' : failed ? 'Reasoning output is not available' : 'Waiting for structured findings'}</h1>
-      <p className="phase1-lede">{failed ? error : ready ? 'The returned findings are organized for review.' : 'Requesting the Phase 1 reasoning artifact.'}</p>
+      <p className="phase1-kicker">Review</p>
+      <h1>{ready ? 'Everything is organized.' : failed ? "We couldn't finish the review." : "We're organizing everything."}</h1>
+      <p className="phase1-lede">{failed ? statusCopy[state] : ready ? statusCopy[state] : 'This usually takes a short moment.'}</p>
       <ol className="phase1-task-list">
-        <li className={state === 'loading' ? 'is-active' : ready ? 'is-done' : ''}><span aria-hidden="true" />Request structured reasoning output</li>
-        <li className={ready ? 'is-done' : ''}><span aria-hidden="true" />Map returned findings and sources</li>
-        <li className={ready ? 'is-done' : ''}><span aria-hidden="true" />Prepare the review</li>
+        {tasks.map((task, index) => <li className={index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : ''} key={task}><span aria-hidden="true">{index < activeIndex ? '✓' : ''}</span>{task}</li>)}
       </ol>
-      {(ready || failed) && <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={ready ? onContinue : onBack}>{ready ? 'Review findings' : 'Return to evidence'}</button></div>}
+      {!failed && !ready && <p className="phase1-processing-status">{statusCopy[state]}</p>}
+      {(ready || failed) && <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={ready ? onContinue : onBack}>{ready ? <>Review findings <span aria-hidden="true">→</span></> : 'Return to evidence'}</button></div>}
     </main>
   )
 }
 
-function OverviewStep({ artifact, onContinue }: { artifact: Phase1ExperienceViewModel; onContinue: () => void }) {
+function OverviewStep({ artifact, onSelect }: { artifact: Phase1ExperienceViewModel; onSelect: (index: number) => void }) {
+  const readyCount = Math.max(artifact.findings.length - artifact.openQuestionCount, 0)
   return (
-    <main className="phase1-main">
+    <main className="phase1-main phase1-overview">
       {artifact.isFixture && <p className="phase1-kicker">Development fixture</p>}
-      <h1>Inspection overview</h1>
-      <p className="phase1-lede">Findings are grouped from the returned reasoning artifact.</p>
+      <h1>We found {artifact.findings.length} repair {artifact.findings.length === 1 ? 'item' : 'items'}.</h1>
+      <p className="phase1-lede">Here's what needs attention and what to do next.</p>
       <div className="phase1-stat-row" aria-label="Inspection summary">
-        <div><strong>{artifact.findings.length}</strong><span>Findings</span></div>
-        <div><strong>{artifact.openQuestionCount}</strong><span>Need evidence</span></div>
-        <div><strong>{artifact.categories.length}</strong><span>Systems</span></div>
+        <div className="is-attention"><span>Need attention</span><strong>{artifact.findings.length}</strong></div>
+        <div className="is-info"><span>Need more info</span><strong>{artifact.openQuestionCount}</strong></div>
+        <div className="is-ready"><span>Ready to review</span><strong>{readyCount}</strong></div>
       </div>
       <section className="phase1-band" aria-labelledby="priority-findings">
-        <h2 id="priority-findings">Findings</h2>
-        {artifact.findings.map((finding) => (
-          <div className="phase1-finding-row" key={finding.id}>
-            <div><strong>{finding.title}</strong><span>{finding.category} · {finding.reviewStatusLabel}</span></div>
-            <div className={`phase1-price-summary${finding.price.status === 'blocked' ? ' is-blocked' : ''}`}><strong>{finding.price.label}</strong><span>{finding.price.geography}</span></div>
-          </div>
+        <div className="phase1-section-heading"><h2 id="priority-findings">Repair items</h2><span>{artifact.categories.length} systems</span></div>
+        {artifact.findings.map((finding, index) => (
+          <button className="phase1-finding-row" type="button" onClick={() => onSelect(index)} key={finding.id}>
+            <span className="phase1-finding-thumb" aria-hidden="true">{finding.category.charAt(0)}</span>
+            <span className="phase1-finding-copy"><strong>{finding.title}</strong><small>{finding.category} · {finding.reviewStatusLabel}</small><span>{finding.nextStep}</span></span>
+            <span className="phase1-chevron" aria-hidden="true">›</span>
+          </button>
         ))}
       </section>
-      <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={onContinue}>Review first finding</button></div>
+      <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={() => onSelect(0)}>Review first finding <span aria-hidden="true">→</span></button></div>
     </main>
   )
 }
@@ -176,67 +169,52 @@ function TextList({ values, empty }: { values: string[]; empty: string }) {
   return <ul className="phase1-detail-list">{values.map((value) => <li key={value}>{value}</li>)}</ul>
 }
 
-function FindingStep({ finding, isFixture, onContinue }: {
+function FindingStep({ finding, isFixture, onBack, onContinue }: {
   finding: Phase1FindingViewModel
   isFixture: boolean
+  onBack: () => void
   onContinue: () => void
 }) {
   return (
-    <main className="phase1-main">
-      <p className="phase1-kicker">{finding.category}{isFixture ? ' · Development fixture' : ''}</p>
-      <h1>{finding.title}</h1>
-      <div className="phase1-status-line"><span className="phase1-status">{finding.reviewStatusLabel}</span>{finding.observedAt && <span>Observed {finding.observedAt}</span>}</div>
-      <section className="phase1-price-band" aria-label="Localized repair cost context">
-        <div><span>Repair range · {finding.price.stage}</span><strong>{finding.price.label}</strong></div>
-        <p>{finding.price.geography}. {finding.price.basis}</p>
-      </section>
-      <section className="phase1-observation"><h2>Observation</h2><p>{finding.observation}</p></section>
-      <section className="phase1-two-column">
-        <div><h2>What we know</h2><TextList values={finding.known} empty="No confirmed facts were returned." /></div>
-        <div><h2>What we do not know</h2><TextList values={finding.unknown} empty="No unresolved unknowns were returned." /></div>
-      </section>
-      <section className="phase1-next-move">
-        <p className="phase1-kicker">Recommended next step · {finding.nextStepOwner}</p>
-        <h2>{finding.nextStep}</h2>
-        <p>{finding.whyNextStep}</p>
-      </section>
-      {finding.contractorQuote && (
-        <section className="phase1-contractor-input">
-          <div><span>Contractor input</span><strong>{finding.contractorQuote.label}</strong></div>
-          <p>Retained as source material with status {finding.contractorQuote.reviewStatus}. It is separate from Shelter Prep's range and does not verify this finding.</p>
-        </section>
-      )}
-      <div className="phase1-disclosures">
-        <details><summary>Evidence</summary><TextList values={finding.evidenceReferences} empty="No evidence references were returned." /></details>
-        <details>
-          <summary>Sources</summary>
-          {finding.sources.length ? (
-            <ul className="phase1-source-list">
-              {finding.sources.map((source) => (
-                <li key={source.id}>
-                  {source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a> : <strong>{source.label}</strong>}
-                  {source.reference && !source.url && <span>{source.reference}</span>}
-                </li>
-              ))}
-            </ul>
-          ) : <p>No linked source records were returned.</p>}
-        </details>
-        <details><summary>Price basis</summary><p>{finding.price.basis}</p><p><strong>Geography:</strong> {finding.price.geography}</p></details>
-        {finding.weather && <details><summary>Weather and environment</summary><p>{finding.weather.text}</p>{finding.weather.status === 'unavailable' && <p className="phase1-quiet-state">Sourced context unavailable.</p>}</details>}
-        {finding.rangeHistory.length > 0 && (
-          <details>
-            <summary>Range history</summary>
-            {finding.rangeHistory.map((revision) => (
-              <div className="phase1-history-entry" key={revision.id}>
-                <p><strong>{revision.movement}:</strong> {revision.priorLabel ? `${revision.priorLabel} → ` : ''}{revision.currentLabel}</p>
-                <p>{revision.explanation}</p>
-              </div>
-            ))}
-          </details>
-        )}
-        {finding.relatedFindings.length > 0 && <details><summary>Related findings</summary><TextList values={finding.relatedFindings} empty="No related findings were returned." /></details>}
+    <main className="phase1-main phase1-finding-detail">
+      <button className="phase1-back" type="button" onClick={onBack}><span aria-hidden="true">←</span> All repair items</button>
+      <header className="phase1-finding-header">
+        <p className="phase1-kicker">{finding.category}{isFixture ? ' · Development fixture' : ''}</p>
+        <h1>{finding.title}</h1>
+        <div className="phase1-status-line"><span className="phase1-status">{finding.reviewStatusLabel}</span>{finding.observedAt && <span>Observed {finding.observedAt}</span>}</div>
+      </header>
+      <div className="phase1-detail-layout">
+        <aside className="phase1-detail-aside">
+          <section className={`phase1-price-card${finding.price.status === 'blocked' ? ' is-blocked' : ''}`} aria-label="Localized repair cost context">
+            <span>Estimated local repair cost</span>
+            <strong>{finding.price.label}</strong>
+            <div><span>{finding.price.geography}</span><span>{finding.price.stage}</span></div>
+            <p>{finding.price.basis}</p>
+            <details><summary>View pricing sources</summary><TextList values={finding.price.sourceIds} empty="No pricing sources were returned." /></details>
+            {finding.rangeHistory.length > 0 && <div className="phase1-range-note"><span>Range history</span>{finding.rangeHistory.map((revision) => <p key={revision.id}><strong>{revision.movement}</strong>{revision.priorLabel ? ` from ${revision.priorLabel} to ${revision.currentLabel}` : ` at ${revision.currentLabel}`}. {revision.explanation}</p>)}</div>}
+          </section>
+          <section className="phase1-next-move">
+            <p className="phase1-kicker">Next step · {finding.nextStepOwner}</p>
+            <h2>{finding.nextStep}</h2>
+            <div className="phase1-why"><h3>Why this next step?</h3><p>{finding.whyNextStep}</p></div>
+          </section>
+          {finding.missingInformation.length > 0 && <section className="phase1-missing"><h2>Missing information</h2><TextList values={finding.missingInformation} empty="No missing information was returned." /></section>}
+        </aside>
+        <div className="phase1-detail-main">
+          <section className="phase1-observation"><h2>Observation</h2><p>{finding.observation}</p></section>
+          <section className="phase1-reasoning-section"><h2>What we know</h2><TextList values={finding.known} empty="No confirmed facts were returned." /></section>
+          <section className="phase1-reasoning-section"><h2>What we don't know</h2><TextList values={finding.unknown} empty="No unresolved unknowns were returned." /></section>
+          {finding.contractorQuote && <section className="phase1-contractor-input"><div><span>Contractor input</span><strong>{finding.contractorQuote.label}</strong></div><p>Retained as source material with status {finding.contractorQuote.reviewStatus}. It is separate from Shelter Prep's range and does not verify this finding.</p></section>}
+          <div className="phase1-disclosures">
+            <details><summary>Evidence</summary><TextList values={finding.evidenceReferences} empty="No evidence references were returned." /></details>
+            <details><summary>Sources</summary>{finding.sources.length ? <ul className="phase1-source-list">{finding.sources.map((source) => <li key={source.id}>{source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a> : <strong>{source.label}</strong>}{source.reference && !source.url && <span>{source.reference}</span>}</li>)}</ul> : <p>No linked source records were returned.</p>}</details>
+            <details><summary>Price basis</summary><p>{finding.price.basis}</p><p><strong>Geography:</strong> {finding.price.geography}</p></details>
+            {finding.weather && <details><summary>Weather and environment</summary><p>{finding.weather.text}</p>{finding.weather.status === 'unavailable' && <p className="phase1-quiet-state">Sourced context unavailable.</p>}</details>}
+            {finding.relatedFindings.length > 0 && <details><summary>Related findings</summary><TextList values={finding.relatedFindings} empty="No related findings were returned." /></details>}
+          </div>
+        </div>
       </div>
-      <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={onContinue}>{finding.missingInformation.length ? 'Add requested evidence' : 'Continue'}</button></div>
+      <div className="phase1-actions"><button className="phase1-primary" type="button" onClick={onContinue}>{finding.missingInformation.length ? 'Add requested evidence' : 'Continue'} <span aria-hidden="true">→</span></button></div>
     </main>
   )
 }
@@ -294,9 +272,12 @@ function NextStep({ address, evidenceCount, artifact, finding, onContinue }: {
 }
 
 export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?: boolean }) {
+  const storedProperty = useMemo(() => fixtureMode ? null : readPhase1PropertyContext(window.sessionStorage), [fixtureMode])
   const [step, setStep] = useState<Step>('property')
-  const [address, setAddress] = useState('')
-  const [mode, setMode] = useState<EvidenceMode | null>(null)
+  const [address, setAddress] = useState(storedProperty?.address || '')
+  const [propertyContext, setPropertyContext] = useState<Phase1PropertyContext | null>(storedProperty)
+  const [propertyResolving, setPropertyResolving] = useState(false)
+  const [propertyError, setPropertyError] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [note, setNote] = useState('')
   const [processingState, setProcessingState] = useState<ProcessingState>('idle')
@@ -306,22 +287,56 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const evidenceCount = useMemo(() => files.length + (note.trim() ? 1 : 0), [files, note])
   const finding = artifact?.findings[findingIndex] ?? null
 
+  function changeAddress(value: string) {
+    setAddress(value)
+    setPropertyError('')
+    if (propertyContext && !propertyContextMatchesAddress(propertyContext, value)) {
+      setPropertyContext(null)
+      clearPhase1PropertyContext(window.sessionStorage)
+    }
+  }
+
+  async function continueFromProperty() {
+    if (fixtureMode) {
+      setStep('evidence')
+      return
+    }
+    setPropertyResolving(true)
+    setPropertyError('')
+    try {
+      const property = await resolvePhase1Property(address)
+      setPropertyContext(property)
+      writePhase1PropertyContext(window.sessionStorage, property)
+      setStep('evidence')
+    } catch (error) {
+      setPropertyContext(null)
+      clearPhase1PropertyContext(window.sessionStorage)
+      setPropertyError(error instanceof Error ? error.message : 'The property workspace could not be created.')
+    } finally {
+      setPropertyResolving(false)
+    }
+  }
+
   async function organizeEvidence() {
     setStep('processing')
-    setProcessingState('loading')
+    setProcessingState('idle')
     setProcessingError('')
     try {
-      const result = await loadPhase1ReasoningArtifact({
-        mode: fixtureMode ? 'fixture' : 'live',
-        artifactUrl: import.meta.env.VITE_PHASE1_REASONING_ARTIFACT_URL,
-      })
+      const result = fixtureMode
+        ? await loadPhase1ReasoningArtifact({ mode: 'fixture' })
+        : adaptPhase1ReasoningArtifact(await processPhase1Evidence({
+          propertyId: propertyContext?.id || '',
+          files,
+          note,
+          onState: setProcessingState,
+        }), { mode: 'live' })
       setArtifact(result)
       setFindingIndex(0)
-      setProcessingState('ready')
+      setProcessingState('completed')
     } catch (error) {
       setArtifact(null)
-      setProcessingState('error')
-      setProcessingError(error instanceof Error ? error.message : 'Structured reasoning output could not be loaded. Selected evidence remains local to this browser.')
+      setProcessingState('failed')
+      setProcessingError(error instanceof Error ? error.message : 'Processing failed. The selected evidence was not replaced with fixture data.')
     }
   }
 
@@ -339,11 +354,11 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   return (
     <div className="phase1-shell">
       <PhaseHeader step={step} />
-      {step === 'property' && <PropertyStep address={address} mode={mode} onAddressChange={setAddress} onModeChange={setMode} onContinue={() => setStep('evidence')} />}
-      {step === 'evidence' && mode && <EvidenceStep mode={mode} files={files} note={note} onFiles={setFiles} onNote={setNote} onContinue={() => void organizeEvidence()} />}
+      {step === 'property' && <PropertyStep address={address} resolving={propertyResolving} error={propertyError} onAddressChange={changeAddress} onContinue={() => void continueFromProperty()} />}
+      {step === 'evidence' && <EvidenceStep files={files} note={note} onFiles={setFiles} onNote={setNote} onContinue={() => void organizeEvidence()} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
-      {step === 'overview' && artifact && <OverviewStep artifact={artifact} onContinue={() => { setFindingIndex(0); setStep('finding') }} />}
-      {step === 'finding' && artifact && finding && <FindingStep finding={finding} isFixture={artifact.isFixture} onContinue={() => setStep(finding.missingInformation.length ? 'gap' : 'next')} />}
+      {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={(index) => { setFindingIndex(index); setStep('finding') }} />}
+      {step === 'finding' && artifact && finding && <FindingStep finding={finding} isFixture={artifact.isFixture} onBack={() => setStep('overview')} onContinue={() => setStep(finding.missingInformation.length ? 'gap' : 'next')} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}
     </div>

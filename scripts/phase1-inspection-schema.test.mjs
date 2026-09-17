@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const MIGRATION_PATH = 'supabase/migrations/20260829041051_phase1_inspection_intelligence_schema.sql'
+const STORAGE_MIGRATION_PATH = 'supabase/migrations/20260917112924_phase1_evidence_storage.sql'
+const RUNTIME_GRANTS_MIGRATION_PATH = 'supabase/migrations/20260917113200_phase1_runtime_grants.sql'
 
 function migrationSql() {
   return readFileSync(MIGRATION_PATH, 'utf8')
@@ -153,4 +155,21 @@ test('migration includes a manual rollback block', () => {
   assert.match(sql, /Down migration for manual rollback review only/i)
   assert.match(sql, /drop table if exists public\.agent_reports/i)
   assert.match(sql, /drop function if exists private\.phase1_review_inspection_finding_impl/i)
+})
+
+test('Phase 1 evidence storage stays private and property scoped', () => {
+  const sql = readFileSync(STORAGE_MIGRATION_PATH, 'utf8')
+
+  assert.match(sql, /values\s*\(\s*'phase1-evidence'\s*,\s*'phase1-evidence'\s*,\s*false/i)
+  assert.match(sql, /for insert[\s\S]*?to authenticated[\s\S]*?storage\.foldername\(name\)[\s\S]*?phase1_user_has_property_access/i)
+  assert.match(sql, /for select[\s\S]*?to authenticated[\s\S]*?phase1_user_has_property_access/i)
+  assert.match(sql, /for delete[\s\S]*?to authenticated[\s\S]*?phase1_user_has_property_access/i)
+  assert.doesNotMatch(sql, /to\s+(anon|public)\b/i)
+})
+
+test('Phase 1 server persistence has explicit service-role grants', () => {
+  const sql = readFileSync(RUNTIME_GRANTS_MIGRATION_PATH, 'utf8')
+
+  assert.match(sql, /grant select, insert, update, delete on table[\s\S]*?inspection_pipeline_runs[\s\S]*?inspection_reports[\s\S]*?to service_role/i)
+  assert.match(sql, /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated/i)
 })
