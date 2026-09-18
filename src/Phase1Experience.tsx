@@ -1,8 +1,10 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { processPhase1Evidence, resolvePhase1Property, type LiveProcessingState } from './phase1ProcessingClient'
-import { clearPhase1PropertyContext, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
+import { loadPhase1ProcessingRequest, processPhase1Evidence, resolvePhase1Property, type LiveProcessingState } from './phase1ProcessingClient'
+import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
+import { supabase } from './supabase'
 import './Phase1Experience.css'
 
 type Step = 'property' | 'evidence' | 'processing' | 'overview' | 'finding' | 'gap' | 'next'
@@ -16,17 +18,58 @@ function progressStage(step: Step) {
   return 2
 }
 
-function PhaseHeader({ step }: { step: Step }) {
+function reviewRequestFromLocation() {
+  const match = window.location.pathname.match(/^\/properties\/[^/]+\/review\/?$/)
+  return match ? new URLSearchParams(window.location.search).get('request') : null
+}
+
+function PhaseHeader({ step, email, onSignOut }: { step: Step; email?: string; onSignOut?: () => void }) {
   const activeStage = progressStage(step)
   return (
     <header className="phase1-header">
       <div className="phase1-brand"><strong>SHELTER PREP</strong><span>Repair clarity. Higher value.</span></div>
-      <div className="phase1-progress" aria-label={`${PROGRESS_STAGES[activeStage]} stage, ${activeStage + 1} of 3`}>
-        {PROGRESS_STAGES.map((label, index) => (
-          <span className={index === activeStage ? 'is-current' : index < activeStage ? 'is-complete' : ''} key={label}>{label}</span>
-        ))}
+      <div className="phase1-header-actions">
+        <div className="phase1-progress" aria-label={`${PROGRESS_STAGES[activeStage]} stage, ${activeStage + 1} of 3`}>
+          {PROGRESS_STAGES.map((label, index) => (
+            <span className={index === activeStage ? 'is-current' : index < activeStage ? 'is-complete' : ''} key={label}>{label}</span>
+          ))}
+        </div>
+        {email && onSignOut && <div className="phase1-session"><span>{email}</span><button type="button" onClick={onSignOut}>Sign out</button></div>}
       </div>
     </header>
+  )
+}
+
+function SignInStep({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function signIn() {
+    setSubmitting(true)
+    setError('')
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    if (signInError || !data.session) setError(signInError?.message || 'Sign in did not return an authenticated session.')
+    else onSignedIn(data.session)
+    setSubmitting(false)
+  }
+
+  return (
+    <div className="phase1-shell">
+      <header className="phase1-header"><div className="phase1-brand"><strong>SHELTER PREP</strong><span>Repair clarity. Higher value.</span></div></header>
+      <main className="phase1-main phase1-sign-in">
+        <p className="phase1-kicker">Pilot access</p>
+        <h1>Sign in to continue.</h1>
+        <p className="phase1-lede">Use your Phase 1 pilot identity.</p>
+        <form onSubmit={(event) => { event.preventDefault(); void signIn() }}>
+          <label className="phase1-field"><span>Email</span><input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label className="phase1-field"><span>Password</span><input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          {error && <p className="phase1-inline-error" role="alert">{error}</p>}
+          <div className="phase1-actions"><button className="phase1-primary" type="submit" disabled={!email.trim() || !password || submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button></div>
+        </form>
+      </main>
+    </div>
   )
 }
 
@@ -273,6 +316,8 @@ function NextStep({ address, evidenceCount, artifact, finding, onContinue }: {
 
 export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?: boolean }) {
   const storedProperty = useMemo(() => fixtureMode ? null : readPhase1PropertyContext(window.sessionStorage), [fixtureMode])
+  const [session, setSession] = useState<Session | null>(null)
+  const [authReady, setAuthReady] = useState(fixtureMode)
   const [step, setStep] = useState<Step>('property')
   const [address, setAddress] = useState(storedProperty?.address || '')
   const [propertyContext, setPropertyContext] = useState<Phase1PropertyContext | null>(storedProperty)
@@ -284,8 +329,73 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [processingError, setProcessingError] = useState('')
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
   const [findingIndex, setFindingIndex] = useState(0)
+  const reviewRequestId = useMemo(() => fixtureMode ? null : reviewRequestFromLocation(), [fixtureMode])
+  const reviewLoadStarted = useRef(false)
   const evidenceCount = useMemo(() => files.length + (note.trim() ? 1 : 0), [files, note])
   const finding = artifact?.findings[findingIndex] ?? null
+
+  useEffect(() => {
+    if (fixtureMode) return
+    let active = true
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return
+      setSession(data.session)
+      setAuthReady(true)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      setAuthReady(true)
+    })
+    return () => {
+      active = false
+      subscription.unsubscribe()
+    }
+  }, [fixtureMode])
+
+  useEffect(() => {
+    if (fixtureMode || !authReady) return
+    if (!session || (propertyContext && !propertyContextBelongsToUser(propertyContext, session.user.id))) {
+      setPropertyContext(null)
+      setAddress('')
+      setFiles([])
+      setNote('')
+      setArtifact(null)
+      setStep('property')
+      clearPhase1PropertyContext(window.sessionStorage)
+    }
+  }, [authReady, fixtureMode, propertyContext, session])
+
+  useEffect(() => {
+    if (fixtureMode || !session || !reviewRequestId || reviewLoadStarted.current) return
+    reviewLoadStarted.current = true
+    setStep('processing')
+    setProcessingState('processing')
+    setProcessingError('')
+    void loadPhase1ProcessingRequest(reviewRequestId).then((request) => {
+      if (request.processingStatus === 'failed') {
+        setProcessingState('failed')
+        setProcessingError(request.error || 'Processing failed. Review the request before retrying.')
+        return
+      }
+      if (request.processingStatus !== 'completed' || !request.artifact) {
+        setProcessingState(request.processingStatus)
+        return
+      }
+      const result = adaptPhase1ReasoningArtifact(request.artifact, { mode: 'live' })
+      const reviewAddress = result.propertyAddress || 'Property review'
+      const context = { id: request.propertyId, address: reviewAddress, userId: session.user.id }
+      setAddress(reviewAddress)
+      setPropertyContext(context)
+      writePhase1PropertyContext(window.sessionStorage, context)
+      setArtifact(result)
+      setFindingIndex(0)
+      setProcessingState('completed')
+      setStep('overview')
+    }).catch((error) => {
+      setProcessingState('failed')
+      setProcessingError(error instanceof Error ? error.message : 'This review request is not available.')
+    })
+  }, [fixtureMode, reviewRequestId, session])
 
   function changeAddress(value: string) {
     setAddress(value)
@@ -351,9 +461,17 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     }
   }
 
+  async function signOut() {
+    clearPhase1PropertyContext(window.sessionStorage)
+    await supabase.auth.signOut()
+  }
+
+  if (!fixtureMode && !authReady) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Checking your session…</p></main></div>
+  if (!fixtureMode && !session) return <SignInStep onSignedIn={setSession} />
+
   return (
     <div className="phase1-shell">
-      <PhaseHeader step={step} />
+      <PhaseHeader step={step} email={fixtureMode ? undefined : session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} />
       {step === 'property' && <PropertyStep address={address} resolving={propertyResolving} error={propertyError} onAddressChange={changeAddress} onContinue={() => void continueFromProperty()} />}
       {step === 'evidence' && <EvidenceStep files={files} note={note} onFiles={setFiles} onNote={setNote} onContinue={() => void organizeEvidence()} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}

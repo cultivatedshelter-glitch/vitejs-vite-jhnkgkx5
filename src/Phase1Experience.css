@@ -29,14 +29,19 @@ button { color: inherit; }
 .phase1-brand { display: grid; gap: 2px; }
 .phase1-brand strong { color: #143e2d; font-size: 16px; font-weight: 800; letter-spacing: 0.08em; }
 .phase1-brand span { color: #79817b; font-family: Georgia, "Times New Roman", serif; font-size: 12px; }
+.phase1-header-actions { display: flex; align-items: center; gap: 24px; }
 .phase1-progress { display: flex; align-items: center; gap: 26px; color: #969c97; font-size: 12px; font-weight: 650; }
 .phase1-progress span { position: relative; min-width: 52px; text-align: center; }
 .phase1-progress span + span::before { position: absolute; top: 50%; right: calc(100% + 7px); width: 12px; height: 1px; background: #d1d5d1; content: ""; }
 .phase1-progress .is-current { color: #143e2d; }
 .phase1-progress .is-complete { color: #557060; }
+.phase1-session { display: flex; align-items: center; gap: 10px; padding-left: 18px; border-left: 1px solid #d9dcd9; color: #707973; font-size: 12px; }
+.phase1-session span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phase1-session button { min-height: 36px; padding: 0 10px; border: 1px solid #cbd0cc; border-radius: 6px; background: #fff; color: #315e46; font-size: 12px; font-weight: 700; cursor: pointer; }
 
 .phase1-main { width: min(100%, 840px); margin: 0 auto; padding: 66px 28px 136px; }
 .phase1-property { width: min(100%, 700px); padding-top: 88px; }
+.phase1-sign-in { width: min(100%, 560px); padding-top: 88px; }
 .phase1-kicker { margin: 0 0 12px; color: #3e6853; font-size: 12px; font-weight: 750; text-transform: uppercase; }
 .phase1-main h1 { max-width: 720px; margin: 0; overflow-wrap: anywhere; color: #15221b; font-family: Georgia, "Times New Roman", serif; font-size: 46px; font-weight: 500; line-height: 1.08; letter-spacing: 0; }
 .phase1-lede { max-width: 620px; margin: 16px 0 38px; color: #69726c; font-size: 18px; line-height: 1.55; }
@@ -164,6 +169,9 @@ button { color: inherit; }
   .phase1-progress { gap: 17px; font-size: 11px; }
   .phase1-progress span { min-width: auto; }
   .phase1-progress span + span::before { display: none; }
+  .phase1-header-actions { gap: 10px; }
+  .phase1-session span { display: none; }
+  .phase1-session { padding-left: 8px; }
   .phase1-main, .phase1-property { padding: 42px 18px 138px; }
   .phase1-main h1 { font-size: 36px; }
   .phase1-lede { margin: 13px 0 30px; font-size: 16px; }

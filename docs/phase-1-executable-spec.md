@@ -73,7 +73,11 @@ Step 5, Roof Visual Evidence Interpretation:
 
 Current gate:
 
-`ROUND 1 - LOCAL INSPECTION REASONING BENCHMARK`
+`ROUND 1P - ADMIN REVIEW NOTIFICATIONS AND PRODUCTION LAUNCH READINESS`
+
+This gate may add a server-owned, idempotent email notification outbox for `needs_review` and `processing_failed`, a stable authenticated review link, and the minimum deployment packaging needed to run the existing Vite frontend, Node processing server, and Python reasoning runtime as one HTTPS service. Email delivery must remain operationally separate from artifact validity. Browser roles may not send trusted notifications or read/write notification records.
+
+The gate may verify the notification schema against the explicitly authorized development Supabase project. It may not silently promote that development project to production, create a production project without approval, move real pilot data, change DNS before a temporary deployment passes, weaken RLS, expose secrets, or merge to `main`.
 
 This gate is authorized as a local/private Phase 1 benchmark only. It must build a reusable inspection reasoning layer on top of the existing shared evidence cache for the canonical private fixture:
 

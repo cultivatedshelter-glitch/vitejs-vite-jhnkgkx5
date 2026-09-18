@@ -4,9 +4,9 @@ Date: 2026-09-17
 
 ## Checkout
 
-- Active branch: `auto-button-from-current-main`
+- Active branch: `shelter-prep-phase1-dev` at checkpoint `1f573a77d08c2e2d9c7d7d0d76894aed9b3c7bf5` when the local runtime work began.
 - Active app path: `src/main.tsx` renders the guided `Phase1Experience` by default; the preserved legacy `App` is development-only behind `?legacy=1`.
-- Dirty worktree before this benchmark task included user/untracked artifacts: `package-lock.json`, `codex-backups/`, and `security-audit-fixes.patch`.
+- Pre-existing local changes kept outside the Phase 1 runtime work include `package-lock.json`, `AGENTS.md`, `codex-backups/`, and `security-audit-fixes.patch`.
 - This checkout did not contain `AGENTS.md`, `docs/phase-1-executable-spec.md`, `docs/codex-build-spec.md`, `docs/SHELTER_PREP_MASTER_CODEX_PROMPT.md`, or this file before the benchmark task.
 - The sibling `import/request-to-review` worktree contains the Phase 1 instruction/spec documents that were read as repository context.
 
@@ -287,3 +287,45 @@ Date: 2026-09-17
 - StackBlitz stores `SUPABASE_SECRET_KEY` as a masked variable scoped to `cultivatedshelter-glitch/vitejs-vite-jhnkgkx5`. That StackBlitz-only variable is not injected into this local Codex checkout or its processing server.
 - `npm test` passes with 50 tests, the focused Phase 1 schema/processing suite passes with 17 tests, `npm run build` passes, and `git diff --check` passes.
 - Live Supabase runtime verification remains `BLOCKED` in this checkout: `npm run dev:processing` exits with `SUPABASE_SECRET_KEY is required`. No real test identities, Property row, storage object, processing request, or artifact row were created, so RLS/storage allow-deny behavior and the non-fixture Property-to-UI path are not yet claimed as proven.
+
+## Round 1N Local Runtime Setup
+
+- Chose the current local Codex checkout as the reliable runtime path. No StackBlitz or Codespaces state is required.
+- Added `npm run setup:phase1` to install locked Node dependencies and an ignored `.venv` with pinned `pypdf`, Pillow, and the synthetic-PDF test dependency ReportLab.
+- Added `npm run dev:phase1` as a guarded launcher for the existing frontend and processing commands. It refuses any Supabase URL other than `oivzalfsjoyycbqunblk`, checks public and server credentials without printing them, selects the project virtualenv, and stops both child processes together.
+- Added `docs/LOCAL-RUNTIME-SETUP.md` with the source branch, authorized project ID, required environment-variable names, commands, tests, server-only secret warning, and stale-StackBlitz warning.
+- `.env.local` remains ignored through `*.local`. `SUPABASE_SECRET_KEY` is not exposed through a `VITE_*` name or referenced by frontend code.
+- `npm run setup:phase1` succeeds. The local frontend starts and rendered the Property intake at `http://127.0.0.1:5174/` because port 5173 was already occupied; HTTP returned 200 and browser console verification found no errors or warnings.
+- Public connectivity to the authorized Supabase development project returned HTTP 200. The combined runtime and processing server remain `BLOCKED` because `SUPABASE_SECRET_KEY` is empty in this checkout. The launcher fails closed before starting either server and does not fall back to fixtures.
+- A future server-side human-review email has a stable trigger boundary: completed processing persists pipeline status `needs_review` with stage `human_review`. No notification sender or trigger was added.
+- With `SHELTER_PREP_PYTHON=.venv/bin/python3`, `npm test` passes with 52 tests, focused `scripts/phase1-*.test.mjs` passes with 46 tests, all eight Python Phase 1 self-tests pass, `npm run build` passes, and `git diff --check` passes. The repository defines no lint script.
+- Live authenticated Property creation, private evidence upload, artifact persistence, RLS allow/deny behavior, storage-policy behavior, and the non-fixture end-to-end UI path remain unverified in this checkout until the server secret is supplied securely.
+
+## Round 1O Minimal Supabase Auth And Live Runtime Verification
+
+- Added the smallest pilot auth surface: Supabase email/password sign-in and sign-out. The browser receives a normal Supabase session; no signup, password reset, account management, role management, or browser service-role path was added.
+- Added a server-only, project-pinned test-identity provisioning command. It reads `PHASE1_TEST_EMAIL`, `PHASE1_TEST_PASSWORD`, and `SUPABASE_SECRET_KEY` from ignored environment files, refuses every project except `oivzalfsjoyycbqunblk`, and never returns credentials to browser code.
+- Property context now retains the authenticated user ID with the server-issued Property UUID. Missing sessions, sign-out, user changes, and retained-context user mismatches clear the context before evidence upload.
+- Fixed an authenticated RLS interaction in Property creation. The caller now inserts without requesting a return representation, then reads the new row through the existing owner-scoped select policy. The UUID remains database-generated and RLS was not changed or weakened.
+- Live verification used only nonproduction project `oivzalfsjoyycbqunblk`. Authenticated User A created/resolved Property `e7159608-0f14-493e-8f32-910555be4f0d`; its UUID is database-generated and its `created_by` value matches User A.
+- A synthetic non-fixture inspection PDF was uploaded to the private `phase1-evidence` bucket and linked to that Property. Its inspection observation date is `2030-01-02`; its upload timestamp is `2026-09-18T05:37:13.311Z`, so upload time was not substituted for observation time.
+- Processing request `b6e118c2-2a28-47e6-a981-7c7db980052b` completed at pipeline status `needs_review` and stage `human_review`. The persisted model run remains `draft_created`, `review_required=true`, and `memory_eligible=false`.
+- The persisted non-fixture artifact contains two findings. The existing frontend adapter consumed it and the current findings UI rendered two repair items, both visibly marked `Needs Human Review`, with no fixture label or silent fixture fallback.
+- The unauthenticated Property endpoint returned HTTP 401. User B could read zero rows for User A's Property and evidence, could not download User A's private storage object, and received HTTP 404 for User A's processing request. An unauthenticated public storage read was also denied.
+- Browser code still cannot assign trusted human or contractor verification. The live result remained a draft requiring human review, and the existing static authority tests continue to protect that boundary.
+- Verification passes: `npm test` 56/56, focused `scripts/phase1-*.test.mjs` 50/50, all eight Python Phase 1 self-tests, `npm run build`, and `git diff --check`. The repository defines no lint script.
+- The requested authenticated non-fixture path is no longer blocked: sign in -> Property -> private evidence -> processing -> persisted artifact -> existing adapter -> findings UI works against the authorized development project. Production account lifecycle and outbound auth email are intentionally outside this minimal pilot gate.
+
+## Round 1P Admin Review Notifications And Deployment Readiness
+
+- Added a server-owned Phase 1 email outbox and Resend adapter. Notifications are limited to persisted `needs_review` and `processing_failed` transitions and include property address, submitting email when available, evidence summary, finding count when available, status, and a stable HTTPS review link.
+- Added database and provider idempotency. The outbox has one unique record per event/request/recipient/channel, and Resend receives the notification UUID as its idempotency key. Sent or currently sending records do not send again; failed records may retry.
+- Email delivery failure is persisted with status, attempt count, failure reason, and provider metadata without changing a successful processing artifact. Provider secrets remain server-only and there is no browser notification endpoint.
+- Added authenticated review deep links at `/properties/{property_id}/review?request={processing_request_id}`. After sign-in, the existing RLS-governed status endpoint supplies the artifact to the existing adapter and findings UI. No storage URL is included in email.
+- Applied `phase1_review_notifications` and `phase1_review_notifications_hardening` only to development project `oivzalfsjoyycbqunblk`. The table has RLS, explicit always-false anon/authenticated policies, no browser grants, service-role-only DML grants, transition deduplication, and covering foreign-key indexes. Live anon and authenticated reads both returned PostgreSQL code `42501`.
+- Supabase security advisors report no notification-table finding. The development project still has a pre-existing warning that leaked-password protection is disabled; this must be enabled before inviting production pilot users.
+- Added one production-capable Docker/Railway service that builds and serves the Vite frontend, runs the existing Node processing boundary, installs the pinned Python dependencies, uses Railway's platform port, exposes `/healthz`, and keeps browser API requests same-origin.
+- Local production-mode smoke checks passed for `/healthz`, `/`, the deep review SPA route, and unauthenticated API denial. A real Docker build could not be run because Docker is not installed in this environment.
+- Real outbound email and remote HTTPS deployment remain blocked because `RESEND_API_KEY`, `SHELTER_PREP_REVIEW_EMAIL`, a verified sender, and Railway credentials/project are not configured.
+- The current Supabase project remains development-only and contains test identities/data. Recommendation: use a separate production Supabase project for real pilot agents. No second project was created, no real pilot data was moved, no DNS record was changed, and `main` was not modified.
+- `npm test` passes with 63 tests, the focused Phase 1 suite passes with 57 tests, all eight Python self-tests pass, `npm run build` passes, the local production-mode HTTP smoke test passes, and `git diff --check` passes. The repository defines no lint script.

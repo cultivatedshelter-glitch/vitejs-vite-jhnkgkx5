@@ -1,0 +1,10 @@
+.env
+.env.*
+.git
+.venv
+codex-backups
+dist
+local-fixtures
+node_modules
+*.log
+security-audit-fixes.patch

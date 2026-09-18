@@ -8,9 +8,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.venv/
 dist
 dist-ssr
 *.local
+supabase/.temp/
 
 # Shelter Prep capability benchmark private data
 local-fixtures/

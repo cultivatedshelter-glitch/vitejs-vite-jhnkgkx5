@@ -113,7 +113,9 @@ test('real private PDF travels through authorized processing, validation, and th
     const pdfPath = join(root, 'inspection.pdf')
     await generatePdf(pdfPath)
     const repo = repository(root)
-    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: runExistingPhase1Reasoning })
+    const notificationCalls = []
+    const notifications = { async notifyNeedsReview(value) { notificationCalls.push(['needs_review', value]) }, async notifyProcessingFailed(value) { notificationCalls.push(['processing_failed', value]) } }
+    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: runExistingPhase1Reasoning, notifications })
     const handle = createPhase1HttpHandler(service)
     const property = await requestJson(handle, 'http://test/api/phase1/properties/resolve', {
       method: 'POST', headers: { authorization: 'Bearer authorized-token', 'content-type': 'application/json' },
@@ -151,6 +153,9 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.equal(viewModel.isFixture, false)
     assert.ok(viewModel.findings[0].known.length > 0)
     assert.ok(viewModel.findings[0].unknown.length > 0)
+    assert.equal(notificationCalls.length, 1)
+    assert.equal(notificationCalls[0][0], 'needs_review')
+    assert.equal(notificationCalls[0][1].requestId, submit.body.id)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -173,6 +178,14 @@ test('address resolution creates once and reuses the accessible Property workspa
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('live repository does not combine Property insertion with an RLS returning-row select', async () => {
+  const repository = await readFile(resolve('server/phase1SupabaseRepository.mjs'), 'utf8')
+  const creation = repository.slice(repository.indexOf("const { error } = await client.from('properties').insert"), repository.indexOf('async storeEvidence'))
+  assert.doesNotMatch(creation, /\.insert\([\s\S]*?\)\.select\(/)
+  assert.match(creation, /\.eq\('created_by', actor\.id\)/)
+  assert.match(creation, /Created Property could not be resolved uniquely/)
 })
 
 test('review processing cannot run without resolved property context', async () => {
@@ -212,7 +225,9 @@ test('malformed and fixture artifacts are rejected and become an explicit failed
   const root = await mkdtemp(join(tmpdir(), 'phase1-failure-test-'))
   try {
     const repo = repository(root)
-    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => ({ schemaVersion: 'bad', atomicObservations: [] }) })
+    const notificationCalls = []
+    const notifications = { async notifyNeedsReview(value) { notificationCalls.push(['needs_review', value]) }, async notifyProcessingFailed(value) { notificationCalls.push(['processing_failed', value]) } }
+    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => ({ schemaVersion: 'bad', atomicObservations: [] }), notifications })
     await service.resolveProperty({ token: 'authorized-token', address: '10 Test Ave' })
     const ref = await repo.storeEvidence({ actor: { id: 'authorized-token' }, propertyId: PROPERTY_ID, file: new File(['bad'], 'bad.pdf', { type: 'application/pdf' }) })
     const request = await service.submit({ token: 'authorized-token', propertyId: PROPERTY_ID, evidenceReferences: [ref] })
@@ -220,6 +235,7 @@ test('malformed and fixture artifacts are rejected and become an explicit failed
     const status = await service.status({ token: 'authorized-token', requestId: request.id })
     assert.equal(status.processingStatus, 'failed')
     assert.match(status.error, /Reasoning artifact invalid/)
+    assert.deepEqual(notificationCalls, [['processing_failed', { requestId: request.id }]])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -247,11 +263,13 @@ test('retained property context survives refresh and is rejected for a changed a
     const contextModule = await import(`${new URL(`file://${path}`).href}?test=${Date.now()}`)
     const values = new Map()
     const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) }
-    const context = { id: PROPERTY_ID, address: '10 Test Ave, Exampletown, OR 97000' }
+    const context = { id: PROPERTY_ID, address: '10 Test Ave, Exampletown, OR 97000', userId: 'authorized-user-id' }
     contextModule.writePhase1PropertyContext(storage, context)
     assert.deepEqual(contextModule.readPhase1PropertyContext(storage), context)
     assert.equal(contextModule.propertyContextMatchesAddress(context, '  10 TEST Ave, Exampletown, OR 97000 '), true)
     assert.equal(contextModule.propertyContextMatchesAddress(context, '11 Test Ave, Exampletown, OR 97000'), false)
+    assert.equal(contextModule.propertyContextBelongsToUser(context, 'authorized-user-id'), true)
+    assert.equal(contextModule.propertyContextBelongsToUser(context, 'different-user-id'), false)
     contextModule.clearPhase1PropertyContext(storage)
     assert.equal(contextModule.readPhase1PropertyContext(storage), null)
   } finally {

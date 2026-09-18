@@ -67,16 +67,23 @@ export function createPhase1SupabaseRepository() {
       if (matches?.length === 1) return { ...matches[0], address: matches[0].source_address || matches[0].address_line1, created: false }
       if (matches?.length > 1) throw new Error('Multiple accessible properties match this address. Resolve the duplicate property records before continuing.')
 
-      const { data, error } = await client.from('properties').insert({
+      const { error } = await client.from('properties').insert({
         created_by: actor.id,
         address_line1: address,
         source_address: address,
         normalized_address: normalizedAddress,
         status: 'active',
         metadata: { created_via: 'phase1_guided_intake' },
-      }).select('id, source_address, address_line1, city, state, zip, normalized_address').single()
+      })
       if (error) throw new Error(`Property creation failed: ${error.message}`)
-      return { ...data, address: data.source_address || data.address_line1, created: true }
+      const { data: created, error: readError } = await client.from('properties')
+        .select('id, source_address, address_line1, city, state, zip, normalized_address')
+        .eq('created_by', actor.id)
+        .eq('normalized_address', normalizedAddress)
+        .limit(2)
+      if (readError) throw new Error(`Created Property lookup failed: ${readError.message}`)
+      if (created?.length !== 1) throw new Error('Created Property could not be resolved uniquely after insertion.')
+      return { ...created[0], address: created[0].source_address || created[0].address_line1, created: true }
     },
 
     async storeEvidence({ actor, propertyId, file }) {
@@ -190,7 +197,107 @@ export function createPhase1SupabaseRepository() {
     },
 
     async failProcessing(id, message) {
-      await admin.from('inspection_pipeline_runs').update({ status: 'failed', error_message: message, completed_at: new Date().toISOString() }).eq('id', id)
+      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'failed', error_message: message, completed_at: new Date().toISOString() }).eq('id', id)
+      if (error) throw new Error(error.message)
+    },
+
+    async getNotificationContext(requestId) {
+      const { data: request, error: requestError } = await admin.from('inspection_pipeline_runs')
+        .select('id, property_id, work_request_id, requested_by, stage_statuses')
+        .eq('id', requestId)
+        .single()
+      if (requestError) throw new Error(`Notification request lookup failed: ${requestError.message}`)
+      const { data: property, error: propertyError } = await admin.from('properties')
+        .select('source_address, address_line1, city, state, zip')
+        .eq('id', request.property_id)
+        .single()
+      if (propertyError) throw new Error(`Notification Property lookup failed: ${propertyError.message}`)
+
+      const evidenceIds = (request.stage_statuses?.evidence_references || []).map((item) => item.id).filter(Boolean)
+      let evidence = []
+      if (evidenceIds.length) {
+        const { data, error } = await admin.from('inspection_reports').select('original_filename').in('id', evidenceIds)
+        if (error) throw new Error(`Notification evidence lookup failed: ${error.message}`)
+        evidence = data || []
+      }
+      let submittingEmail = null
+      if (request.requested_by) {
+        const { data } = await admin.auth.admin.getUserById(request.requested_by)
+        submittingEmail = data?.user?.email || null
+      }
+      const propertyAddress = property.source_address || [property.address_line1, property.city, property.state, property.zip].filter(Boolean).join(', ')
+      const names = evidence.map((item) => item.original_filename).filter(Boolean)
+      const evidenceSummary = names.length
+        ? `${names.length} evidence ${names.length === 1 ? 'file' : 'files'}: ${names.join(', ')}`
+        : `${evidenceIds.length} evidence ${evidenceIds.length === 1 ? 'item' : 'items'}`
+      return {
+        propertyId: request.property_id,
+        workRequestId: request.work_request_id,
+        propertyAddress,
+        submittingEmail,
+        evidenceSummary,
+      }
+    },
+
+    async claimNotification({ eventType, requestId, propertyId, workRequestId, recipient, provider }) {
+      const selectExisting = () => admin.from('phase1_notifications').select('*')
+        .eq('event_type', eventType)
+        .eq('processing_request_id', requestId)
+        .eq('recipient', recipient)
+        .eq('channel', 'email')
+        .maybeSingle()
+      const { data: existing, error: existingError } = await selectExisting()
+      if (existingError) throw new Error(`Notification lookup failed: ${existingError.message}`)
+      if (existing?.delivery_status === 'sent' || existing?.delivery_status === 'sending') {
+        return { notification: existing, shouldSend: false }
+      }
+      if (existing) {
+        const { data, error } = await admin.from('phase1_notifications').update({
+          delivery_status: 'sending',
+          provider,
+          failure_reason: null,
+          attempt_count: existing.attempt_count + 1,
+          last_attempt_at: new Date().toISOString(),
+        }).eq('id', existing.id).in('delivery_status', ['pending', 'failed']).select('*').maybeSingle()
+        if (error) throw new Error(`Notification retry claim failed: ${error.message}`)
+        return data ? { notification: data, shouldSend: true } : { notification: existing, shouldSend: false }
+      }
+
+      const { data, error } = await admin.from('phase1_notifications').insert({
+        event_type: eventType,
+        processing_request_id: requestId,
+        work_request_id: workRequestId,
+        property_id: propertyId,
+        recipient,
+        channel: 'email',
+        delivery_status: 'sending',
+        provider,
+        attempt_count: 1,
+        last_attempt_at: new Date().toISOString(),
+      }).select('*').single()
+      if (!error) return { notification: data, shouldSend: true }
+      if (error.code !== '23505') throw new Error(`Notification claim failed: ${error.message}`)
+      const { data: raced, error: racedError } = await selectExisting()
+      if (racedError || !raced) throw new Error(`Notification race lookup failed: ${racedError?.message || 'record missing'}`)
+      return { notification: raced, shouldSend: false }
+    },
+
+    async markNotificationSent(id, providerMessageId) {
+      const { error } = await admin.from('phase1_notifications').update({
+        delivery_status: 'sent',
+        provider_message_id: providerMessageId,
+        sent_at: new Date().toISOString(),
+        failure_reason: null,
+      }).eq('id', id)
+      if (error) throw new Error(`Notification delivery persistence failed: ${error.message}`)
+    },
+
+    async markNotificationFailed(id, reason) {
+      const { error } = await admin.from('phase1_notifications').update({
+        delivery_status: 'failed',
+        failure_reason: String(reason).slice(0, 2000),
+      }).eq('id', id)
+      if (error) throw new Error(`Notification failure persistence failed: ${error.message}`)
     },
 
     async getProcessingRequest({ actor, requestId }) {

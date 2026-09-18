@@ -8,7 +8,7 @@ export class ProcessingError extends Error {
   }
 }
 
-export function createPhase1ProcessingService({ repository, reasoningRunner }) {
+export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
   async function requireActor(token) {
     if (!token) throw new ProcessingError('authorization_failed', 'Sign in is required to process property evidence.', 401)
     const actor = await repository.authenticate(token)
@@ -53,8 +53,28 @@ export function createPhase1ProcessingService({ repository, reasoningRunner }) {
         const artifact = await reasoningRunner({ propertyId, evidence, note })
         validatePhase1Artifact(artifact, { propertyId })
         await repository.completeProcessing(request.id, artifact)
+        if (notifications) {
+          try {
+            await notifications.notifyNeedsReview({ requestId: request.id, artifact })
+          } catch (notificationError) {
+            logger.error('Phase 1 needs-review notification could not be recorded.', {
+              requestId: request.id,
+              error: notificationError instanceof Error ? notificationError.message : 'Notification failed.',
+            })
+          }
+        }
       } catch (error) {
         await repository.failProcessing(request.id, error instanceof Error ? error.message : 'Processing failed.')
+        if (notifications) {
+          try {
+            await notifications.notifyProcessingFailed({ requestId: request.id })
+          } catch (notificationError) {
+            logger.error('Phase 1 processing-failure notification could not be recorded.', {
+              requestId: request.id,
+              error: notificationError instanceof Error ? notificationError.message : 'Notification failed.',
+            })
+          }
+        }
       } finally {
         await repository.releaseEvidence?.(evidence)
       }
