@@ -52,7 +52,7 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     queueMicrotask(async () => {
       try {
         await repository.markProcessing(request.id)
-        const artifact = await reasoningRunner({ propertyId, evidence, note })
+        const artifact = await reasoningRunner({ propertyId, evidence, note, actor })
         validatePhase1Artifact(artifact, { propertyId })
         await repository.completeProcessing(request.id, artifact)
         if (notifications) {
@@ -114,20 +114,26 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const invalidFields = Object.keys(corrections).filter((field) => !EDITABLE_FIELDS.has(field))
     if (invalidFields.length) throw new ProcessingError('invalid_correction_fields', `Unsupported correction fields: ${invalidFields.join(', ')}.`)
     if (action === 'edit' && !Object.keys(corrections).length) throw new ProcessingError('correction_required', 'Enter at least one correction before saving.')
+    const request = await repository.getProcessingRequest({ actor, requestId })
+    if (!request) throw new ProcessingError('authorization_failed', 'This processing request is not available.', 404)
     if (corrections.price !== undefined) {
       const price = corrections.price
       if (!price || typeof price !== 'object'
         || !Number.isFinite(price.low) || !Number.isFinite(price.high)
         || price.low < 0 || price.high < price.low
-        || !String(price.source_reference || '').trim()) {
-        throw new ProcessingError('invalid_price_correction', 'A price correction requires a valid low/high range and source reference.')
+        || !String(price.source_reference || '').trim()
+        || !String(price.geography || '').trim()) {
+        throw new ProcessingError('invalid_price_correction', 'A price correction requires a valid low/high range, source reference, and source geography.')
+      }
+      const observation = request?.artifact?.atomicObservations?.find((item) => item.id === observationId)
+      const availablePathIds = (observation?.finding_card?.repair_paths || []).map((path) => path.id)
+      if (availablePathIds.length && !availablePathIds.includes(String(price.path_id || ''))) {
+        throw new ProcessingError('invalid_price_correction', 'Choose the repair path that this price correction applies to.')
       }
     }
     if (['edit', 'needs_more_info', 'reject'].includes(action) && !String(reason).trim()) {
       throw new ProcessingError('review_reason_required', 'Record the reason or exact missing information before continuing.')
     }
-    const request = await repository.getProcessingRequest({ actor, requestId })
-    if (!request) throw new ProcessingError('authorization_failed', 'This processing request is not available.', 404)
     const newValue = {
       artifact_version: request.artifactVersion,
       observation_id: observationId,

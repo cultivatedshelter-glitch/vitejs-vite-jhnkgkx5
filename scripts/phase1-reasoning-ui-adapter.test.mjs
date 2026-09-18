@@ -182,6 +182,27 @@ test('human correction overlays preserve the draft and agent output includes onl
   assert.equal(agent.totalFindingCount, 2)
   assert.equal(agent.findings.length, 1)
   assert.equal(agent.findings[0].id, 'observation-1')
+
+  const released = structuredClone(liveArtifact)
+  released.atomicObservations = [released.atomicObservations[0]]
+  released.atomicObservations[0].finding_card.review_status = 'human_reviewed'
+  released.atomicObservations[0].finding_card.released_to_agent = true
+  released.atomicObservations[0].finding_card.released_price_correction = {
+    low: 1200,
+    high: 2400,
+    source_reference: 'Reviewed local proposal',
+    geography: 'Portland metro',
+    path_id: 'repair-flashing',
+  }
+  released.atomicObservations[0].finding_card.repair_paths = [{
+    id: 'repair-flashing', label: 'Repair the flashing', price_low: 200, price_high: 500,
+    price_unit: 'project', price_geography: { label: 'United States' }, price_source_refs: [],
+  }]
+  const releasedAgent = adaptPhase1ReasoningArtifact(released, { mode: 'live', audience: 'agent' })
+  assert.equal(releasedAgent.findings.length, 1)
+  assert.equal(releasedAgent.findings[0].repairPaths[0].priceLabel, '$1,200–$2,400')
+  assert.equal(releasedAgent.findings[0].repairPaths[0].geography, 'Portland metro')
+  assert.equal(releasedAgent.findings[0].repairPaths[0].sources[0].label, 'Reviewed local proposal')
 })
 
 test('missing optional fields fail gracefully without inventing money or provenance', () => {

@@ -212,6 +212,17 @@ function OverviewStep({ artifact, onSelect }: { artifact: Phase1ExperienceViewMo
         <div className="is-info"><span>Need more info</span><strong>{artifact.openQuestionCount}</strong></div>
         <div className="is-ready"><span>Ready to review</span><strong>{readyCount}</strong></div>
       </div>
+      <section className="phase1-decision-overview" aria-labelledby="whole-report-overview">
+        <div className="phase1-section-heading"><h2 id="whole-report-overview">Whole-report decision picture</h2><span>{artifact.overview.findingsWithSourcedPaths} with sourced paths</span></div>
+        {artifact.transactionPerspective !== 'Not Stated' && <p className="phase1-transaction-context"><strong>Transaction perspective</strong>{artifact.transactionPerspective}</p>}
+        <div className="phase1-overview-grid">
+          <div><h3>Major categories</h3>{artifact.overview.majorCategories.length ? <ul>{artifact.overview.majorCategories.map((category) => <li key={category.label}><span>{category.label}</span><strong>{category.findingCount}</strong></li>)}</ul> : <p>Categories are still being organized.</p>}</div>
+          <div><h3>Likely upcoming decisions</h3><TextList values={artifact.overview.decisionFactors.slice(0, 6)} empty="No cross-report decision factors were returned." /></div>
+          <div><h3>Immediate tasks</h3><TextList values={artifact.overview.immediateNextTasks.slice(0, 5)} empty="Open the first finding to choose the next task." /></div>
+        </div>
+        <p className="phase1-cost-rule"><strong>Cost context</strong>{artifact.overview.aggregateCostRule}</p>
+        {artifact.humanObservations.length > 0 && <details><summary>Submitter context ({artifact.humanObservations.length})</summary>{artifact.humanObservations.map((observation) => <article className="phase1-human-observation" key={observation.id}><p>{observation.observation}</p><small>{observation.role} · {observation.directness} · professional status {observation.professionalStatus.toLowerCase()} · {observation.verificationStatus}</small></article>)}</details>}
+      </section>
       <section className="phase1-band" aria-labelledby="priority-findings">
         <div className="phase1-section-heading"><h2 id="priority-findings">Repair items</h2><span>{artifact.categories.length} systems</span></div>
         {groups.map((group) => {
@@ -234,6 +245,11 @@ function OverviewStep({ artifact, onSelect }: { artifact: Phase1ExperienceViewMo
 function TextList({ values, empty }: { values: string[]; empty: string }) {
   if (!values.length) return <p>{empty}</p>
   return <ul className="phase1-detail-list">{values.map((value) => <li key={value}>{value}</li>)}</ul>
+}
+
+function RepairPathList({ finding }: { finding: Phase1FindingViewModel }) {
+  if (!finding.repairPaths.length) return <section className="phase1-repair-paths"><p className="phase1-kicker">Likely paths</p><p className="phase1-quiet-state">No defensible routine path was matched. The reviewer should define the smallest useful evaluation task before pricing.</p></section>
+  return <section className="phase1-repair-paths"><p className="phase1-kicker">Likely paths</p><div className="phase1-path-list">{finding.repairPaths.map((path) => <article className={`phase1-path${path.status === 'blocked' ? ' is-blocked' : ''}`} key={path.id}><div className="phase1-path-heading"><h2>{path.label}</h2><div><span>Estimated repair cost</span><strong>{path.priceLabel}</strong></div></div><div className="phase1-path-meta"><span>{path.geography}</span><span>{path.confidence} confidence</span></div>{path.confidenceReason && <p>{path.confidenceReason}</p>}<div className="phase1-path-terms"><div><h3>Assumptions</h3><TextList values={path.assumptions} empty="No assumptions returned." /></div><div><h3>Major exclusions</h3><TextList values={path.exclusions} empty="No exclusions returned." /></div></div>{path.sources.length > 0 ? <div className="phase1-path-sources"><h3>Pricing source</h3>{path.sources.map((source) => <div key={source.id}><strong>{source.label}</strong><span>Geography: {source.geography}</span>{source.publishedAt && <span>Published: {source.publishedAt}</span>}{source.retrievedAt && <span>Retrieved: {source.retrievedAt.slice(0, 10)}</span>}{source.scopeBasis && <span>Scope basis: {source.scopeBasis}</span>}{source.url && <a href={source.url} target="_blank" rel="noreferrer">View source</a>}</div>)}</div> : <p className="phase1-action-note"><strong>Price range blocked</strong><span>No defensible source is attached to this path.</span></p>}</article>)}</div></section>
 }
 
 function ReviewQueue() {
@@ -259,8 +275,9 @@ function ReviewQueue() {
   </main>
 }
 
-function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, onBack, onReview }: {
+function FindingStep({ finding, transactionPerspective, isFixture, requestId, reviewing, reviewError, onBack, onReview }: {
   finding: Phase1FindingViewModel
+  transactionPerspective: string
   isFixture: boolean
   requestId: string | null
   reviewing: boolean
@@ -283,13 +300,17 @@ function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, on
   const [priceLow, setPriceLow] = useState('')
   const [priceHigh, setPriceHigh] = useState('')
   const [priceSource, setPriceSource] = useState('')
+  const [priceGeography, setPriceGeography] = useState('')
+  const [pricePathId, setPricePathId] = useState(finding.repairPaths[0]?.id || '')
 
   function submitReview() {
     if (!reviewAction) return
-    const price = priceLow && priceHigh && priceSource.trim() ? {
+    const price = priceLow && priceHigh && priceSource.trim() && priceGeography.trim() ? {
       low: Number(priceLow),
       high: Number(priceHigh),
       source_reference: priceSource.trim(),
+      geography: priceGeography.trim(),
+      path_id: pricePathId,
     } : undefined
     const corrections = reviewAction === 'edit' ? {
       title: title.trim(),
@@ -322,21 +343,12 @@ function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, on
       </header>
       <div className="phase1-detail-layout">
         <aside className="phase1-detail-aside">
-          <section className={`phase1-price-card${finding.price.status === 'blocked' ? ' is-blocked' : ''}`} aria-label="Localized repair cost context">
-            <span>Estimated local repair cost</span>
-            <strong>{finding.price.label}</strong>
-            <div><span>{finding.price.geography}</span><span>{finding.price.stage}</span></div>
-            <p>{finding.price.basis}</p>
-            {finding.price.status === 'blocked' && <div className="phase1-action-note"><strong>Action</strong><span>Attach a defensible local benchmark before release.</span></div>}
-            <details><summary>View pricing sources</summary><TextList values={finding.price.sourceIds} empty="No pricing sources were returned." /></details>
-            {finding.rangeHistory.length > 0 && <div className="phase1-range-note"><span>Range history</span>{finding.rangeHistory.map((revision) => <p key={revision.id}><strong>{revision.movement}</strong>{revision.priorLabel ? ` from ${revision.priorLabel} to ${revision.currentLabel}` : ` at ${revision.currentLabel}`}. {revision.explanation}</p>)}</div>}
-          </section>
           <section className="phase1-next-move">
             <p className="phase1-kicker">Shelter Prep recommends · {finding.nextStepOwner}</p>
             <h2>{finding.nextStep}</h2>
             <div className="phase1-why"><h3>Why this next step?</h3><p>{finding.whyNextStep}</p></div>
           </section>
-          {finding.weather && <section className="phase1-context-panel"><p className="phase1-kicker">Environmental context</p><p>{finding.weather.text}</p>{finding.weather.provider && <small>{finding.weather.provider}{finding.weather.requestedWindow ? ` · ${finding.weather.requestedWindow}` : ''}</small>}{finding.weather.failureReason && <p className="phase1-quiet-state">Lookup reason: {finding.weather.failureReason}</p>}</section>}
+          {finding.weather && <section className="phase1-context-panel"><p className="phase1-kicker">Environmental context</p><p>{finding.weather.text}</p>{finding.weather.provider && <div className="phase1-weather-source"><strong>Source: {finding.weather.provider}</strong>{finding.weather.requestedWindow && <span>Observation window: {finding.weather.requestedWindow}</span>}{finding.weather.location && <span>Location: {finding.weather.location}</span>}{finding.weather.retrievedAt && <span>Retrieved: {finding.weather.retrievedAt.slice(0, 10)}</span>}{finding.weather.sourceUrl && <a href={finding.weather.sourceUrl} target="_blank" rel="noreferrer">View source</a>}</div>}{finding.weather.failureReason && <p className="phase1-quiet-state">Lookup reason: {finding.weather.failureReason}</p>}</section>}
           <section className="phase1-review-reason"><p className="phase1-kicker">Review reason</p><TextList values={finding.reviewReasons.map((value) => value.replaceAll('_', ' '))} empty="Ready for routine review." /></section>
           {finding.missingInformation.length > 0 && <section className="phase1-missing"><h2>Missing information</h2><TextList values={finding.missingInformation} empty="No missing information was returned." /></section>}
         </aside>
@@ -366,8 +378,12 @@ function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, on
             {finding.affectedLocation.needsConfirmation && <p>{finding.affectedLocation.resolutionPrompt}</p>}
           </section>
           <section className="phase1-reasoning-section"><p className="phase1-kicker">Shelter Prep interpretation</p><p>{finding.interpretation}</p></section>
+          <RepairPathList finding={finding} />
+          {transactionPerspective !== 'Not Stated' && <section className="phase1-transaction-considerations"><p className="phase1-kicker">{transactionPerspective} context</p><TextList values={finding.transactionConsiderations} empty="No transaction-specific considerations were returned." /></section>}
+          {finding.rangeHistory.length > 0 && <details className="phase1-range-history"><summary>Range history</summary>{finding.rangeHistory.map((revision) => <article key={revision.id}><strong>{revision.movement}: {revision.currentLabel}</strong><span>{revision.explanation}</span></article>)}</details>}
           <section className="phase1-reasoning-section"><h2>Known</h2><TextList values={finding.known} empty="No confirmed facts were returned." /></section>
           <section className="phase1-reasoning-section"><h2>Unknown</h2><TextList values={finding.unknown} empty="No unresolved unknowns were returned." /></section>
+          <section className="phase1-decision-change"><p className="phase1-kicker">What would change the decision</p><TextList values={finding.whatChangesDecision} empty="No additional decision factors were returned." /></section>
           {finding.contractorQuote && <section className="phase1-contractor-input"><div><span>Contractor input</span><strong>{finding.contractorQuote.label}</strong></div><p>Retained as source material with status {finding.contractorQuote.reviewStatus}. It is separate from Shelter Prep's range and does not verify this finding.</p></section>}
           <div className="phase1-disclosures">
             <details><summary>View source context</summary><p>{finding.observation}</p><TextList values={finding.evidenceReferences} empty="No human-readable evidence references were returned." /></details>
@@ -395,7 +411,7 @@ function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, on
               <label>Why this next step<textarea value={rationale} onChange={(event) => setRationale(event.target.value)} /></label>
               <label>Likely trade<input value={likelyTrade} onChange={(event) => setLikelyTrade(event.target.value)} /></label>
               <label>Evidence relationship<textarea value={evidenceRelationship} onChange={(event) => setEvidenceRelationship(event.target.value)} placeholder="Describe how the linked evidence supports or limits this finding." /></label>
-              <fieldset className="phase1-price-correction"><legend>Source-supported price correction (optional)</legend><label>Low<input type="number" min="0" value={priceLow} onChange={(event) => setPriceLow(event.target.value)} /></label><label>High<input type="number" min="0" value={priceHigh} onChange={(event) => setPriceHigh(event.target.value)} /></label><label>Source reference<input value={priceSource} onChange={(event) => setPriceSource(event.target.value)} /></label></fieldset>
+              <fieldset className="phase1-price-correction"><legend>Source-supported path price correction (optional)</legend>{finding.repairPaths.length > 0 && <label>Repair path<select value={pricePathId} onChange={(event) => setPricePathId(event.target.value)}>{finding.repairPaths.map((path) => <option value={path.id} key={path.id}>{path.label}</option>)}</select></label>}<label>Low<input type="number" min="0" value={priceLow} onChange={(event) => setPriceLow(event.target.value)} /></label><label>High<input type="number" min="0" value={priceHigh} onChange={(event) => setPriceHigh(event.target.value)} /></label><label>Source reference<input value={priceSource} onChange={(event) => setPriceSource(event.target.value)} /></label><label>Source geography<input value={priceGeography} onChange={(event) => setPriceGeography(event.target.value)} placeholder="ZIP, city, metro, county, state, regional, or national" /></label></fieldset>
             </div>}
             {reviewAction && reviewAction !== 'approve' && <label className="phase1-review-note"><span>{reviewAction === 'needs_more_info' ? 'Exact missing fact or evidence' : 'Review reason'}</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
             {reviewError && <p className="phase1-inline-error" role="alert">{reviewError}</p>}
@@ -409,7 +425,36 @@ function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, on
 
 function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
   if (!artifact.findings.length) return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Under review</p><h1>{artifact.totalFindingCount} repair items identified</h1><p className="phase1-lede">Shelter Prep is reviewing the findings before release.</p></main>
-  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Reviewed by Shelter Prep</p><h1>{artifact.findings.length} reviewed repair items.</h1>{artifact.findings.map((finding) => <article className="phase1-agent-finding" key={finding.id}><h2>{finding.title}</h2><p><strong>What this means</strong>{finding.interpretation}</p><p><strong>Estimated local repair cost</strong>{finding.price.label}</p><TextList values={finding.known} empty="No reviewed known facts were released." /><p><strong>What is still unknown</strong>{finding.unknown.join(' ') || 'No reviewed unknowns were released.'}</p><p><strong>Next step</strong>{finding.nextStep}</p><p><strong>Why</strong>{finding.whyNextStep}</p><p><strong>Relevant evidence</strong>{finding.sourceEvidence.documentName}{finding.sourceEvidence.page ? `, page ${finding.sourceEvidence.page}` : ''}{finding.sourceEvidence.itemNumber ? `, item ${finding.sourceEvidence.itemNumber}` : ''}</p><small>Reviewed by Shelter Prep</small></article>)}</main>
+  return <main className="phase1-main phase1-agent-view">
+    <p className="phase1-kicker">Reviewed by Shelter Prep</p>
+    <h1>{artifact.findings.length} reviewed repair items.</h1>
+    <p className="phase1-lede">The reviewed result keeps the evidence, realistic response paths, cost context, and next decisions together.</p>
+    <section className="phase1-decision-overview" aria-labelledby="released-overview">
+      <div className="phase1-section-heading"><h2 id="released-overview">Whole-property overview</h2><span>{artifact.overview.findingsWithSourcedPaths} with sourced paths</span></div>
+      {artifact.transactionPerspective !== 'Not Stated' && <p className="phase1-transaction-context"><strong>Transaction perspective</strong>{artifact.transactionPerspective}</p>}
+      <div className="phase1-overview-grid">
+        <div><h3>Major categories</h3><ul>{artifact.overview.majorCategories.map((category) => <li key={category.label}><span>{category.label}</span><strong>{category.findingCount}</strong></li>)}</ul></div>
+        <div><h3>Likely upcoming decisions</h3><TextList values={artifact.overview.decisionFactors.slice(0, 6)} empty="No cross-report decision factors were released." /></div>
+        <div><h3>Immediate tasks</h3><TextList values={artifact.overview.immediateNextTasks.slice(0, 5)} empty="No immediate tasks were released." /></div>
+      </div>
+      <p className="phase1-cost-rule"><strong>Cost context</strong>{artifact.overview.aggregateCostRule}</p>
+    </section>
+    {artifact.findings.map((finding) => <article className="phase1-agent-finding" key={finding.id}>
+      <p className="phase1-kicker">{finding.category}</p>
+      <h2>{finding.title}</h2>
+      <p><strong>What was reported</strong>{finding.sourceEvidence.excerpt}</p>
+      <p className="phase1-agent-source"><strong>Source</strong>{finding.sourceEvidence.documentName}{finding.sourceEvidence.page ? ` · Page ${finding.sourceEvidence.page}` : ''}{finding.sourceEvidence.itemNumber ? ` · Item ${finding.sourceEvidence.itemNumber}` : ''}{finding.sourceEvidence.section ? ` · ${finding.sourceEvidence.section}` : ''}</p>
+      <p><strong>Shelter Prep interpretation</strong>{finding.interpretation}</p>
+      <RepairPathList finding={finding} />
+      {artifact.transactionPerspective !== 'Not Stated' && <><p><strong>{artifact.transactionPerspective} context</strong></p><TextList values={finding.transactionConsiderations} empty="No transaction-specific considerations were released." /></>}
+      <p><strong>What we know</strong></p><TextList values={finding.known} empty="No reviewed known facts were released." />
+      <p><strong>What is still unknown</strong></p><TextList values={finding.unknown} empty="No reviewed unknowns were released." />
+      <p><strong>What changes the decision</strong></p><TextList values={finding.whatChangesDecision} empty="No additional decision factors were released." />
+      <p><strong>Next task</strong>{finding.nextStep}</p>
+      <p><strong>Why</strong>{finding.whyNextStep}</p>
+      <small>Reviewed by Shelter Prep</small>
+    </article>)}
+  </main>
 }
 
 function AgentSubmissionStatus({ count }: { count: number }) {
@@ -700,7 +745,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       {step === 'evidence' && <EvidenceStep files={files} note={note} submitting={evidenceSubmitting} error={evidenceError} onFiles={(nextFiles) => { setFiles(nextFiles); setEvidenceError('') }} onNote={setNote} onContinue={() => void organizeEvidence()} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
       {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={(index) => { setFindingIndex(index); setStep('finding') }} />}
-      {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onReview={(action, payload) => void reviewFinding(action, payload)} />}
+      {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} transactionPerspective={artifact.transactionPerspective} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onReview={(action, payload) => void reviewFinding(action, payload)} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}
     </div>

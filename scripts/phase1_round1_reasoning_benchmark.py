@@ -18,6 +18,7 @@ from phase1_inspection_evidence_cache import (
 )
 from phase1_multi_system_shared import clean_inline, clean_lines, normalize_key, read_json, sha256_file, utc_now, write_json
 from phase1_pricing_contract import build_unpriced_finding_card, pricing_contract_metadata
+from phase1_decision_support import enrich_decision_support
 
 
 SCHEMA_VERSION = "shelter-prep-phase1-round1g-source-integration-contract.v1"
@@ -938,7 +939,8 @@ def build_localized_cost_context(
     }
 
 
-def external_claim_controls() -> dict[str, Any]:
+def external_claim_controls(price_sources: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    price_sources = price_sources or []
     return {
         "weather": {
             "claims_made": False,
@@ -946,8 +948,8 @@ def external_claim_controls() -> dict[str, Any]:
             "required_before_claim": "Source weather for the actual inspection/evidence date and compare it to the relevant observation.",
         },
         "prices": {
-            "claims_made": False,
-            "sources": [],
+            "claims_made": bool(price_sources),
+            "sources": [source["id"] for source in price_sources],
             "required_before_claim": "Use reviewed scope plus sourced local price data and label geography no more precisely than the source supports.",
         },
         "codes": {
@@ -2217,10 +2219,17 @@ def build_acceptance_status(cache_meta: dict[str, Any], records: list[dict[str, 
     }
     finding_card_contract_present = all(required_finding_card_fields <= record.get("finding_card", {}).keys() for record in records)
     unsourced_ranges_blocked = all(
-        record.get("finding_card", {}).get("pricing_contract_status") == "BLOCKED_MISSING_SOURCED_RANGE"
-        and record.get("finding_card", {}).get("price_low") is None
-        and record.get("finding_card", {}).get("price_high") is None
+        (
+            card.get("price_low") is None
+            or (card.get("price_source_refs") and card.get("price_geography", {}).get("level"))
+        )
+        and all(
+            (path.get("price_low") is not None and path.get("price_source_refs"))
+            or (path.get("price_low") is None and path.get("status") == "blocked_missing_sourced_range")
+            for path in card.get("repair_paths", [])
+        )
         for record in records
+        for card in [record.get("finding_card", {})]
     )
     return {
         "shared_cache_reused_without_pdf_rescan": STATUS_PROVEN
@@ -2257,10 +2266,12 @@ def build_acceptance_status(cache_meta: dict[str, Any], records: list[dict[str, 
 
 
 def build_reasoning_artifact_from_cache(cache: dict[str, Any], cache_meta: dict[str, Any]) -> dict[str, Any]:
+    generated_at = utc_now()
     maps = evidence_maps(cache)
     property_report = build_property_report_reconstruction(cache)
     coverage = extract_coverage_and_limitations(cache)
     records = [build_atomic_observation(finding, maps, property_report) for finding in cache.get("normalizedFindings", [])]
+    pricing_sources, decision_overview = enrich_decision_support(records, generated_at)
     systems = build_system_component_index(records)
     relationships = build_relationship_candidates(records)
     potential_condition_relationships = [
@@ -2277,7 +2288,7 @@ def build_reasoning_artifact_from_cache(cache: dict[str, Any], cache_meta: dict[
     )
     artifact = {
         "schemaVersion": SCHEMA_VERSION,
-        "generated_at": utc_now(),
+        "generated_at": generated_at,
         "pipeline": {
             "name": PIPELINE_NAME,
             "runMode": "local_file_only_no_database_no_model",
@@ -2291,6 +2302,8 @@ def build_reasoning_artifact_from_cache(cache: dict[str, Any], cache_meta: dict[
             "app_ui_touched": False,
         },
         "pricingContract": pricing_contract_metadata(),
+        "external_sources": pricing_sources,
+        "decisionOverview": decision_overview,
         "sourceDocument": cache.get("sourceDocument", {}),
         "propertyReportReconstruction": property_report,
         "inspectionCoverageAndLimitations": coverage,
@@ -2303,7 +2316,7 @@ def build_reasoning_artifact_from_cache(cache: dict[str, Any], cache_meta: dict[
             "unknown_rule": "Unknowns are conditions not directly established by source evidence or human review.",
             "human_review_required": True,
         },
-        "externalClaimControls": external_claim_controls(),
+        "externalClaimControls": external_claim_controls(pricing_sources),
         "contractorInputModel": contractor_input_model(),
         "humanReviewPacket": packet,
         "incompleteExtractionIssues": issue_list,
@@ -2618,11 +2631,15 @@ Sewer and private systems are not inspected.""",
         assert record["epistemic_states"]["human_review_status"] == "needs_review"
         assert record["recommended_next_step"]["why_this_next_step"]
         assert record["localized_cost_context"]["geography_basis"]["most_defensible_available_geography"] == "zip"
-        assert record["localized_cost_context"]["cost_range"] is None
         assert record["localized_cost_context"]["precision_guardrail"]
-        assert record["finding_card"]["pricing_contract_status"] == "BLOCKED_MISSING_SOURCED_RANGE"
-        assert record["finding_card"]["price_low"] is None
-        assert record["finding_card"]["price_high"] is None
+        assert "repair_paths" in record["finding_card"]
+        for repair_path in record["finding_card"]["repair_paths"]:
+            if repair_path["price_low"] is not None:
+                assert repair_path["price_source_refs"]
+                assert repair_path["price_geography"]["level"] == "national_fallback"
+                assert repair_path["range_history"]
+            else:
+                assert repair_path["status"] == "blocked_missing_sourced_range"
         assert record["finding_card"]["recommended_next_step"]
         assert record["affected_location"]["orientation_status"] in {"explicit", "unknown"}
         assert record["affected_location"]["orientation_status"] != "inferred_low_confidence"
@@ -2725,7 +2742,9 @@ Sewer and private systems are not inspected.""",
     assert "10 Test Ave" in json.dumps(artifact)
     assert "1837" not in json.dumps(artifact)
     assert artifact["externalClaimControls"]["weather"]["claims_made"] is False
-    assert artifact["externalClaimControls"]["prices"]["claims_made"] is False
+    assert artifact["externalClaimControls"]["prices"]["claims_made"] is True
+    assert artifact["external_sources"]
+    assert artifact["decisionOverview"]["aggregate_cost_rule"].startswith("Do not sum")
     assert artifact["pricingContract"]["range_required_for_material_findings"] is True
     assert artifact["pricingContract"]["live_price_retrieval_implemented"] is False
     assert artifact["contractorInputModel"]["contractor_input_records_present"] is False

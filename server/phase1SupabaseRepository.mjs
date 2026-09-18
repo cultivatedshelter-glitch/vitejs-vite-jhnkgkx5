@@ -66,7 +66,28 @@ function agentArtifact(artifact, findings, eventsById) {
   }
   const observations = (artifact.atomicObservations || []).filter((entry) => allowed.has(entry.source?.source_item_number)).map((entry) => {
     const copy = structuredClone(entry)
+    const { finding, event } = allowed.get(entry.source?.source_item_number)
+    const corrections = event.new_value?.corrections || {}
+    const card = copy.finding_card || (copy.finding_card = {})
+    const epistemic = copy.epistemic_states || (copy.epistemic_states = {})
+    if (corrections.title) card.finding_title = corrections.title
+    if (corrections.interpretation) epistemic.shelter_prep_interpretation = corrections.interpretation
+    else if (epistemic.shelter_prep_interpretation) {
+      epistemic.shelter_prep_interpretation = epistemic.shelter_prep_interpretation.replace(/\s*This is an AI draft interpretation and does not establish final cause, final scope, code status, or pricing\.?/i, '').trim()
+    }
+    if (Array.isArray(corrections.known)) card.what_we_know = corrections.known
+    if (Array.isArray(corrections.unknown)) card.what_we_dont_know = corrections.unknown
+    if (corrections.affected_location) card.affected_location = { ...(card.affected_location || {}), ...corrections.affected_location }
+    if (corrections.next_step) card.recommended_next_step = corrections.next_step
+    if (corrections.rationale) card.why_next_step = corrections.rationale
+    if (corrections.likely_trade) card.next_step_owner = corrections.likely_trade
+    if (corrections.price) card.released_price_correction = corrections.price
+    if (corrections.evidence_relationship) card.reviewed_evidence_relationship = corrections.evidence_relationship
+    if (corrections.confirmed_evidence) card.confirmed_evidence = corrections.confirmed_evidence
+    card.review_status = finding.review_status
+    card.released_to_agent = true
     delete copy.review_workflow
+    delete card.review_workflow
     delete copy.extraction_status
     delete copy.source?.provenance
     delete copy.source?.source_file_id
@@ -74,26 +95,12 @@ function agentArtifact(artifact, findings, eventsById) {
     delete copy.epistemic_states?.ai_inference_or_hypothesis
     return copy
   })
-  const reviewState = Object.fromEntries(observations.map((entry) => {
-    const { finding, event } = allowed.get(entry.source?.source_item_number)
-    return [entry.id, {
-      status: finding.review_status,
-      event: {
-        review_action: event.review_action,
-        new_value: {
-          corrections: event.new_value?.corrections || {},
-          delivery_eligible: true,
-        },
-        created_at: event.created_at,
-      },
-    }]
-  }))
   return {
     schemaVersion: artifact.schemaVersion || artifact.schema_version,
     propertyReportReconstruction: artifact.propertyReportReconstruction,
+    transactionContext: artifact.transactionContext,
     external_sources: artifact.external_sources || [],
     atomicObservations: observations,
-    reviewState,
   }
 }
 

@@ -6,6 +6,35 @@ export type Phase1LinkedSource = {
   reference: string
   url: string | null
   kind: string
+  geography: string
+  publishedAt: string | null
+  retrievedAt: string | null
+  scopeBasis: string
+}
+
+export type Phase1RepairPath = {
+  id: string
+  label: string
+  status: 'priced' | 'blocked'
+  priceLabel: string
+  geography: string
+  assumptions: string[]
+  exclusions: string[]
+  confidence: string
+  confidenceReason: string
+  sources: Phase1LinkedSource[]
+}
+
+export type Phase1HumanObservation = {
+  id: string
+  observation: string
+  identity: string
+  role: string
+  observedAt: string | null
+  submittedAt: string | null
+  directness: string
+  professionalStatus: string
+  verificationStatus: string
 }
 
 export type Phase1RangeHistoryItem = {
@@ -24,6 +53,9 @@ export type Phase1WeatherViewModel = {
   failureReason: string | null
   provider: string | null
   requestedWindow: string | null
+  location: string | null
+  retrievedAt: string | null
+  sourceUrl: string | null
   measurements: string[]
 }
 
@@ -116,6 +148,9 @@ export type Phase1FindingViewModel = {
   } | null
   weather: Phase1WeatherViewModel | null
   relatedFindings: string[]
+  repairPaths: Phase1RepairPath[]
+  whatChangesDecision: string[]
+  transactionConsiderations: string[]
 }
 
 export type Phase1ExperienceViewModel = {
@@ -128,6 +163,16 @@ export type Phase1ExperienceViewModel = {
   openQuestionCount: number
   audience: 'reviewer' | 'agent'
   totalFindingCount: number
+  overview: {
+    majorCategories: Array<{ label: string; findingCount: number }>
+    findingsWithSourcedPaths: number
+    findingsWithoutSourcedPaths: number
+    decisionFactors: string[]
+    immediateNextTasks: string[]
+    aggregateCostRule: string
+  }
+  humanObservations: Phase1HumanObservation[]
+  transactionPerspective: string
 }
 
 export class Phase1ArtifactError extends Error {
@@ -208,12 +253,17 @@ function normalizeSource(value: unknown): Phase1LinkedSource | null {
   if (!id) return null
   const reference = sourceReference(source)
   const url = /^https?:\/\//i.test(reference) ? reference : null
+  const geography = asRecord(source.source_geography)
   return {
     id,
     label: asString(source.source_name) || asString(source.provider) || humanize(asString(source.record_type)) || id,
     reference,
     url,
     kind: asString(source.source_type) || asString(source.record_type) || 'source',
+    geography: asString(geography.label) || humanize(asString(geography.level)) || 'Geography unavailable',
+    publishedAt: asString(source.published_at) || null,
+    retrievedAt: asString(source.retrieved_at) || null,
+    scopeBasis: asString(source.scope_basis),
   }
 }
 
@@ -287,6 +337,7 @@ function normalizeWeather(card: UnknownRecord): Phase1WeatherViewModel | null {
     .filter(([, value]) => typeof value === 'number')
     .map(([key, value]) => `${humanize(key)}: ${String(value)}`)
   const windowRecord = asRecord(weather.requested_window)
+  const providerLocation = asRecord(weather.provider_location)
   const requestedWindow = asString(windowRecord.start_date) && asString(windowRecord.end_date)
     ? `${asString(windowRecord.start_date)} to ${asString(windowRecord.end_date)}`
     : null
@@ -297,6 +348,9 @@ function normalizeWeather(card: UnknownRecord): Phase1WeatherViewModel | null {
     failureReason: null,
     provider: asString(weather.provider) || null,
     requestedWindow,
+    location: asString(providerLocation.label) || null,
+    retrievedAt: asString(weather.retrieval_time) || null,
+    sourceUrl: asString(weather.source_url) || null,
     measurements,
   }
   if (weather.is_relevant_to_interpretation === true || asString(weather.status).includes('not_researched')) {
@@ -307,6 +361,9 @@ function normalizeWeather(card: UnknownRecord): Phase1WeatherViewModel | null {
       failureReason: asString(weather.failure_reason) || asString(weather.lookup_status) || 'lookup not completed',
       provider: asString(weather.provider) || null,
       requestedWindow,
+      location: asString(providerLocation.label) || null,
+      retrievedAt: asString(weather.retrieval_time) || null,
+      sourceUrl: asString(weather.source_url) || null,
       measurements,
     }
   }
@@ -368,7 +425,9 @@ function normalizeFinding(
   const reviewEvent = asRecord(reviewState.event)
   const reviewNewValue = asRecord(reviewEvent.new_value)
   const corrections = asRecord(reviewNewValue.corrections)
-  const confirmedEvidence = asRecord(corrections.confirmed_evidence)
+  const confirmedEvidence = Object.keys(asRecord(corrections.confirmed_evidence)).length
+    ? asRecord(corrections.confirmed_evidence)
+    : asRecord(card.confirmed_evidence)
   const id = asString(entry.id) || asString(entry.finding_id) || `finding-${index + 1}`
   const title = asString(corrections.title) || asString(card.finding_title) || asString(source.inspector_statement) || `Inspection finding ${index + 1}`
   const sourceKnown = asStringArray(card.what_we_know)
@@ -380,11 +439,14 @@ function normalizeFinding(
   const recommended = asString(corrections.next_step) || asString(card.recommended_next_step)
   const explicitMissing = asString(nextEvidence.next_evidence_needed)
   const missingInformation = explicitMissing && explicitMissing !== recommended ? [explicitMissing] : unknown
-  const correctedPrice = asRecord(corrections.price)
+  const correctedPrice = Object.keys(asRecord(corrections.price)).length
+    ? asRecord(corrections.price)
+    : asRecord(card.released_price_correction)
   const correctedPriceLow = asNumber(correctedPrice.low)
   const correctedPriceHigh = asNumber(correctedPrice.high)
   const correctedPriceSource = asString(correctedPrice.source_reference)
   const hasCorrectedPrice = correctedPriceLow !== null && correctedPriceHigh !== null && Boolean(correctedPriceSource)
+  const correctedPricePathId = asString(correctedPrice.path_id)
   const priceLow = hasCorrectedPrice ? correctedPriceLow : asNumber(card.price_low)
   const priceHigh = hasCorrectedPrice ? correctedPriceHigh : asNumber(card.price_high)
   const priced = priceLow !== null && priceHigh !== null && (hasCorrectedPrice || asString(card.pricing_contract_status) !== 'BLOCKED_MISSING_SOURCED_RANGE')
@@ -417,6 +479,39 @@ function normalizeFinding(
   const correctedLocation = asRecord(corrections.affected_location)
   const locationText = asString(correctedLocation.location_text) || asString(affectedLocation.location_text)
   const hasCorrectedLocation = Boolean(asString(correctedLocation.location_text))
+  const repairPaths = asArray(card.repair_paths).filter(isRecord).map((item, pathIndex) => {
+    const pathId = asString(item.id) || `${id}-path-${pathIndex + 1}`
+    const correctionApplies = hasCorrectedPrice && correctedPricePathId === pathId
+    const low = correctionApplies ? correctedPriceLow : asNumber(item.price_low)
+    const high = correctionApplies ? correctedPriceHigh : asNumber(item.price_high)
+    const unit = asString(item.price_unit)
+    const sourceIds = correctionApplies ? [correctedPriceSource] : asStringArray(item.price_source_refs)
+    const pathSources = correctionApplies ? [{
+      id: correctedPriceSource,
+      label: correctedPriceSource,
+      reference: correctedPriceSource,
+      url: /^https?:\/\//i.test(correctedPriceSource) ? correctedPriceSource : null,
+      kind: 'human_reviewed_price_source',
+      geography: asString(correctedPrice.geography),
+      publishedAt: null,
+      retrievedAt: asString(reviewEvent.created_at) || null,
+      scopeBasis: `Human-reviewed correction for ${asString(item.label) || `potential path ${pathIndex + 1}`}.`,
+    }] : sourceIds.map((sourceId) => catalog.get(sourceId)).filter((source): source is Phase1LinkedSource => Boolean(source))
+    return {
+      id: pathId,
+      label: asString(item.label) || `Potential path ${pathIndex + 1}`,
+      status: low !== null && high !== null && pathSources.length ? 'priced' as const : 'blocked' as const,
+      priceLabel: low !== null && high !== null
+        ? `${rangeLabel(low, high)}${unit === 'square_foot' ? ' per sq ft' : unit && unit !== 'project' ? ` per ${humanize(unit).toLowerCase()}` : ''}`
+        : 'No defensible sourced range attached',
+      geography: correctionApplies ? asString(correctedPrice.geography) : asString(asRecord(item.price_geography).label) || 'Geography unavailable',
+      assumptions: asStringArray(item.assumptions),
+      exclusions: asStringArray(item.major_exclusions),
+      confidence: correctionApplies ? 'Human reviewed' : humanize(asString(item.confidence) || 'low'),
+      confidenceReason: correctionApplies ? 'A human reviewer replaced the draft range using the cited source.' : asString(item.confidence_reason),
+      sources: pathSources,
+    }
+  })
   return {
     id,
     title,
@@ -428,7 +523,7 @@ function normalizeFinding(
     unknown,
     missingInformation,
     nextStep: recommended || explicitMissing || 'Human review is needed to choose the next step.',
-    nextStepOwner: asString(card.next_step_owner) || 'human reviewer',
+    nextStepOwner: humanize(asString(card.next_step_owner) || 'human reviewer'),
     whyNextStep: asString(corrections.rationale) || asString(card.why_next_step) || 'The artifact did not provide a next-step rationale.',
     reviewStatus: rawReviewStatus,
     reviewStatusLabel: reviewLabel(rawReviewStatus),
@@ -444,7 +539,7 @@ function normalizeFinding(
       reviewerId: asString(reviewEvent.reviewer_id) || null,
       reviewedAt: asString(reviewEvent.created_at) || null,
       corrections,
-      deliveryEligible: reviewNewValue.delivery_eligible === true,
+      deliveryEligible: reviewNewValue.delivery_eligible === true || card.released_to_agent === true,
     },
     likelyTrade: asString(corrections.likely_trade) || asString(card.next_step_owner) || 'Human reviewer',
     affectedLocation: {
@@ -494,7 +589,7 @@ function normalizeFinding(
       fullReportAvailable: sourceEvidence.full_report_available === true,
       confirmedEvidence: asString(confirmedEvidence.image_id) ? {
         imageId: asString(confirmedEvidence.image_id),
-        relationship: asString(corrections.evidence_relationship) || 'Reviewer confirmed this evidence relationship.',
+        relationship: asString(corrections.evidence_relationship) || asString(card.reviewed_evidence_relationship) || 'Reviewer confirmed this evidence relationship.',
       } : null,
     },
     evidenceReferences: evidenceRefStrings(card, entry),
@@ -518,6 +613,9 @@ function normalizeFinding(
     },
     weather,
     relatedFindings,
+    repairPaths,
+    whatChangesDecision: asStringArray(card.what_changes_the_decision),
+    transactionConsiderations: asStringArray(card.transaction_considerations),
   }
 }
 
@@ -546,6 +644,30 @@ export function adaptPhase1ReasoningArtifact(
     ? allFindings.filter((finding) => finding.reviewDecision.deliveryEligible && ['human_reviewed', 'human_verified'].includes(finding.reviewStatus))
     : allFindings
   const categories = findings.map((finding) => finding.category).filter((value, index, all) => all.indexOf(value) === index)
+  const rawOverview = asRecord(input.decisionOverview)
+  const reportedMajorCategories = asArray(rawOverview.major_categories).filter(isRecord).map((item) => ({
+    label: asString(item.label),
+    findingCount: asNumber(item.finding_count) ?? 0,
+  })).filter((item) => item.label && item.findingCount > 0)
+  const findingCategoryCounts = new Map<string, number>()
+  for (const finding of findings) findingCategoryCounts.set(finding.category, (findingCategoryCounts.get(finding.category) ?? 0) + 1)
+  const derivedMajorCategories = [...findingCategoryCounts].map(([label, findingCount]) => ({ label, findingCount })).sort((a, b) => b.findingCount - a.findingCount || a.label.localeCompare(b.label))
+  const majorCategories = audience === 'agent' || !reportedMajorCategories.length ? derivedMajorCategories : reportedMajorCategories
+  const humanObservations = asArray(input.humanObservations).filter(isRecord).map((item, index) => {
+    const source = asRecord(item.source)
+    return {
+      id: asString(item.id) || `human-observation-${index + 1}`,
+      observation: asString(item.observation),
+      identity: asString(source.identity) || 'Unknown submitter',
+      role: humanize(asString(source.role) || 'unknown'),
+      observedAt: asString(source.observed_at) || null,
+      submittedAt: asString(source.submitted_at) || null,
+      directness: humanize(asString(source.directness) || 'not stated'),
+      professionalStatus: humanize(asString(source.professional_status) || 'not established'),
+      verificationStatus: humanize(asString(source.verification_status) || 'needs review'),
+    }
+  }).filter((item) => item.observation)
+  const transactionContext = asRecord(input.transactionContext)
   return {
     schemaVersion: asString(input.schemaVersion) || asString(input.schema_version) || 'unknown',
     mode: options.mode,
@@ -556,6 +678,20 @@ export function adaptPhase1ReasoningArtifact(
     openQuestionCount: findings.filter((finding) => finding.missingInformation.length > 0).length,
     audience,
     totalFindingCount: allFindings.length,
+    overview: {
+      majorCategories,
+      findingsWithSourcedPaths: asNumber(rawOverview.findings_with_sourced_paths) ?? findings.filter((finding) => finding.repairPaths.some((path) => path.status === 'priced')).length,
+      findingsWithoutSourcedPaths: asNumber(rawOverview.findings_without_sourced_paths) ?? findings.filter((finding) => !finding.repairPaths.some((path) => path.status === 'priced')).length,
+      decisionFactors: audience === 'agent'
+        ? [...new Set(findings.flatMap((finding) => finding.whatChangesDecision))].slice(0, 10)
+        : asStringArray(rawOverview.decision_factors),
+      immediateNextTasks: audience === 'agent'
+        ? [...new Set(findings.map((finding) => finding.nextStep))].slice(0, 8)
+        : asStringArray(rawOverview.immediate_next_tasks),
+      aggregateCostRule: asString(rawOverview.aggregate_cost_rule) || 'Finding and path ranges should not be summed without reconciling overlap and alternatives.',
+    },
+    humanObservations,
+    transactionPerspective: humanize(asString(transactionContext.perspective) || 'not stated'),
   }
 }
 

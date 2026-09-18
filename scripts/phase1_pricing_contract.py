@@ -310,11 +310,12 @@ def pricing_contract_metadata() -> dict[str, Any]:
         "range_required_for_material_findings": True,
         "no_source_no_price_claim": True,
         "live_price_retrieval_implemented": False,
+        "curated_national_fallback_catalog_implemented": True,
         "ui_wiring_implemented": False,
         "geography_hierarchy": GEOGRAPHY_LEVELS,
         "allowed_source_classes": sorted(PRICE_SOURCE_CLASSES),
         "allowed_review_statuses": sorted(PRICE_REVIEW_STATUSES),
-        "missing_source_behavior": "block_range_instead_of_fabricating_price",
+        "missing_source_behavior": "fall_back_through_supported_geographies_then_block_instead_of_fabricating_price",
         "contractor_quote_rule": "Contractor quotes remain separate from Shelter Prep ranges.",
         "history_rule": "Append immutable revision events; never silently overwrite prior ranges.",
     }

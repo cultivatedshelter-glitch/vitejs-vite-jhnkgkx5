@@ -146,7 +146,7 @@ test('real private PDF travels through authorized processing, validation, and th
     const submit = await requestJson(handle, 'http://test/api/phase1/processing-requests', {
       method: 'POST',
       headers: { authorization: 'Bearer authorized-token', 'content-type': 'application/json' },
-      body: JSON.stringify({ propertyId: PROPERTY_ID, evidenceReferences: upload.body.evidenceReferences, note: 'Review the exterior evidence.' }),
+      body: JSON.stringify({ propertyId: PROPERTY_ID, evidenceReferences: upload.body.evidenceReferences, note: 'Buyer asks us to review the exterior evidence.' }),
     })
     assert.equal(submit.status, 202)
     assert.equal(submit.body.processingStatus, 'queued')
@@ -154,11 +154,32 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.equal(completed.body.processingStatus, 'completed', completed.body.error)
     validatePhase1Artifact(completed.body.artifact, { propertyId: PROPERTY_ID })
     const observation = completed.body.artifact.atomicObservations[0]
+    const unitPricedArtifact = structuredClone(completed.body.artifact)
+    Object.assign(unitPricedArtifact.atomicObservations[0].finding_card, {
+      price_low: null,
+      price_high: null,
+      pricing_contract_status: 'BLOCKED_MISSING_SOURCED_RANGE',
+      path_pricing_status: 'PATH_PRICING_AVAILABLE_QUANTITY_REQUIRED',
+    })
+    assert.doesNotThrow(() => validatePhase1Artifact(unitPricedArtifact, { propertyId: PROPERTY_ID }))
     assert.ok(observation.finding_card.source_evidence.page_previews.length > 0)
     assert.equal(observation.finding_card.source_evidence.page_previews[0].relationship, 'source_page')
     assert.equal(observation.source_chronology.observation_date, '01/02/2030')
     assert.notEqual(observation.source_chronology.observation_date, repo.uploadedAt)
     assert.equal(observation.source_chronology.upload_date_used_as_observation_date, false)
+    assert.equal(completed.body.artifact.humanObservations.length, 1)
+    assert.equal(completed.body.artifact.humanObservations[0].observation, 'Buyer asks us to review the exterior evidence.')
+    assert.equal(completed.body.artifact.humanObservations[0].source.identity, 'authorized-token')
+    assert.equal(completed.body.artifact.humanObservations[0].source.professional_status, 'not_established')
+    assert.equal(completed.body.artifact.humanObservations[0].source.verification_status, 'source_material_needs_review')
+    assert.equal(completed.body.artifact.transactionContext.perspective, 'buyer')
+    assert.match(observation.finding_card.transaction_considerations[0], /longer-term reliability/i)
+    assert.ok(observation.finding_card.repair_paths.length > 0)
+    assert.ok(observation.finding_card.repair_paths[0].price_source_refs.length > 0)
+    assert.ok(!observation.finding_card.review_workflow.reasons.includes('missing_price_source'))
+    assert.ok(observation.finding_card.review_workflow.reasons.includes('sourced_path_range_needs_review'))
+    assert.ok(observation.finding_card.what_we_dont_know.some((value) => /contractor pricing remain unverified/i.test(value)))
+    assert.equal(completed.body.artifact.decisionOverview.total_findings, completed.body.artifact.atomicObservations.length)
 
     const adapter = await loadAdapter(root)
     const viewModel = adapter.adaptPhase1ReasoningArtifact(completed.body.artifact, { mode: 'live' })
@@ -166,6 +187,8 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.equal(viewModel.isFixture, false)
     assert.ok(viewModel.findings[0].known.length > 0)
     assert.ok(viewModel.findings[0].unknown.length > 0)
+    assert.ok(viewModel.findings[0].repairPaths[0].sources[0].url)
+    assert.equal(viewModel.humanObservations[0].professionalStatus, 'Not Established')
     assert.equal(notificationCalls.length, 1)
     assert.equal(notificationCalls[0][0], 'needs_review')
     assert.equal(notificationCalls[0][1].requestId, submit.body.id)
@@ -306,7 +329,7 @@ test('retained property context survives refresh and is rejected for a changed a
 
 test('review actions are server-authoritative, preserve source layers, and validate price provenance', async () => {
   const calls = []
-  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] }
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a' }] } }] }
   const repo = {
     async authenticate(token) { return token === 'authorized-token' ? { id: 'reviewer-1' } : null },
     async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
@@ -315,18 +338,25 @@ test('review actions are server-authoritative, preserve source layers, and valid
   const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact })
   const result = await service.review({
     token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
-    corrections: { title: 'Corrected title', price: { low: 1200, high: 2400, source_reference: 'Licensed contractor proposal dated 2026-09-18' } },
+    corrections: { title: 'Corrected title', price: { low: 1200, high: 2400, source_reference: 'Licensed contractor proposal dated 2026-09-18', geography: 'Portland metro', path_id: 'path-a' } },
     reason: 'Corrected against the attached proposal.',
   })
   assert.equal(result.status, 'human_reviewed')
   assert.equal(calls[0].newValue.source_layer_preserved, true)
   assert.equal(calls[0].newValue.ai_draft_preserved, true)
   assert.equal(calls[0].newValue.delivery_eligible, true)
-  assert.deepEqual(artifact, { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] })
+  assert.deepEqual(artifact, { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a' }] } }] })
   await assert.rejects(
     service.review({
       token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
       corrections: { price: { low: 2400, high: 1200 } }, reason: 'Bad range.',
+    }),
+    (error) => error.code === 'invalid_price_correction',
+  )
+  await assert.rejects(
+    service.review({
+      token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
+      corrections: { price: { low: 1200, high: 2400, source_reference: 'Local proposal', geography: 'Portland metro' } }, reason: 'Missing path.',
     }),
     (error) => error.code === 'invalid_price_correction',
   )

@@ -49,6 +49,9 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     'Environmental context',
     'Contractor input',
     'does not verify this finding',
+    'Likely paths',
+    'What would change the decision',
+    'Pricing source',
     'Range history',
     'Related findings',
     'Approve',
@@ -59,7 +62,7 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     assert.match(component, new RegExp(required, 'i'))
   }
   assert.match(component, /artifact\.findings\.length/)
-  assert.match(component, /finding\.price\.label/)
+  assert.match(component, /path\.priceLabel/)
   assert.match(component, /finding\.reviewStatusLabel/)
   assert.match(component, /finding\.weather &&/)
   assert.match(component, /loadPhase1ReasoningArtifact/)
@@ -71,7 +74,7 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   assert.match(component, /function AgentView/)
   assert.match(component, /audienceFromLocation/)
   assert.match(component, /reviewPhase1Finding/)
-  assert.match(component, /Source-supported price correction/)
+  assert.match(component, /Source-supported path price correction/)
   assert.match(component, /Evidence relationship/)
   assert.match(component, /Under review/)
   assert.match(component, /Reviewed by Shelter Prep/)
@@ -94,6 +97,9 @@ test('agent drafts are withheld at the server boundary and reviewer queue stays 
   assert.match(repository, /request\.status === 'completed' \? agentArtifact\(artifact/)
   assert.match(repository, /request\.status === 'needs_review'[\s\S]*'under_review'/)
   assert.match(repository, /delete copy\.source\?\.provenance/)
+  assert.match(repository, /card\.released_to_agent = true/)
+  const agentProjection = repository.slice(repository.indexOf('function agentArtifact'), repository.indexOf('export function normalizePropertyAddress'))
+  assert.doesNotMatch(agentProjection, /reviewState[,;]/)
   assert.match(service, /repository\.isReviewer/)
   assert.match(service, /Reviewer access is required/)
 })
@@ -119,13 +125,13 @@ test('evidence stays visible until upload and request creation succeed', () => {
   assert.match(component, /else \{[\s\S]*setStep\('evidence'\)[\s\S]*setEvidenceError\(message\)/)
 })
 
-test('layout is mobile-first with stable controls, price-first stacking, and one primary action class', () => {
+test('layout is mobile-first with stable controls, evidence-first stacking, and one primary action class', () => {
   assert.match(css, /@media \(max-width: 720px\)/)
   assert.match(css, /\.phase1-primary[\s\S]*?min-height: 52px/)
   assert.match(css, /\.phase1-actions[\s\S]*?position: fixed/)
   assert.match(css, /\.phase1-evidence-grid[\s\S]*?grid-template-columns: 1fr 1fr/)
-  assert.match(css, /grid-template-areas: "aside" "main"/)
-  assert.match(component, /Estimated local repair cost/)
-  assert.match(component, /View pricing sources/)
+  assert.match(css, /grid-template-areas: "main" "aside"/)
+  assert.match(component, /Estimated repair cost/)
+  assert.match(component, /Pricing source/)
   assert.doesNotMatch(css, /gradient\(/)
 })
