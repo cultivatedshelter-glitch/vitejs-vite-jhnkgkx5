@@ -1,6 +1,6 @@
 # Current Dev State
 
-Date: 2026-09-17
+Date: 2026-09-18
 
 ## Checkout
 
@@ -341,3 +341,18 @@ Date: 2026-09-17
 - Production verification against `lbyzkvbtolpwrvjfbhlq` completed through the existing authenticated API and reused the already-uploaded private evidence object. The new run persisted one artifact, reached pipeline status `needs_review` and stage `human_review`, rendered 31 findings in the live UI, and sent one `needs_review` reviewer email with a recorded provider message.
 - The original failed run persisted no model artifact. Its evidence remains durably linked to both the failed run and the successful verification run, so no orphaned evidence or partial artifact was created by this failure.
 - `npm test` passes with 66 tests, `npm run build` passes, and `git diff --check` passes. The repository defines no lint script.
+
+## Round 1R Evidence-First Review, Location, And Environmental Context
+
+- Added source-bound `affected_location` records to every atomic observation and finding card. Orientation is emitted only from explicit report text or an explicit linked caption; unsupported orientation remains unknown with a targeted confirmation prompt. Low-confidence orientation is not promoted to fact.
+- Added relevant-only historical weather enrichment through Open-Meteo. It geocodes the Property at ZIP or city precision, compares a three-day pre-inspection window through the actual observation date, preserves provider/grid provenance and units, distinguishes wet and dry timing, records explicit lookup failures, and states that correlation does not establish causation.
+- Reworked the live reviewer view around primary evidence, inspector text/recommendation, page/item/section/document provenance, structured location, Shelter Prep interpretation, Known/Unknown, pricing status, environmental context, review reason, and one recommended next step. Findings are grouped into Quick Review, Careful Review, and Waiting for Evidence.
+- Added authenticated Approve, Edit / Correct, Needs More Information, and Reject endpoints over the existing server-authoritative finding-review RPC. Review events retain reviewer identity, timestamp, artifact version, approved fields, delivery eligibility, and correction overlays without mutating the original source or persisted AI artifact.
+- Added a separate agent view. Before review it reports only that the findings are under review. After review it exposes only human-reviewed, delivery-eligible findings and retains the issue, meaning, cost status, Known/Unknown, evidence reference, Next Step, and rationale without internal reviewer/parser machinery.
+- Hardened the existing profile boundary with `20260918183427_phase1_profile_role_hardening.sql`. Authenticated clients may create only an active viewer profile and cannot change `role` or `active`; trusted reviewer assignment remains server-administered. The migration was submitted through the confirmed production SQL editor. A destructive live role-mutation test was intentionally not performed.
+- Production verification used only project `lbyzkvbtolpwrvjfbhlq` and reused the existing private report reference. Request `1b5c267f-a1d2-4579-828d-1399934e7197` completed with schema `shelter-prep-phase1-round1g-source-integration-contract.v1`, 31 atomic observations, and 31 persisted finding rows. No fixture marker was present.
+- Production location results: 2 explicit orientations, 29 unknown orientations, zero inferred-low-confidence orientations, and 5 findings needing location confirmation. All 31 findings contain the source evidence panel; the current parser did not produce a confidently linked primary photo for this report format.
+- Production review routing produced 7 quick-review, 19 careful-review, and 5 waiting-for-evidence findings. Thirteen findings were weather-relevant; all 13 received an available historical result and none failed lookup.
+- The live adapter produces 31 reviewer findings, 31 justified next steps, 13 environmental panels, zero raw source-file identifiers in human-facing evidence references, and zero agent findings before human approval. All 31 prices remain truthfully blocked because no defensible localized pricing source is connected.
+- `npm test` passes with 73 tests, the Round 1 Python self-test passes, `npm run build` passes, and `git diff --check` passes. The repository defines no lint script.
+- A real timed 10-15 minute human review was not performed, so no timing claim is made. The production pilot Auth user currently has no `profiles` row and therefore correctly lacks owner/admin review authority; explicit server-side role provisioning is still required before that identity can approve production findings.

@@ -5,6 +5,7 @@ import test from 'node:test'
 const MIGRATION_PATH = 'supabase/migrations/20260829041051_phase1_inspection_intelligence_schema.sql'
 const STORAGE_MIGRATION_PATH = 'supabase/migrations/20260917112924_phase1_evidence_storage.sql'
 const RUNTIME_GRANTS_MIGRATION_PATH = 'supabase/migrations/20260917113200_phase1_runtime_grants.sql'
+const PROFILE_HARDENING_MIGRATION_PATH = 'supabase/migrations/20260918183427_phase1_profile_role_hardening.sql'
 
 function migrationSql() {
   return readFileSync(MIGRATION_PATH, 'utf8')
@@ -120,6 +121,18 @@ test('review transitions are server-authoritative and audit producing', () => {
     assert.match(body, /needs_review/i)
     assert.match(body, /rejected/i)
   }
+})
+
+test('authenticated clients cannot self-assign or reactivate trusted reviewer roles', () => {
+  const sql = readFileSync(PROFILE_HARDENING_MIGRATION_PATH, 'utf8')
+
+  assert.match(sql, /before insert or update on public\.profiles/i)
+  assert.match(sql, /new\.role <> 'viewer'/i)
+  assert.match(sql, /new\.role is distinct from old\.role/i)
+  assert.match(sql, /new\.active is distinct from old\.active/i)
+  assert.match(sql, /auth\.uid\(\).*is not null/is)
+  assert.match(sql, /security invoker/i)
+  assert.match(sql, /revoke all[\s\S]*from authenticated/i)
 })
 
 test('contractor and agent outputs require reviewed source material', () => {
