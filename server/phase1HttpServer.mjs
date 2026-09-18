@@ -29,6 +29,21 @@ export function createPhase1HttpHandler(service) {
       }
       const match = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)$/)
       if (request.method === 'GET' && match) return json(await service.status({ token: token(request), requestId: decodeURIComponent(match[1]) }))
+      const sourceMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/source-document$/)
+      if (request.method === 'GET' && sourceMatch) {
+        const document = await service.sourceDocument({ token: token(request), requestId: decodeURIComponent(sourceMatch[1]) })
+        return new Response(document.body, {
+          status: 200,
+          headers: {
+            'content-type': document.contentType || 'application/pdf',
+            'content-disposition': `inline; filename="${document.filename.replace(/["\\\r\n]/g, '-') || 'inspection-report.pdf'}"`,
+            'cache-control': 'private, no-store',
+          },
+        })
+      }
+      if (request.method === 'GET' && url.pathname === '/api/phase1/review-queue') {
+        return json(await service.reviewQueue({ token: token(request) }))
+      }
       const reviewMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/findings\/([^/]+)\/review$/)
       if (request.method === 'POST' && reviewMatch) {
         const body = await request.json()

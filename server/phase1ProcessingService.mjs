@@ -10,7 +10,7 @@ export class ProcessingError extends Error {
 
 export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
   const REVIEW_ACTIONS = new Set(['approve', 'edit', 'needs_more_info', 'reject'])
-  const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'likely_trade', 'price', 'evidence_relationship'])
+  const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'rationale', 'likely_trade', 'price', 'evidence_relationship', 'confirmed_evidence'])
   async function requireActor(token) {
     if (!token) throw new ProcessingError('authorization_failed', 'Sign in is required to process property evidence.', 401)
     const actor = await repository.authenticate(token)
@@ -91,6 +91,19 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return request
   }
 
+  async function sourceDocument({ token, requestId }) {
+    const actor = await requireActor(token)
+    const document = await repository.getSourceDocument({ actor, requestId })
+    if (!document) throw new ProcessingError('source_unavailable', 'The source report is not available.', 404)
+    return document
+  }
+
+  async function reviewQueue({ token }) {
+    const actor = await requireActor(token)
+    if (!await repository.isReviewer(actor.id)) throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
+    return { items: await repository.listReviewQueue({ actor }) }
+  }
+
   async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [] }) {
     const actor = await requireActor(token)
     if (!REVIEW_ACTIONS.has(action)) throw new ProcessingError('invalid_review_action', 'Choose Approve, Edit / Correct, Needs More Information, or Reject.')
@@ -123,8 +136,21 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     }
     const result = await repository.reviewFinding({ actor, requestId, observationId, action, newValue, reason: String(reason).trim() })
     if (!result) throw new ProcessingError('finding_not_found', 'This finding is not available for review.', 404)
-    return result
+    const release = repository.releaseIfReviewComplete
+      ? await repository.releaseIfReviewComplete({ actor, requestId })
+      : { ready: false, released: false }
+    if (release.released && notifications) {
+      try {
+        await notifications.notifyReviewedResult({ requestId, artifact: request.artifact })
+      } catch (notificationError) {
+        logger.error('Phase 1 reviewed-result delivery could not be recorded.', {
+          requestId,
+          error: notificationError instanceof Error ? notificationError.message : 'Notification failed.',
+        })
+      }
+    }
+    return { ...result, release }
   }
 
-  return { resolveProperty, upload, submit, status, review }
+  return { resolveProperty, upload, submit, status, sourceDocument, reviewQueue, review }
 }

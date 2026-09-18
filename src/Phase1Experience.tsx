@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { loadPhase1ProcessingRequest, processPhase1Evidence, resolvePhase1Property, reviewPhase1Finding, type LiveProcessingState, type Phase1ReviewAction } from './phase1ProcessingClient'
+import { loadPhase1ProcessingRequest, loadPhase1ReviewQueue, openPhase1SourceDocument, processPhase1Evidence, resolvePhase1Property, reviewPhase1Finding, type LiveProcessingState, type Phase1ReviewAction, type Phase1ReviewQueueItem } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
@@ -25,6 +25,10 @@ function reviewRequestFromLocation() {
 
 function audienceFromLocation(): 'reviewer' | 'agent' {
   return new URLSearchParams(window.location.search).get('audience') === 'agent' ? 'agent' : 'reviewer'
+}
+
+function isReviewQueueLocation() {
+  return /^\/review-queue\/?$/.test(window.location.pathname)
 }
 
 function PhaseHeader({ step, email, onSignOut }: { step: Step; email?: string; onSignOut?: () => void }) {
@@ -163,7 +167,7 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
   onContinue: () => void
   onBack: () => void
 }) {
-  const ready = state === 'completed'
+  const ready = state === 'completed' || state === 'ready'
   const failed = state === 'failed'
   const statusCopy: Record<ProcessingState, string> = {
     idle: 'Uploading your evidence securely.',
@@ -171,9 +175,11 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
     queued: 'Your review is ready to begin.',
     processing: 'Reviewing and organizing the evidence.',
     completed: 'Your repair summary is ready.',
+    under_review: 'Shelter Prep is reviewing the findings before release.',
+    ready: 'Your reviewed result is ready.',
     failed: error,
   }
-  const activeIndex = state === 'idle' ? 0 : ['uploaded', 'queued', 'processing'].includes(state) ? 1 : ready ? 5 : -1
+  const activeIndex = state === 'idle' ? 0 : ['uploaded', 'queued', 'processing', 'under_review'].includes(state) ? 1 : ['completed', 'ready'].includes(state) ? 5 : -1
   const tasks = ['Uploading files', 'Reading inspection report', 'Finding and grouping issues', 'Checking relevant context', 'Building your summary']
   return (
     <main className="phase1-main phase1-processing" aria-live="polite">
@@ -230,9 +236,33 @@ function TextList({ values, empty }: { values: string[]; empty: string }) {
   return <ul className="phase1-detail-list">{values.map((value) => <li key={value}>{value}</li>)}</ul>
 }
 
-function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onReview }: {
+function ReviewQueue() {
+  const [items, setItems] = useState<Phase1ReviewQueueItem[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    void loadPhase1ReviewQueue().then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'The review queue could not be loaded.')).finally(() => setLoading(false))
+  }, [])
+  const groups = [
+    ['needs_review', 'Needs Review'],
+    ['waiting_for_evidence', 'Waiting for Evidence'],
+    ['failed', 'Failed'],
+    ['reviewed', 'Reviewed'],
+    ['processing', 'Processing'],
+  ] as const
+  return <main className="phase1-main phase1-review-queue"><p className="phase1-kicker">Internal review</p><h1>Review queue</h1><p className="phase1-lede">Open the next Property that needs a human decision.</p>
+    {loading && <p>Loading review work…</p>}{error && <p className="phase1-inline-error" role="alert">{error}</p>}
+    {!loading && !error && groups.map(([status, label]) => {
+      const rows = items.filter((item) => item.queueStatus === status)
+      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings</span><span>{item.reviewPriority.replaceAll('_', ' ')}</span><span>{new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(-Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86_400_000)), 'day')}</span><a href={`/properties/${encodeURIComponent(item.propertyId)}/review?request=${encodeURIComponent(item.requestId)}`}>Review</a></article>)}</section>
+    })}
+  </main>
+}
+
+function FindingStep({ finding, isFixture, requestId, reviewing, reviewError, onBack, onReview }: {
   finding: Phase1FindingViewModel
   isFixture: boolean
+  requestId: string | null
   reviewing: boolean
   reviewError: string
   onBack: () => void
@@ -245,7 +275,9 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
   const [known, setKnown] = useState(finding.known.join('\n'))
   const [unknown, setUnknown] = useState(finding.unknown.join('\n'))
   const [location, setLocation] = useState(finding.affectedLocation.locationText)
+  const [orientation, setOrientation] = useState(finding.affectedLocation.orientation === 'Unknown' ? '' : finding.affectedLocation.orientation)
   const [nextStep, setNextStep] = useState(finding.nextStep)
+  const [rationale, setRationale] = useState(finding.whyNextStep)
   const [likelyTrade, setLikelyTrade] = useState(finding.likelyTrade)
   const [evidenceRelationship, setEvidenceRelationship] = useState('')
   const [priceLow, setPriceLow] = useState('')
@@ -264,8 +296,9 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
       interpretation: interpretation.trim(),
       known: known.split('\n').map((value) => value.trim()).filter(Boolean),
       unknown: unknown.split('\n').map((value) => value.trim()).filter(Boolean),
-      affected_location: { location_text: location.trim(), source_basis: 'human_entered' },
+      affected_location: { location_text: location.trim(), orientation: orientation.trim() || null, source_basis: 'human_entered' },
       next_step: nextStep.trim(),
+      rationale: rationale.trim(),
       likely_trade: likelyTrade.trim(),
       evidence_relationship: evidenceRelationship.trim(),
       ...(price ? { price } : {}),
@@ -274,7 +307,7 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
       corrections,
       reason,
       fieldsApproved: reviewAction === 'approve'
-        ? ['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'likely_trade', 'evidence_relationship']
+        ? ['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'rationale', 'likely_trade', 'evidence_relationship']
         : [],
     })
   }
@@ -314,6 +347,10 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
               ? <><div className="phase1-photo-placeholder">Linked report photo</div><p>{finding.sourceEvidence.primaryPhoto.caption || 'No caption was supplied.'}</p></>
               : <p className="phase1-quiet-state">Photo evidence: No report photo was clearly linked to this finding.</p>}
             {finding.sourceEvidence.additionalEvidenceCount > 0 && <details><summary>Additional evidence ({finding.sourceEvidence.additionalEvidenceCount})</summary><p>Additional linked source records remain available for review.</p></details>}
+            {finding.sourceEvidence.confirmedEvidence && <p><strong>Confirmed evidence</strong><br />{finding.sourceEvidence.confirmedEvidence.relationship}</p>}
+            {finding.sourceEvidence.candidatePhotos.length > 0 && <div className="phase1-candidate-evidence"><h3>Likely related photos</h3>{finding.sourceEvidence.candidatePhotos.map((candidate) => <article key={candidate.imageId}><strong>{candidate.strength === 'strong' ? 'Strong layout association' : 'Possible layout association'} - reviewer confirmation required</strong><p>{candidate.caption || `Report image on page ${candidate.page ?? 'unknown'}.`} {candidate.reason}</p><button type="button" disabled={reviewing} onClick={() => onReview('edit', { corrections: { evidence_relationship: `Confirmed report image ${candidate.imageId} as supporting evidence.`, confirmed_evidence: { image_id: candidate.imageId, source_page: candidate.page, association_basis: candidate.reason } }, reason: 'Reviewer confirmed the candidate evidence relationship against the source report.' })}>Confirm photo link</button></article>)}</div>}
+            {finding.sourceEvidence.pagePreviews.length > 0 && <details><summary>Source and nearby page previews</summary>{finding.sourceEvidence.pagePreviews.map((preview) => <article className="phase1-page-preview" key={`${preview.page}-${preview.relationship}`}><strong>Page {preview.page} · {preview.relationship.replaceAll('_', ' ')}</strong><p>{preview.textExcerpt}</p>{requestId && <button type="button" onClick={() => void openPhase1SourceDocument(requestId, preview.page)}>View page {preview.page}</button>}</article>)}</details>}
+            {requestId && finding.sourceEvidence.fullReportAvailable && <button className="phase1-source-button" type="button" onClick={() => void openPhase1SourceDocument(requestId)}>View full report</button>}
           </section>
           <section className="phase1-source-evidence">
             <p className="phase1-kicker">Inspector reported</p>
@@ -353,7 +390,9 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
               <label>Known, one per line<textarea value={known} onChange={(event) => setKnown(event.target.value)} /></label>
               <label>Unknown, one per line<textarea value={unknown} onChange={(event) => setUnknown(event.target.value)} /></label>
               <label>Affected location<input value={location} onChange={(event) => setLocation(event.target.value)} /></label>
+              <label>Orientation<input value={orientation} onChange={(event) => setOrientation(event.target.value)} placeholder="Unknown unless source or reviewer confirms it" /></label>
               <label>Next step<textarea value={nextStep} onChange={(event) => setNextStep(event.target.value)} /></label>
+              <label>Why this next step<textarea value={rationale} onChange={(event) => setRationale(event.target.value)} /></label>
               <label>Likely trade<input value={likelyTrade} onChange={(event) => setLikelyTrade(event.target.value)} /></label>
               <label>Evidence relationship<textarea value={evidenceRelationship} onChange={(event) => setEvidenceRelationship(event.target.value)} placeholder="Describe how the linked evidence supports or limits this finding." /></label>
               <fieldset className="phase1-price-correction"><legend>Source-supported price correction (optional)</legend><label>Low<input type="number" min="0" value={priceLow} onChange={(event) => setPriceLow(event.target.value)} /></label><label>High<input type="number" min="0" value={priceHigh} onChange={(event) => setPriceHigh(event.target.value)} /></label><label>Source reference<input value={priceSource} onChange={(event) => setPriceSource(event.target.value)} /></label></fieldset>
@@ -371,6 +410,10 @@ function FindingStep({ finding, isFixture, reviewing, reviewError, onBack, onRev
 function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
   if (!artifact.findings.length) return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Under review</p><h1>{artifact.totalFindingCount} repair items identified</h1><p className="phase1-lede">Shelter Prep is reviewing the findings before release.</p></main>
   return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Reviewed by Shelter Prep</p><h1>{artifact.findings.length} reviewed repair items.</h1>{artifact.findings.map((finding) => <article className="phase1-agent-finding" key={finding.id}><h2>{finding.title}</h2><p><strong>What this means</strong>{finding.interpretation}</p><p><strong>Estimated local repair cost</strong>{finding.price.label}</p><TextList values={finding.known} empty="No reviewed known facts were released." /><p><strong>What is still unknown</strong>{finding.unknown.join(' ') || 'No reviewed unknowns were released.'}</p><p><strong>Next step</strong>{finding.nextStep}</p><p><strong>Why</strong>{finding.whyNextStep}</p><p><strong>Relevant evidence</strong>{finding.sourceEvidence.documentName}{finding.sourceEvidence.page ? `, page ${finding.sourceEvidence.page}` : ''}{finding.sourceEvidence.itemNumber ? `, item ${finding.sourceEvidence.itemNumber}` : ''}</p><small>Reviewed by Shelter Prep</small></article>)}</main>
+}
+
+function AgentSubmissionStatus({ count }: { count: number }) {
+  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Under review</p><h1>{count} repair {count === 1 ? 'item' : 'items'} identified</h1><p className="phase1-lede">Shelter Prep is reviewing the findings before release.</p></main>
 }
 
 function GapStep({ finding, onEvidence, onSkip }: {
@@ -441,9 +484,12 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [processingState, setProcessingState] = useState<ProcessingState>('idle')
   const [processingError, setProcessingError] = useState('')
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
+  const [agentSubmissionCount, setAgentSubmissionCount] = useState<number | null>(null)
   const [findingIndex, setFindingIndex] = useState(0)
   const reviewRequestId = useMemo(() => fixtureMode ? null : reviewRequestFromLocation(), [fixtureMode])
   const audience = useMemo(() => audienceFromLocation(), [])
+  const [resolvedAudience, setResolvedAudience] = useState<'reviewer' | 'agent'>(audience)
+  const reviewQueue = useMemo(() => !fixtureMode && isReviewQueueLocation(), [fixtureMode])
   const [activeRequestId, setActiveRequestId] = useState<string | null>(reviewRequestId)
   const [reviewing, setReviewing] = useState(false)
   const [reviewError, setReviewError] = useState('')
@@ -494,11 +540,18 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
         setProcessingError(request.error || 'Processing failed. Review the request before retrying.')
         return
       }
-      if (request.processingStatus !== 'completed' || !request.artifact) {
+      if (request.processingStatus === 'under_review') {
+        setAgentSubmissionCount(request.totalFindingCount || 0)
+        setProcessingState('under_review')
+        return
+      }
+      if (!['completed', 'ready'].includes(request.processingStatus) || !request.artifact) {
         setProcessingState(request.processingStatus)
         return
       }
-      const result = adaptPhase1ReasoningArtifact(request.artifact, { mode: 'live', audience })
+      const responseAudience = audience === 'agent' ? 'agent' : request.audience || audience
+      setResolvedAudience(responseAudience)
+      const result = adaptPhase1ReasoningArtifact(request.artifact, { mode: 'live', audience: responseAudience })
       const reviewAddress = result.propertyAddress || 'Property review'
       const context = { id: request.propertyId, address: reviewAddress, userId: session.user.id }
       setAddress(reviewAddress)
@@ -570,7 +623,14 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
           },
         })
         setActiveRequestId(response.id)
-        result = adaptPhase1ReasoningArtifact(response.artifact, { mode: 'live', audience })
+        if (response.processingStatus === 'under_review') {
+          setAgentSubmissionCount(response.totalFindingCount || 0)
+          setProcessingState('under_review')
+          return
+        }
+        const responseAudience = audience === 'agent' ? 'agent' : response.audience || audience
+        setResolvedAudience(responseAudience)
+        result = adaptPhase1ReasoningArtifact(response.artifact, { mode: 'live', audience: responseAudience })
       }
       setArtifact(result)
       setFindingIndex(0)
@@ -629,7 +689,9 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
 
   if (!fixtureMode && !authReady) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Checking your session…</p></main></div>
   if (!fixtureMode && !session) return <SignInStep onSignedIn={setSession} />
-  if (audience === 'agent' && artifact) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} /><AgentView artifact={artifact} /></div>
+  if (reviewQueue) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={() => void signOut()} /><ReviewQueue /></div>
+  if (agentSubmissionCount !== null) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={() => void signOut()} /><AgentSubmissionStatus count={agentSubmissionCount} /></div>
+  if (resolvedAudience === 'agent' && artifact) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} /><AgentView artifact={artifact} /></div>
 
   return (
     <div className="phase1-shell">
@@ -638,7 +700,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       {step === 'evidence' && <EvidenceStep files={files} note={note} submitting={evidenceSubmitting} error={evidenceError} onFiles={(nextFiles) => { setFiles(nextFiles); setEvidenceError('') }} onNote={setNote} onContinue={() => void organizeEvidence()} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
       {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={(index) => { setFindingIndex(index); setStep('finding') }} />}
-      {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} isFixture={artifact.isFixture} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onReview={(action, payload) => void reviewFinding(action, payload)} />}
+      {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onReview={(action, payload) => void reviewFinding(action, payload)} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}
     </div>

@@ -81,6 +81,21 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   const agentView = component.slice(component.indexOf('function AgentView'), component.indexOf('function GapStep'))
   assert.match(agentView, /finding\.nextStep/)
   assert.doesNotMatch(agentView, /reviewerId|parser|review queue|source_file_id|sha256/)
+  assert.match(component, /function ReviewQueue/)
+  assert.match(component, /Likely related photos/)
+  assert.match(component, /Confirm photo link/)
+  assert.match(component, /Source and nearby page previews/)
+  assert.match(component, /View full report/)
+})
+
+test('agent drafts are withheld at the server boundary and reviewer queue stays role-gated', async () => {
+  const repository = await readFile(new URL('../server/phase1SupabaseRepository.mjs', import.meta.url), 'utf8')
+  const service = await readFile(new URL('../server/phase1ProcessingService.mjs', import.meta.url), 'utf8')
+  assert.match(repository, /request\.status === 'completed' \? agentArtifact\(artifact/)
+  assert.match(repository, /request\.status === 'needs_review'[\s\S]*'under_review'/)
+  assert.match(repository, /delete copy\.source\?\.provenance/)
+  assert.match(service, /repository\.isReviewer/)
+  assert.match(service, /Reviewer access is required/)
 })
 
 test('secondary evidence, sources, context, and history use collapsed disclosure controls', () => {

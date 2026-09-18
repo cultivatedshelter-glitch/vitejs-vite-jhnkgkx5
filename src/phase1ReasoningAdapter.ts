@@ -50,6 +50,17 @@ export type Phase1SourceEvidence = {
   section: string
   primaryPhoto: { imageId: string; caption: string; page: number | null; linked: boolean } | null
   additionalEvidenceCount: number
+  candidatePhotos: Array<{
+    imageId: string
+    caption: string
+    page: number | null
+    strength: 'strong' | 'possible'
+    reason: string
+    confirmationRequired: boolean
+  }>
+  pagePreviews: Array<{ page: number; relationship: string; textExcerpt: string }>
+  fullReportAvailable: boolean
+  confirmedEvidence: { imageId: string; relationship: string } | null
 }
 
 export type Phase1ReviewDecision = {
@@ -357,6 +368,7 @@ function normalizeFinding(
   const reviewEvent = asRecord(reviewState.event)
   const reviewNewValue = asRecord(reviewEvent.new_value)
   const corrections = asRecord(reviewNewValue.corrections)
+  const confirmedEvidence = asRecord(corrections.confirmed_evidence)
   const id = asString(entry.id) || asString(entry.finding_id) || `finding-${index + 1}`
   const title = asString(corrections.title) || asString(card.finding_title) || asString(source.inspector_statement) || `Inspection finding ${index + 1}`
   const sourceKnown = asStringArray(card.what_we_know)
@@ -417,7 +429,7 @@ function normalizeFinding(
     missingInformation,
     nextStep: recommended || explicitMissing || 'Human review is needed to choose the next step.',
     nextStepOwner: asString(card.next_step_owner) || 'human reviewer',
-    whyNextStep: asString(card.why_next_step) || 'The artifact did not provide a next-step rationale.',
+    whyNextStep: asString(corrections.rationale) || asString(card.why_next_step) || 'The artifact did not provide a next-step rationale.',
     reviewStatus: rawReviewStatus,
     reviewStatusLabel: reviewLabel(rawReviewStatus),
     reviewPriority: (['quick_review', 'careful_review', 'waiting_for_evidence'].includes(asString(reviewWorkflow.priority))
@@ -436,9 +448,11 @@ function normalizeFinding(
     },
     likelyTrade: asString(corrections.likely_trade) || asString(card.next_step_owner) || 'Human reviewer',
     affectedLocation: {
-      orientation: asString(affectedLocation.orientation) || 'Unknown',
-      orientationStatus: (['explicit', 'inferred_low_confidence', 'unknown'].includes(asString(affectedLocation.orientation_status))
-        ? asString(affectedLocation.orientation_status)
+      orientation: asString(correctedLocation.orientation) || asString(affectedLocation.orientation) || 'Unknown',
+      orientationStatus: (hasCorrectedLocation && asString(correctedLocation.orientation)
+        ? 'explicit'
+        : ['explicit', 'inferred_low_confidence', 'unknown'].includes(asString(affectedLocation.orientation_status))
+          ? asString(affectedLocation.orientation_status)
         : 'unknown') as Phase1AffectedLocation['orientationStatus'],
       area: asString(affectedLocation.area) || 'Unknown',
       level: asString(affectedLocation.level) || 'Unknown',
@@ -464,6 +478,24 @@ function normalizeFinding(
         linked: asString(primaryPhoto.link_status) === 'linked',
       } : null,
       additionalEvidenceCount: asNumber(sourceEvidence.additional_evidence_count) ?? 0,
+      candidatePhotos: asArray(sourceEvidence.candidate_photos).filter(isRecord).map((candidate) => ({
+        imageId: asString(candidate.image_id),
+        caption: asString(candidate.caption),
+        page: asNumber(candidate.source_page),
+        strength: (asString(candidate.association_strength) === 'strong' ? 'strong' : 'possible') as 'strong' | 'possible',
+        reason: asString(candidate.association_reason),
+        confirmationRequired: candidate.confirmation_required !== false,
+      })).filter((candidate) => candidate.imageId),
+      pagePreviews: asArray(sourceEvidence.page_previews).filter(isRecord).map((preview) => ({
+        page: asNumber(preview.page) ?? 0,
+        relationship: asString(preview.relationship),
+        textExcerpt: asString(preview.text_excerpt),
+      })).filter((preview) => preview.page > 0 && preview.textExcerpt),
+      fullReportAvailable: sourceEvidence.full_report_available === true,
+      confirmedEvidence: asString(confirmedEvidence.image_id) ? {
+        imageId: asString(confirmedEvidence.image_id),
+        relationship: asString(corrections.evidence_relationship) || 'Reviewer confirmed this evidence relationship.',
+      } : null,
     },
     evidenceReferences: evidenceRefStrings(card, entry),
     sources,

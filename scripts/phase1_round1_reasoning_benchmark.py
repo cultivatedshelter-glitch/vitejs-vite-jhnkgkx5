@@ -1265,6 +1265,10 @@ def evidence_maps(cache: dict[str, Any]) -> dict[str, Any]:
         "images_by_id": images_by_id,
         "visual_records_by_hash": visual_records_by_hash,
         "source_document": cache.get("sourceDocument", {}),
+        "page_text_by_page": cache.get("pageTextByPage", {}),
+        "all_captions": cache.get("photoCaptionIndex", []),
+        "all_images": cache.get("extractedImageManifest", {}).get("images", []),
+        "all_findings": cache.get("normalizedFindings", []),
     }
 
 
@@ -1282,6 +1286,77 @@ def linked_visuals_for_finding(finding: dict[str, Any], maps: dict[str, Any]) ->
             image_hash = image.get("sha256", "")
             visuals.extend(maps["visual_records_by_hash"].get(image_hash, []))
     return captions, images, visuals
+
+
+def bounded_page_excerpt(value: str, limit: int = 1800) -> str:
+    text = clean_inline(value)
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def review_evidence_context(finding: dict[str, Any], maps: dict[str, Any], linked_image_ids: set[str]) -> dict[str, Any]:
+    source_page = finding.get("source_page")
+    page_count = int(maps.get("source_document", {}).get("pageCount") or 0)
+    source_pages = [int(page) for page in finding.get("provenance", {}).get("source_pages", []) if page]
+    requested_pages: list[tuple[int, str]] = []
+    if source_page:
+        requested_pages.append((int(source_page), "source_page"))
+        for page in source_pages:
+            if page != source_page:
+                requested_pages.append((page, "continued_source_page"))
+        if int(source_page) + 1 <= page_count:
+            requested_pages.append((int(source_page) + 1, "next_page"))
+        if int(source_page) > 1:
+            requested_pages.append((int(source_page) - 1, "previous_page"))
+
+    previews = []
+    seen_pages: set[int] = set()
+    for page, relationship in requested_pages:
+        if page in seen_pages or len(previews) >= 4:
+            continue
+        record = maps.get("page_text_by_page", {}).get(str(page), {})
+        excerpt = bounded_page_excerpt(record.get("text", ""))
+        if excerpt:
+            previews.append({"page": page, "relationship": relationship, "text_excerpt": excerpt})
+            seen_pages.add(page)
+
+    next_finding_pages = sorted(
+        int(item.get("source_page"))
+        for item in maps.get("all_findings", [])
+        if item.get("source_page") and source_page and int(item.get("source_page")) > int(source_page)
+    )
+    next_finding_page = next_finding_pages[0] if next_finding_pages else page_count + 1
+    captions_by_id = {caption.get("id"): caption for caption in maps.get("all_captions", [])}
+    candidates = []
+    for image in maps.get("all_images", []):
+        image_id = image.get("id", "")
+        image_page = image.get("source_page")
+        if not image_id or image_id in linked_image_ids or not source_page or not image_page:
+            continue
+        if int(image_page) not in {int(source_page), int(source_page) + 1}:
+            continue
+        caption = captions_by_id.get(image.get("related_photo_caption_id"), {})
+        follows_without_intervening_finding = int(image_page) == int(source_page) + 1 and int(image_page) < next_finding_page
+        strength = "strong" if follows_without_intervening_finding else "possible"
+        reason = (
+            "Image block follows this finding on the next page with no intervening finding."
+            if strength == "strong"
+            else "Image appears on the source or adjacent page; the report layout alone does not confirm the relationship."
+        )
+        candidates.append({
+            "image_id": image_id,
+            "caption": caption.get("caption", ""),
+            "source_page": int(image_page),
+            "association_strength": strength,
+            "association_reason": reason,
+            "confirmation_required": True,
+        })
+
+    candidates.sort(key=lambda item: (0 if item["association_strength"] == "strong" else 1, item["source_page"], item["image_id"]))
+    return {
+        "candidate_photos": candidates[:8],
+        "page_previews": previews,
+        "full_report_available": bool(maps.get("source_document", {}).get("filename")),
+    }
 
 
 def build_atomic_observation(
@@ -1422,6 +1497,7 @@ def build_atomic_observation(
             else None
         ),
         "additional_evidence_count": max(len(images) + len(captions) - 1, 0),
+        **review_evidence_context(finding, maps, {image.get("id", "") for image in images}),
     }
     return record
 

@@ -97,6 +97,23 @@ test('delivery failure is persisted and a later call can retry', async () => {
   assert.equal([...repository.notifications.values()][0].delivery_status, 'sent')
 })
 
+test('reviewed result is delivered once to the submitting agent without exposing review machinery', async () => {
+  const repository = notificationRepository()
+  const deliveries = []
+  const provider = { name: 'test-provider', async send(message) { deliveries.push(message); return { messageId: 'provider-result-1' } } }
+  const service = createPhase1NotificationService({ repository, provider, recipient: 'reviewer@example.com', publicBaseUrl: 'https://shelterprep.com' })
+  const artifact = { atomicObservations: [{}, {}] }
+  const first = await service.notifyReviewedResult({ requestId: 'request-ready', artifact })
+  const duplicate = await service.notifyReviewedResult({ requestId: 'request-ready', artifact })
+  assert.equal(first.status, 'sent')
+  assert.equal(duplicate.duplicate, true)
+  assert.equal(deliveries.length, 1)
+  assert.equal(deliveries[0].to, 'agent@example.com')
+  assert.match(deliveries[0].text, /View Result:/)
+  assert.match(deliveries[0].text, /audience=agent/)
+  assert.doesNotMatch(deliveries[0].text, /reviewer_id|review reason|parser|sha256/i)
+})
+
 test('Resend requests keep authentication server-side and use provider idempotency', async () => {
   let request
   const provider = createResendEmailProvider({
@@ -116,6 +133,7 @@ test('Resend requests keep authentication server-side and use provider idempoten
 test('notification migrations are server-only, RLS-enabled, indexed, and transition-deduplicated', async () => {
   const migration = await readFile('supabase/migrations/20260918055519_phase1_review_notifications.sql', 'utf8')
   const hardening = await readFile('supabase/migrations/20260918060120_phase1_review_notifications_hardening.sql', 'utf8')
+  const release = await readFile('supabase/migrations/20260918195000_phase1_review_release_delivery.sql', 'utf8')
   assert.match(migration, /alter table public\.phase1_notifications enable row level security/i)
   assert.match(migration, /revoke all on public\.phase1_notifications from anon, authenticated/i)
   assert.match(migration, /grant select, insert, update on public\.phase1_notifications to service_role/i)
@@ -123,4 +141,6 @@ test('notification migrations are server-only, RLS-enabled, indexed, and transit
   assert.match(hardening, /to anon, authenticated[\s\S]*using \(false\)[\s\S]*with check \(false\)/i)
   assert.match(hardening, /phase1_notifications_processing_request_idx/i)
   assert.match(hardening, /phase1_notifications_work_request_idx/i)
+  assert.match(release, /reviewed_result_ready/i)
+  assert.doesNotMatch(release, /grant .*authenticated|to authenticated/i)
 })

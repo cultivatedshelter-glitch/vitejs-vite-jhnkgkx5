@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import type { Phase1PropertyContext } from './phase1PropertyContext'
 
-export type LiveProcessingState = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed'
+export type LiveProcessingState = 'uploaded' | 'queued' | 'processing' | 'completed' | 'under_review' | 'ready' | 'failed'
 
 type EvidenceReference = { id: string; sourceFileId: string }
 export type ProcessingResponse = {
@@ -10,9 +10,22 @@ export type ProcessingResponse = {
   processingStatus: LiveProcessingState
   artifact?: unknown
   error?: string | null
+  audience?: 'reviewer' | 'agent'
+  totalFindingCount?: number
 }
 
 export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
+export type Phase1ReviewQueueItem = {
+  requestId: string
+  propertyId: string
+  propertyAddress: string
+  submittingAgent: string
+  findingCount: number
+  reviewPriority: 'quick_review' | 'careful_review' | 'waiting_for_evidence'
+  queueStatus: 'processing' | 'needs_review' | 'waiting_for_evidence' | 'failed' | 'reviewed'
+  createdAt: string
+  error: string | null
+}
 
 async function authContext(forceRefresh = false, verifySession = false): Promise<{ token: string; userId: string }> {
   const { data, error } = await supabase.auth.getSession()
@@ -108,7 +121,8 @@ export async function processPhase1Evidence({
     await wait(750)
     const status = await jsonRequest<ProcessingResponse>(`/api/phase1/processing-requests/${encodeURIComponent(request.id)}`, { method: 'GET' })
     onState(status.processingStatus)
-    if (status.processingStatus === 'completed') {
+    if (status.processingStatus === 'under_review') return status
+    if (status.processingStatus === 'ready' || status.processingStatus === 'completed') {
       if (!status.artifact) throw new Error('Reasoning artifact invalid. Processing completed without an artifact.')
       return status
     }
@@ -122,6 +136,25 @@ export async function loadPhase1ProcessingRequest(requestId: string): Promise<Pr
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}`,
     { method: 'GET' },
   )
+}
+
+export async function loadPhase1ReviewQueue(): Promise<Phase1ReviewQueueItem[]> {
+  const response = await jsonRequest<{ items: Phase1ReviewQueueItem[] }>('/api/phase1/review-queue', { method: 'GET' })
+  return response.items
+}
+
+export async function openPhase1SourceDocument(requestId: string, page?: number | null) {
+  const { token } = await authContext(false, true)
+  const response = await fetch(`/api/phase1/processing-requests/${encodeURIComponent(requestId)}/source-document`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.error?.message || 'The source report could not be opened.')
+  }
+  const url = URL.createObjectURL(await response.blob())
+  window.open(`${url}${page ? `#page=${page}` : ''}`, '_blank', 'noopener,noreferrer')
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 export async function reviewPhase1Finding({
@@ -139,7 +172,7 @@ export async function reviewPhase1Finding({
   reason?: string
   fieldsApproved?: string[]
 }) {
-  return jsonRequest<{ findingId: string; status: string; eventId: string }>(
+  return jsonRequest<{ findingId: string; status: string; eventId: string; release?: { ready: boolean; released: boolean } }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/findings/${encodeURIComponent(observationId)}/review`,
     {
       method: 'POST',

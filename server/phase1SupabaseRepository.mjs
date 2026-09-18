@@ -56,6 +56,47 @@ function findingRows(artifact, request, modelRunId) {
   })
 }
 
+function agentArtifact(artifact, findings, eventsById) {
+  const allowed = new Map()
+  for (const finding of findings) {
+    if (!['human_reviewed', 'human_verified'].includes(finding.review_status)) continue
+    const event = eventsById.get(finding.review_event_id)
+    if (event?.new_value?.delivery_eligible !== true) continue
+    allowed.set(finding.source_item_number, { finding, event })
+  }
+  const observations = (artifact.atomicObservations || []).filter((entry) => allowed.has(entry.source?.source_item_number)).map((entry) => {
+    const copy = structuredClone(entry)
+    delete copy.review_workflow
+    delete copy.extraction_status
+    delete copy.source?.provenance
+    delete copy.source?.source_file_id
+    delete copy.evidence_links
+    delete copy.epistemic_states?.ai_inference_or_hypothesis
+    return copy
+  })
+  const reviewState = Object.fromEntries(observations.map((entry) => {
+    const { finding, event } = allowed.get(entry.source?.source_item_number)
+    return [entry.id, {
+      status: finding.review_status,
+      event: {
+        review_action: event.review_action,
+        new_value: {
+          corrections: event.new_value?.corrections || {},
+          delivery_eligible: true,
+        },
+        created_at: event.created_at,
+      },
+    }]
+  }))
+  return {
+    schemaVersion: artifact.schemaVersion || artifact.schema_version,
+    propertyReportReconstruction: artifact.propertyReportReconstruction,
+    external_sources: artifact.external_sources || [],
+    atomicObservations: observations,
+    reviewState,
+  }
+}
+
 export function normalizePropertyAddress(address) {
   return address
     .normalize('NFKC')
@@ -80,6 +121,12 @@ export function createPhase1SupabaseRepository() {
 
   const tokens = new Map()
 
+  async function isReviewerId(actorId) {
+    const { data, error } = await admin.from('profiles').select('role,active').eq('id', actorId).maybeSingle()
+    if (error) throw new Error(`Reviewer authorization failed: ${error.message}`)
+    return data?.active === true && ['owner', 'admin'].includes(data.role)
+  }
+
   return {
     async authenticate(token) {
       const { data, error } = await admin.auth.getUser(token)
@@ -93,6 +140,10 @@ export function createPhase1SupabaseRepository() {
       const { data, error } = await client.from('properties').select('id').eq('id', propertyId).maybeSingle()
       if (error) throw new Error(`Property authorization failed: ${error.message}`)
       return Boolean(data)
+    },
+
+    async isReviewer(actorId) {
+      return isReviewerId(actorId)
     },
 
     async resolveOrCreateProperty({ actor, address }) {
@@ -373,6 +424,8 @@ export function createPhase1SupabaseRepository() {
       if (error) throw new Error(error.message)
       if (!request) return null
       let artifact = null
+      let totalFindingCount = 0
+      const reviewer = await isReviewerId(actor.id)
       if (['needs_review', 'completed'].includes(request.status)) {
         const { data: modelRun, error: modelError } = await client.from('model_runs').select('id,output').eq('property_id', request.property_id).eq('input_hash', request.input_hash).eq('stage', 'inspection_interpretation').maybeSingle()
         if (modelError) throw new Error(modelError.message)
@@ -382,6 +435,7 @@ export function createPhase1SupabaseRepository() {
             .select('id,source_item_number,review_status,review_event_id')
             .eq('model_run_id', modelRun.id)
           if (findingsError) throw new Error(findingsError.message)
+          totalFindingCount = (findings || []).length
           const eventIds = (findings || []).map((item) => item.review_event_id).filter(Boolean)
           let events = []
           if (eventIds.length) {
@@ -400,10 +454,98 @@ export function createPhase1SupabaseRepository() {
               event: eventsById.get(finding.review_event_id) || null,
             }]
           }))
+          if (!reviewer) artifact = request.status === 'completed' ? agentArtifact(artifact, findings || [], eventsById) : null
         }
       }
-      const state = request.status === 'running' ? 'processing' : request.status === 'needs_review' || request.status === 'completed' ? 'completed' : request.status
-      return { id: request.id, propertyId: request.property_id, processingStatus: state, artifactVersion: artifact?.schemaVersion || artifact?.schema_version || null, artifact, error: request.error_message || null }
+      const state = request.status === 'running' ? 'processing'
+        : request.status === 'needs_review' ? (reviewer ? 'completed' : 'under_review')
+          : request.status === 'completed' ? (reviewer ? 'completed' : 'ready') : request.status
+      return { id: request.id, propertyId: request.property_id, processingStatus: state, audience: reviewer ? 'reviewer' : 'agent', totalFindingCount, artifactVersion: artifact?.schemaVersion || artifact?.schema_version || null, artifact, error: request.error_message || null }
+    },
+
+    async getSourceDocument({ actor, requestId }) {
+      const client = userClient(tokens.get(actor.id))
+      const { data: request, error: requestError } = await client.from('inspection_pipeline_runs')
+        .select('inspection_report_id')
+        .eq('id', requestId)
+        .maybeSingle()
+      if (requestError) throw new Error(`Source request lookup failed: ${requestError.message}`)
+      if (!request) return null
+      const { data: report, error: reportError } = await client.from('inspection_reports')
+        .select('source_storage_bucket,source_storage_path,original_filename,extraction_summary')
+        .eq('id', request.inspection_report_id)
+        .maybeSingle()
+      if (reportError) throw new Error(`Source report lookup failed: ${reportError.message}`)
+      if (!report?.source_storage_bucket || !report?.source_storage_path) return null
+      const { data: blob, error: downloadError } = await client.storage.from(report.source_storage_bucket).download(report.source_storage_path)
+      if (downloadError) throw new Error(`Source report download failed: ${downloadError.message}`)
+      return {
+        body: new Uint8Array(await blob.arrayBuffer()),
+        contentType: report.extraction_summary?.media_type || blob.type || 'application/pdf',
+        filename: report.original_filename || 'inspection-report.pdf',
+      }
+    },
+
+    async listReviewQueue({ actor }) {
+      if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
+      const { data: requests, error: requestError } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,inspection_report_id,input_hash,requested_by,status,created_at,error_message')
+        .in('status', ['queued', 'running', 'needs_review', 'completed', 'failed'])
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (requestError) throw new Error(`Review queue lookup failed: ${requestError.message}`)
+      const propertyIds = [...new Set((requests || []).map((item) => item.property_id).filter(Boolean))]
+      const { data: properties, error: propertyError } = propertyIds.length
+        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip').in('id', propertyIds)
+        : { data: [], error: null }
+      if (propertyError) throw new Error(`Review queue Property lookup failed: ${propertyError.message}`)
+      const propertyById = new Map((properties || []).map((item) => [item.id, item]))
+      const requesterIds = [...new Set((requests || []).map((item) => item.requested_by).filter(Boolean))]
+      const emailById = new Map()
+      await Promise.all(requesterIds.map(async (id) => {
+        const { data } = await admin.auth.admin.getUserById(id)
+        if (data?.user?.email) emailById.set(id, data.user.email)
+      }))
+
+      const items = []
+      for (const request of requests || []) {
+        const { data: modelRun } = await admin.from('model_runs')
+          .select('id,output')
+          .eq('property_id', request.property_id)
+          .eq('input_hash', request.input_hash)
+          .eq('stage', 'inspection_interpretation')
+          .maybeSingle()
+        const { data: findings } = modelRun?.id
+          ? await admin.from('inspection_findings').select('review_status,review_event_id').eq('model_run_id', modelRun.id)
+          : { data: [] }
+        const eventIds = (findings || []).map((item) => item.review_event_id).filter(Boolean)
+        const { data: events } = eventIds.length
+          ? await admin.from('review_events').select('id,review_action').in('id', eventIds)
+          : { data: [] }
+        const actionByEvent = new Map((events || []).map((event) => [event.id, event.review_action]))
+        const waiting = (findings || []).some((finding) => actionByEvent.get(finding.review_event_id) === 'needs_more_info')
+        const priorities = (modelRun?.output?.atomicObservations || []).map((entry) => entry.review_workflow?.priority).filter(Boolean)
+        const priority = priorities.includes('waiting_for_evidence') ? 'waiting_for_evidence'
+          : priorities.includes('careful_review') ? 'careful_review' : 'quick_review'
+        const property = propertyById.get(request.property_id) || {}
+        const propertyAddress = property.source_address || [property.address_line1, property.city, property.state, property.zip].filter(Boolean).join(', ')
+        const queueStatus = request.status === 'failed' ? 'failed'
+          : request.status === 'completed' ? 'reviewed'
+            : waiting ? 'waiting_for_evidence'
+              : request.status === 'queued' || request.status === 'running' ? 'processing' : 'needs_review'
+        items.push({
+          requestId: request.id,
+          propertyId: request.property_id,
+          propertyAddress: propertyAddress || 'Property address unavailable',
+          submittingAgent: emailById.get(request.requested_by) || 'Authenticated agent',
+          findingCount: (findings || []).length,
+          reviewPriority: priority,
+          queueStatus,
+          createdAt: request.created_at,
+          error: request.error_message || null,
+        })
+      }
+      return items
     },
 
     async reviewFinding({ actor, requestId, observationId, action, newValue, reason }) {
@@ -444,6 +586,52 @@ export function createPhase1SupabaseRepository() {
         .single()
       if (reviewedError) throw new Error(reviewedError.message)
       return { findingId: reviewed.id, status: reviewed.review_status, eventId }
+    },
+
+    async releaseIfReviewComplete({ actor, requestId }) {
+      if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
+      const { data: request, error: requestError } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,work_request_id,input_hash,status')
+        .eq('id', requestId)
+        .single()
+      if (requestError) throw new Error(`Release request lookup failed: ${requestError.message}`)
+      const { data: modelRun, error: modelError } = await admin.from('model_runs')
+        .select('id')
+        .eq('property_id', request.property_id)
+        .eq('input_hash', request.input_hash)
+        .eq('stage', 'inspection_interpretation')
+        .single()
+      if (modelError) throw new Error(`Release model lookup failed: ${modelError.message}`)
+      const { data: findings, error: findingsError } = await admin.from('inspection_findings')
+        .select('review_status')
+        .eq('model_run_id', modelRun.id)
+      if (findingsError) throw new Error(`Release findings lookup failed: ${findingsError.message}`)
+      const total = (findings || []).length
+      const approved = (findings || []).filter((item) => ['human_reviewed', 'human_verified'].includes(item.review_status)).length
+      const pending = (findings || []).filter((item) => ['ai_draft', 'needs_review'].includes(item.review_status)).length
+      const ready = total > 0 && pending === 0 && approved > 0
+      if (!ready || request.status === 'completed') return { ready, released: false, total, approved, pending }
+      const { data: updated, error: updateError } = await admin.from('inspection_pipeline_runs')
+        .update({ status: 'completed', current_stage: 'released_result', completed_at: new Date().toISOString() })
+        .eq('id', requestId)
+        .eq('status', 'needs_review')
+        .select('id')
+        .maybeSingle()
+      if (updateError) throw new Error(`Release update failed: ${updateError.message}`)
+      if (!updated) return { ready: true, released: false, total, approved, pending }
+      const { error: eventError } = await admin.from('workflow_events').insert({
+        property_id: request.property_id,
+        work_request_id: request.work_request_id,
+        actor_id: actor.id,
+        actor_type: 'admin',
+        event_type: 'phase1_reviewed_result_released',
+        event_title: 'Reviewed Phase 1 result released to submitting agent',
+        object_type: 'inspection_pipeline_run',
+        object_id: request.id,
+        metadata: { total_findings: total, released_findings: approved },
+      })
+      if (eventError) throw new Error(`Release event persistence failed: ${eventError.message}`)
+      return { ready: true, released: true, total, approved, pending }
     },
   }
 }

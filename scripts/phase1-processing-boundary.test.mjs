@@ -154,6 +154,8 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.equal(completed.body.processingStatus, 'completed', completed.body.error)
     validatePhase1Artifact(completed.body.artifact, { propertyId: PROPERTY_ID })
     const observation = completed.body.artifact.atomicObservations[0]
+    assert.ok(observation.finding_card.source_evidence.page_previews.length > 0)
+    assert.equal(observation.finding_card.source_evidence.page_previews[0].relationship, 'source_page')
     assert.equal(observation.source_chronology.observation_date, '01/02/2030')
     assert.notEqual(observation.source_chronology.observation_date, repo.uploadedAt)
     assert.equal(observation.source_chronology.upload_date_used_as_observation_date, false)
@@ -344,4 +346,26 @@ test('review actions are server-authoritative, preserve source layers, and valid
   assert.deepEqual(calls[1].newValue.fields_approved, ['title', 'next_step'])
   assert.equal(calls[2].newValue.delivery_eligible, false)
   assert.equal(calls[3].newValue.delivery_eligible, false)
+})
+
+test('completed human review releases once and delivery failure cannot erase approval', async () => {
+  const deliveries = []
+  let releaseCalls = 0
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] }
+  const repo = {
+    async authenticate() { return { id: 'reviewer-1' } },
+    async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
+    async reviewFinding() { return { findingId: 'finding-1', status: 'human_verified', eventId: 'event-1' } },
+    async releaseIfReviewComplete() { releaseCalls += 1; return { ready: true, released: releaseCalls === 1 } },
+  }
+  const notifications = { async notifyReviewedResult(value) { deliveries.push(value); throw new Error('provider unavailable') } }
+  const errors = []
+  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact, notifications, logger: { error: (...values) => errors.push(values) } })
+  const first = await service.review({ token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' })
+  const duplicate = await service.review({ token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' })
+  assert.equal(first.release.released, true)
+  assert.equal(duplicate.release.released, false)
+  assert.equal(deliveries.length, 1)
+  assert.equal(errors.length, 1)
+  assert.equal(first.status, 'human_verified')
 })

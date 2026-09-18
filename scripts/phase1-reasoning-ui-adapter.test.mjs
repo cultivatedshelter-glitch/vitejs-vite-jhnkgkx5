@@ -200,3 +200,24 @@ test('missing optional fields fail gracefully without inventing money or provena
   assert.equal(finding.weather, null)
   assert.match(finding.nextStep, /Human review/i)
 })
+
+test('candidate evidence and page previews remain unconfirmed until a human correction', () => {
+  const artifact = structuredClone(liveArtifact)
+  artifact.atomicObservations[0].finding_card.source_evidence = {
+    document_name: 'inspection.pdf',
+    source_page: 12,
+    candidate_photos: [{ image_id: 'image-12-1', source_page: 13, association_strength: 'strong', association_reason: 'Follows the finding.', confirmation_required: true }],
+    page_previews: [{ page: 12, relationship: 'source_page', text_excerpt: 'Inspector source text.' }, { page: 13, relationship: 'next_page', text_excerpt: 'Adjacent report content.' }],
+    full_report_available: true,
+  }
+  const draft = adaptPhase1ReasoningArtifact(artifact, { mode: 'live' }).findings[0]
+  assert.equal(draft.sourceEvidence.primaryPhoto, null)
+  assert.equal(draft.sourceEvidence.candidatePhotos[0].strength, 'strong')
+  assert.equal(draft.sourceEvidence.candidatePhotos[0].confirmationRequired, true)
+  assert.equal(draft.sourceEvidence.pagePreviews.length, 2)
+  assert.equal(draft.sourceEvidence.confirmedEvidence, null)
+
+  artifact.reviewState = { 'observation-1': { status: 'human_reviewed', event: { review_action: 'edit', new_value: { delivery_eligible: true, corrections: { evidence_relationship: 'Confirmed against the report.', confirmed_evidence: { image_id: 'image-12-1' } } } } } }
+  const reviewed = adaptPhase1ReasoningArtifact(artifact, { mode: 'live' }).findings[0]
+  assert.equal(reviewed.sourceEvidence.confirmedEvidence?.imageId, 'image-12-1')
+})
