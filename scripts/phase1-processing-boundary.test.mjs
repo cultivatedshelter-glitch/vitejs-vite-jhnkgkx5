@@ -85,6 +85,17 @@ c.save()
   assert.equal(result.status, 0, result.stderr)
 }
 
+async function generateUnparseablePdf(path) {
+  const code = `
+from reportlab.pdfgen import canvas
+c = canvas.Canvas(${JSON.stringify(path)})
+c.drawString(72, 760, 'Inspection document with readable text but no supported finding structure.')
+c.save()
+`
+  const result = spawnSync(PYTHON, ['-c', code], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+}
+
 async function requestJson(handle, url, init) {
   const response = await handle(new Request(url, init))
   return { status: response.status, body: await response.json() }
@@ -236,6 +247,20 @@ test('malformed and fixture artifacts are rejected and become an explicit failed
     assert.equal(status.processingStatus, 'failed')
     assert.match(status.error, /Reasoning artifact invalid/)
     assert.deepEqual(notificationCalls, [['processing_failed', { requestId: request.id }]])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('readable PDFs with no parseable findings fail at extraction instead of artifact validation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phase1-parser-failure-test-'))
+  try {
+    const pdfPath = join(root, 'unsupported-inspection.pdf')
+    await generateUnparseablePdf(pdfPath)
+    await assert.rejects(
+      runExistingPhase1Reasoning({ evidence: [{ mediaType: 'application/pdf', localPath: pdfPath }] }),
+      /Inspection parser found no normalized findings/,
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

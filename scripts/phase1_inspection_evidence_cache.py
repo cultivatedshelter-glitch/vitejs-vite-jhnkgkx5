@@ -40,7 +40,7 @@ from phase1_multi_system_shared import (
 )
 
 
-SCHEMA_VERSION = "shelter-prep-shared-inspection-evidence-cache.v1"
+SCHEMA_VERSION = "shelter-prep-shared-inspection-evidence-cache.v2"
 PIPELINE_NAME = "phase1-shared-inspection-evidence-cache"
 DEFAULT_PDF = "local-fixtures/1837-sw-jo-ct-inspection.pdf"
 DEFAULT_STEP4_OUTPUT = "local-fixtures/step4-roof-vertical-slice/step4-roof-output.json"
@@ -240,6 +240,145 @@ def parse_generic_issue_section(section: dict[str, Any], property_id: str, inspe
         pending = []
 
     return findings
+
+
+NUMBERED_FINDING_PATTERN = re.compile(
+    r"^(?P<item>\d+(?:\.\d+){2})\s+(?P<label>.+)$"
+)
+NUMBERED_SUMMARY_PATTERN = re.compile(
+    r"^(?P<item>\d+(?:\.\d+){2})\s+(?P<section>.+?)\s+-\s+(?P<component>.+?)\s*:\s*(?P<title>.+)$"
+)
+
+
+def is_finding_severity(value: str) -> bool:
+    compact = re.sub(r"\s+", "", normalize_key(value))
+    return compact in {"minordefect", "majordefect", "materialsafetyhazard"}
+
+
+def is_uppercase_heading(value: str) -> bool:
+    letters = [character for character in value if character.isalpha()]
+    return bool(letters) and all(character.isupper() for character in letters)
+
+
+def numbered_summary_index(page_text_by_page: dict[int, str]) -> dict[str, dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for page_number, text in sorted(page_text_by_page.items()):
+        for line in clean_lines(text):
+            match = NUMBERED_SUMMARY_PATTERN.match(line)
+            if not match:
+                continue
+            summaries.setdefault(
+                match.group("item"),
+                {
+                    "source_page": page_number,
+                    "source_section": clean_inline(match.group("section")),
+                    "component": clean_inline(match.group("component")),
+                    "title": clean_inline(match.group("title")),
+                },
+            )
+    return summaries
+
+
+def parse_numbered_observation_pages(
+    page_text_by_page: dict[int, str],
+    property_id: str,
+    inspection_report_id: str,
+    source_file_id: str,
+) -> list[dict[str, Any]]:
+    summaries = numbered_summary_index(page_text_by_page)
+    findings_by_item: dict[str, dict[str, Any]] = {}
+
+    document_lines: list[tuple[int, str]] = []
+    for page_number, text in sorted(page_text_by_page.items()):
+        lines = clean_lines(text)
+        if lines and re.search(r"\bpage\s+\d+\s+of\s+\d+\b", lines[-1], flags=re.IGNORECASE):
+            lines = lines[:-2]
+        document_lines.extend((page_number, line) for line in lines)
+
+    idx = 0
+    while idx < len(document_lines):
+        page_number, header_line = document_lines[idx]
+        header = NUMBERED_FINDING_PATTERN.match(header_line)
+        if not header or NUMBERED_SUMMARY_PATTERN.match(header_line):
+            idx += 1
+            continue
+
+        item_number = header.group("item")
+        block_end = idx + 1
+        while block_end < len(document_lines) and not NUMBERED_FINDING_PATTERN.match(document_lines[block_end][1]):
+            block_end += 1
+        block_entries = document_lines[idx + 1:block_end]
+        block = [line for _, line in block_entries]
+        recommendation_index = next(
+            (offset for offset, line in enumerate(block) if normalize_key(line) == "recommendation"),
+            None,
+        )
+        severity = next((clean_inline(line) for line in block if is_finding_severity(line)), "")
+        narrative_end = recommendation_index if recommendation_index is not None else len(block)
+        before_recommendation = [line for line in block[:narrative_end] if not is_finding_severity(line)]
+        title_lines: list[str] = []
+        while before_recommendation and is_uppercase_heading(before_recommendation[0]):
+            title_lines.append(before_recommendation.pop(0))
+        statement = clean_inline(" ".join(before_recommendation))
+
+        recommendation_lines: list[str] = []
+        if recommendation_index is not None:
+            for line in block[recommendation_index + 1:]:
+                if is_finding_severity(line):
+                    break
+                recommendation_lines.append(line)
+
+        summary = summaries.get(item_number, {})
+        component = clean_inline(header.group("label"))
+        title = clean_inline(" ".join(title_lines)) or summary.get("title", "") or component
+        if not statement:
+            statement = summary.get("title", "")
+        recommendation = clean_inline(" ".join(recommendation_lines))
+        if not statement or (not recommendation and not severity) or item_number not in summaries:
+            idx = block_end
+            continue
+
+        source_section = summary.get("source_section", "") or component
+        source_pages = sorted({page for page, _ in block_entries} | {page_number})
+        excerpt = clean_inline(" ".join([source_section, component, title, statement, recommendation]))
+        finding = {
+            "id": generic_finding_id(item_number),
+            "property_id": property_id,
+            "inspection_report_id": inspection_report_id,
+            "source_file_id": source_file_id,
+            "source_page": page_number,
+            "source_section": source_section,
+            "source_section_key": normalize_key(source_section),
+            "source_item_number": item_number,
+            "title": title,
+            "normalized_title": normalize_key(title),
+            "inspector_statement": statement,
+            "normalized_statement": normalize_key(statement),
+            "inspector_recommendation": recommendation,
+            "locations": [],
+            "source_excerpt": excerpt,
+            "linked_photo_ids": [],
+            "domain_routing_candidates": [],
+            "severity": severity,
+            "provenance": {
+                "source_pdf_file_id": source_file_id,
+                "pdf_page": page_number,
+                "source_pages": source_pages,
+                "summary_pdf_page": summary.get("source_page"),
+                "section": source_section,
+                "component": component,
+                "item_number": item_number,
+                "extraction_method": "pypdf_text_numbered_observation_parser",
+            },
+            "review_status": "needs_review",
+            "human_verified": False,
+        }
+        existing = findings_by_item.get(item_number)
+        if not existing or len(finding["source_excerpt"]) > len(existing["source_excerpt"]):
+            findings_by_item[item_number] = finding
+        idx = block_end
+
+    return list(findings_by_item.values())
 
 
 def caption_matches_finding(caption: dict[str, Any], finding: dict[str, Any], *, allow_token_overlap: bool) -> bool:
@@ -506,6 +645,15 @@ def build_or_load_inspection_evidence_cache(
             source_findings.append(finding)
             section_by_id[section["id"]]["finding_ids"].append(finding["id"])
 
+    numbered_findings = parse_numbered_observation_pages(
+        page_text_by_page,
+        property_id,
+        inspection_report_id,
+        source_file_id,
+    )
+    existing_finding_ids = {finding["id"] for finding in source_findings}
+    source_findings.extend(finding for finding in numbered_findings if finding["id"] not in existing_finding_ids)
+
     photo_captions: list[dict[str, Any]] = []
     for page_number, text in sorted(page_text_by_page.items()):
         if "Item " not in text:
@@ -605,6 +753,7 @@ def build_or_load_inspection_evidence_cache(
             "pages_indexed": len(page_records),
             "sections_indexed": len(section_index),
             "findings_indexed": len(source_findings),
+            "numbered_observation_findings_indexed": len(numbered_findings),
             "photo_captions_indexed": len(photo_captions),
             "finding_photo_relationships": len(finding_photo_relationships),
             "images_indexed": len(extracted_images),
@@ -802,6 +951,45 @@ Split caulking on exterior
     routing = build_domain_routing_index(findings, captions)
     assert "moisture_envelope" in routing
     assert "finding-5" in routing["moisture_envelope"]["finding_ids"]
+    numbered_pages = {
+        2: """SUMMARY
+2.3.1 Site - Walkways: Uneven walking surface
+4.3.1 Roof - Covering: Exposed fastener
+""",
+        8: """2.3.1 Walkways
+UNEVEN WALKING SURFACE
+The inspector observed a raised edge at the walkway.
+Recommendation
+Contact a qualified professional.
+Major Defect
+""",
+        12: """4.3.1 Covering
+EXPOSED FASTENER
+An exposed fastener was observed at the roof covering.
+Recommendation
+Have a qualified roofing professional evaluate and repair.
+Minor Defect
+""",
+    }
+    numbered = parse_numbered_observation_pages(numbered_pages, "property-test", "inspection-test", "source-test")
+    assert [finding["source_item_number"] for finding in numbered] == ["2.3.1", "4.3.1"]
+    assert numbered[0]["source_page"] == 8
+    assert numbered[0]["source_section"] == "Site"
+    assert numbered[0]["provenance"]["summary_pdf_page"] == 2
+    assert numbered[1]["inspector_recommendation"] == "Have a qualified roofing professional evaluate and repair."
+    cross_page = parse_numbered_observation_pages(
+        {
+            2: "SUMMARY\n8.2.1 Plumbing - Water Supply: Aging supply piping",
+            5: "8.2.1 Water Supply\nAGING SUPPLY PIPING\nMajor Defect\nExample footer\nReport Page 5 of 6",
+            6: "The inspector observed aging supply piping.\nRecommendation\nContact a qualified plumbing professional.",
+        },
+        "property-test",
+        "inspection-test",
+        "source-test",
+    )
+    assert len(cross_page) == 1
+    assert cross_page[0]["provenance"]["source_pages"] == [5, 6]
+    assert cross_page[0]["inspector_statement"] == "The inspector observed aging supply piping."
     print("phase1_inspection_evidence_cache self-test passed")
 
 

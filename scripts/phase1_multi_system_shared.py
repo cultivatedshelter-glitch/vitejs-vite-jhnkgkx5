@@ -53,6 +53,7 @@ def normalize_text(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     normalized = normalized.replace("\ufb01", "fi").replace("\ufb02", "fl")
     normalized = normalized.replace("\u00a0", " ")
+    normalized = normalized.replace("\x00", "")
     return normalized.replace("\r\n", "\n").replace("\r", "\n")
 
 

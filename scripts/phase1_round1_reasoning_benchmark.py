@@ -366,6 +366,29 @@ def parse_report_header(page_text: str) -> dict[str, Any]:
     city_line = values[2] if len(values) > 2 else ""
     inspector_name = values[3] if len(values) > 3 else ""
     client_name = values[4] if len(values) > 4 else ""
+    extraction_method = "deterministic_header_value_order"
+
+    if not inspection_date:
+        date_pattern = re.compile(r"^(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(?:19|20)\d{2}$")
+        date_index = next((index for index, line in enumerate(lines) if date_pattern.match(line)), None)
+        inspector_label_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if normalize_key(line.rstrip(":")) == "inspector" and date_index is not None and index > date_index
+            ),
+            None,
+        )
+        if date_index is not None and inspector_label_index is not None:
+            candidate_city = lines[date_index - 2] if date_index >= 2 else ""
+            candidate_city_parts = parse_city_state_zip(candidate_city)
+            if candidate_city_parts["state"] and date_index >= 3:
+                inspection_date = lines[date_index]
+                address_line1 = lines[date_index - 3]
+                city_line = candidate_city
+                client_name = lines[date_index - 1]
+                inspector_name = lines[inspector_label_index + 1] if inspector_label_index + 1 < len(lines) else ""
+                extraction_method = "deterministic_cover_date_anchor"
     city_state_zip = parse_city_state_zip(city_line)
 
     company = lines[0] if lines else ""
@@ -382,7 +405,7 @@ def parse_report_header(page_text: str) -> dict[str, Any]:
             "country": "US" if address_line1 or city_state_zip["state"] else "",
             "normalized_address": clean_inline(" ".join(part for part in [address_line1, city_state_zip["city"], city_state_zip["state"], city_state_zip["zip"]] if part)),
             "source": "inspection_report_header",
-            "provenance": {"pdf_page": 1, "extraction_method": "deterministic_header_value_order"},
+            "provenance": {"pdf_page": 1, "extraction_method": extraction_method},
         },
         "report": {
             "inspection_date": inspection_date,
@@ -393,7 +416,7 @@ def parse_report_header(page_text: str) -> dict[str, Any]:
             "inspector_name": inspector_name,
             "client_name": client_name,
             "source": "inspection_report_header",
-            "provenance": {"pdf_page": 1, "extraction_method": "deterministic_header_value_order"},
+            "provenance": {"pdf_page": 1, "extraction_method": extraction_method},
         },
     }
 
@@ -2055,6 +2078,20 @@ def build_reasoning_artifact_from_cache(cache: dict[str, Any], cache_meta: dict[
 
 
 def run_self_test() -> None:
+    cover_header = parse_report_header(
+        """Example Inspection Co
+Residential Inspection Report
+10 Test Ave
+Exampletown, OR 97000
+Client One
+09/16/2030
+Inspector
+Inspector One
+Report Page 1 of 10"""
+    )
+    assert cover_header["report"]["inspection_date"] == "09/16/2030"
+    assert cover_header["property"]["state"] == "OR"
+    assert cover_header["report"]["provenance"]["extraction_method"] == "deterministic_cover_date_anchor"
     synthetic_cache = {
         "schemaVersion": "synthetic-cache",
         "sourceDocument": {
@@ -2437,6 +2474,20 @@ def process(args: argparse.Namespace) -> dict[str, Any]:
         f"sha256:{source_sha[:16]}",
         force_rebuild=args.force_cache_rebuild,
     )
+    if not cache.get("normalizedFindings"):
+        page_records = list(cache.get("pageTextByPage", {}).values())
+        pages_extracted = len(page_records)
+        text_pages = sum(1 for page in page_records if page.get("char_count", 0) > 0)
+        text_characters = sum(int(page.get("char_count", 0)) for page in page_records)
+        if text_characters == 0:
+            raise ValueError(
+                f"PDF text extraction produced no readable text from {pages_extracted} pages; OCR or another extraction method is required."
+            )
+        raise ValueError(
+            "Inspection parser found no normalized findings after extracting "
+            f"{text_characters} characters from {text_pages} of {pages_extracted} pages; "
+            "the report format is not supported by the current parser."
+        )
     artifact = build_reasoning_artifact_from_cache(cache, cache_meta)
     output_path = Path(args.output_dir) / args.output_file
     write_json(output_path, artifact)
