@@ -29,6 +29,19 @@ export function createPhase1HttpHandler(service) {
       }
       const match = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)$/)
       if (request.method === 'GET' && match) return json(await service.status({ token: token(request), requestId: decodeURIComponent(match[1]) }))
+      const reviewMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/findings\/([^/]+)\/review$/)
+      if (request.method === 'POST' && reviewMatch) {
+        const body = await request.json()
+        return json(await service.review({
+          token: token(request),
+          requestId: decodeURIComponent(reviewMatch[1]),
+          observationId: decodeURIComponent(reviewMatch[2]),
+          action: body.action,
+          corrections: body.corrections || {},
+          reason: body.reason || '',
+          fieldsApproved: body.fieldsApproved || [],
+        }))
+      }
       return json({ error: { code: 'not_found', message: 'Endpoint not found.' } }, 404)
     } catch (error) {
       const status = error instanceof ProcessingError ? error.status : 500

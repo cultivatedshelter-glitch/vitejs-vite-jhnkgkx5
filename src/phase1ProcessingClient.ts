@@ -12,6 +12,8 @@ export type ProcessingResponse = {
   error?: string | null
 }
 
+export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
+
 async function authContext(forceRefresh = false, verifySession = false): Promise<{ token: string; userId: string }> {
   const { data, error } = await supabase.auth.getSession()
   let session = data.session
@@ -84,7 +86,7 @@ export async function processPhase1Evidence({
   files: File[]
   note: string
   onState: (state: LiveProcessingState) => void
-}): Promise<unknown> {
+}): Promise<ProcessingResponse> {
   if (!propertyId) throw new Error('Property context is required before evidence can be processed.')
   if (!files.length) throw new Error('The live processor currently requires one PDF inspection report.')
   const form = new FormData()
@@ -108,7 +110,7 @@ export async function processPhase1Evidence({
     onState(status.processingStatus)
     if (status.processingStatus === 'completed') {
       if (!status.artifact) throw new Error('Reasoning artifact invalid. Processing completed without an artifact.')
-      return status.artifact
+      return status
     }
     if (status.processingStatus === 'failed') throw new Error(status.error || 'Processing failed.')
   }
@@ -119,5 +121,31 @@ export async function loadPhase1ProcessingRequest(requestId: string): Promise<Pr
   return jsonRequest<ProcessingResponse>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}`,
     { method: 'GET' },
+  )
+}
+
+export async function reviewPhase1Finding({
+  requestId,
+  observationId,
+  action,
+  corrections = {},
+  reason = '',
+  fieldsApproved = [],
+}: {
+  requestId: string
+  observationId: string
+  action: Phase1ReviewAction
+  corrections?: Record<string, unknown>
+  reason?: string
+  fieldsApproved?: string[]
+}) {
+  return jsonRequest<{ findingId: string; status: string; eventId: string }>(
+    `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/findings/${encodeURIComponent(observationId)}/review`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, corrections, reason, fieldsApproved }),
+    },
+    { verifySession: true },
   )
 }

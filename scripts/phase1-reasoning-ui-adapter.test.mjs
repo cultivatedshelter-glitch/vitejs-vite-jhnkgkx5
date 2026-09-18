@@ -146,6 +146,44 @@ test('Round 1 artifact derives dynamic counts, categories, blocked pricing, and 
   assert.deepEqual(result.findings[0].relatedFindings, ['Loose handrail.'])
 })
 
+test('human correction overlays preserve the draft and agent output includes only reviewed delivery-eligible findings', () => {
+  const reviewed = structuredClone(liveArtifact)
+  reviewed.reviewState = {
+    'observation-1': {
+      findingId: 'finding-1',
+      status: 'human_reviewed',
+      event: {
+        review_action: 'edit',
+        reviewer_id: 'reviewer-1',
+        created_at: '2026-09-18T12:00:00Z',
+        reason: 'Corrected from source review.',
+        new_value: {
+          delivery_eligible: true,
+          source_layer_preserved: true,
+          ai_draft_preserved: true,
+          corrections: {
+            title: 'Reviewed flashing damage',
+            known: ['Flashing damage is visible in the report.'],
+            unknown: ['Whether water entered the assembly.'],
+            affected_location: { location_text: 'West roof edge' },
+            price: { low: 1200, high: 2400, source_reference: 'Contractor proposal 2026-09-18' },
+          },
+        },
+      },
+    },
+  }
+  const reviewer = adaptPhase1ReasoningArtifact(reviewed, { mode: 'live', audience: 'reviewer' })
+  assert.equal(reviewer.findings[0].title, 'Reviewed flashing damage')
+  assert.deepEqual(reviewer.findings[0].known, ['Flashing damage is visible in the report.'])
+  assert.equal(reviewer.findings[0].affectedLocation.sourceBasis, 'human_entered')
+  assert.equal(reviewer.findings[0].price.label, '$1,200–$2,400')
+
+  const agent = adaptPhase1ReasoningArtifact(reviewed, { mode: 'live', audience: 'agent' })
+  assert.equal(agent.totalFindingCount, 2)
+  assert.equal(agent.findings.length, 1)
+  assert.equal(agent.findings[0].id, 'observation-1')
+})
+
 test('missing optional fields fail gracefully without inventing money or provenance', () => {
   const result = adaptPhase1ReasoningArtifact({
     schema_version: 'minimal',

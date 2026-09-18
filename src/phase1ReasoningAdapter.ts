@@ -21,6 +21,46 @@ export type Phase1WeatherViewModel = {
   status: 'available' | 'unavailable'
   text: string
   sourceIds: string[]
+  failureReason: string | null
+  provider: string | null
+  requestedWindow: string | null
+  measurements: string[]
+}
+
+export type Phase1AffectedLocation = {
+  orientation: string
+  orientationStatus: 'explicit' | 'inferred_low_confidence' | 'unknown'
+  area: string
+  level: string
+  roomOrZone: string
+  element: string
+  locationText: string
+  sourceBasis: string
+  confidence: string
+  needsConfirmation: boolean
+  resolutionPrompt: string
+}
+
+export type Phase1SourceEvidence = {
+  documentName: string
+  excerpt: string
+  recommendation: string
+  page: number | null
+  itemNumber: string
+  section: string
+  primaryPhoto: { imageId: string; caption: string; page: number | null; linked: boolean } | null
+  additionalEvidenceCount: number
+}
+
+export type Phase1ReviewDecision = {
+  findingId: string | null
+  status: string
+  action: string | null
+  reason: string | null
+  reviewerId: string | null
+  reviewedAt: string | null
+  corrections: Record<string, unknown>
+  deliveryEligible: boolean
 }
 
 export type Phase1FindingViewModel = {
@@ -28,6 +68,7 @@ export type Phase1FindingViewModel = {
   title: string
   category: string
   observation: string
+  interpretation: string
   observedAt: string | null
   known: string[]
   unknown: string[]
@@ -37,6 +78,12 @@ export type Phase1FindingViewModel = {
   whyNextStep: string
   reviewStatus: string
   reviewStatusLabel: string
+  reviewPriority: 'quick_review' | 'careful_review' | 'waiting_for_evidence'
+  reviewReasons: string[]
+  reviewDecision: Phase1ReviewDecision
+  likelyTrade: string
+  affectedLocation: Phase1AffectedLocation
+  sourceEvidence: Phase1SourceEvidence
   evidenceReferences: string[]
   sources: Phase1LinkedSource[]
   price: {
@@ -68,6 +115,8 @@ export type Phase1ExperienceViewModel = {
   findings: Phase1FindingViewModel[]
   categories: string[]
   openQuestionCount: number
+  audience: 'reviewer' | 'agent'
+  totalFindingCount: number
 }
 
 export class Phase1ArtifactError extends Error {
@@ -189,10 +238,9 @@ function artifactEntries(root: UnknownRecord): UnknownRecord[] {
 function sourceRefStrings(card: UnknownRecord): string[] {
   const sourceRefs = asRecord(card.source_refs)
   return [
-    asString(sourceRefs.source_file_id),
     sourceRefs.source_page == null ? '' : `Page ${String(sourceRefs.source_page)}`,
+    asString(sourceRefs.source_item_number) ? `Item ${asString(sourceRefs.source_item_number)}` : '',
     asString(sourceRefs.source_section),
-    asString(sourceRefs.source_item_number),
   ].filter(Boolean)
 }
 
@@ -223,12 +271,32 @@ function normalizeWeather(card: UnknownRecord): Phase1WeatherViewModel | null {
     ...asStringArray(weather.weather_sources),
   ].filter((value, index, all) => all.indexOf(value) === index)
 
-  if (claimText) return { status: 'available', text: claimText, sourceIds }
+  const measurementsRecord = asRecord(weather.measurements)
+  const measurements = Object.entries(measurementsRecord)
+    .filter(([, value]) => typeof value === 'number')
+    .map(([key, value]) => `${humanize(key)}: ${String(value)}`)
+  const windowRecord = asRecord(weather.requested_window)
+  const requestedWindow = asString(windowRecord.start_date) && asString(windowRecord.end_date)
+    ? `${asString(windowRecord.start_date)} to ${asString(windowRecord.end_date)}`
+    : null
+  if (claimText) return {
+    status: 'available',
+    text: claimText,
+    sourceIds,
+    failureReason: null,
+    provider: asString(weather.provider) || null,
+    requestedWindow,
+    measurements,
+  }
   if (weather.is_relevant_to_interpretation === true || asString(weather.status).includes('not_researched')) {
     return {
       status: 'unavailable',
       text: 'Environmental context is relevant to this finding, but no sourced weather result was returned.',
       sourceIds,
+      failureReason: asString(weather.failure_reason) || asString(weather.lookup_status) || 'lookup not completed',
+      provider: asString(weather.provider) || null,
+      requestedWindow,
+      measurements,
     }
   }
   return null
@@ -281,18 +349,35 @@ function normalizeFinding(
   const organization = asRecord(entry.organization)
   const epistemic = asRecord(entry.epistemic_states)
   const nextEvidence = asRecord(entry.smallest_useful_next_evidence)
+  const sourceEvidence = asRecord(card.source_evidence)
+  const primaryPhoto = asRecord(sourceEvidence.primary_photo)
+  const affectedLocation = asRecord(card.affected_location)
+  const reviewWorkflow = asRecord(card.review_workflow)
+  const reviewState = asRecord(asRecord(root.reviewState)[asString(entry.id)])
+  const reviewEvent = asRecord(reviewState.event)
+  const reviewNewValue = asRecord(reviewEvent.new_value)
+  const corrections = asRecord(reviewNewValue.corrections)
   const id = asString(entry.id) || asString(entry.finding_id) || `finding-${index + 1}`
-  const title = asString(card.finding_title) || asString(source.inspector_statement) || `Inspection finding ${index + 1}`
-  const known = asStringArray(card.what_we_know)
-  const unknown = asStringArray(card.what_we_dont_know)
-  const recommended = asString(card.recommended_next_step)
+  const title = asString(corrections.title) || asString(card.finding_title) || asString(source.inspector_statement) || `Inspection finding ${index + 1}`
+  const sourceKnown = asStringArray(card.what_we_know)
+  const sourceUnknown = asStringArray(card.what_we_dont_know)
+  const correctedKnown = asStringArray(corrections.known)
+  const correctedUnknown = asStringArray(corrections.unknown)
+  const known = correctedKnown.length ? correctedKnown : sourceKnown
+  const unknown = correctedUnknown.length ? correctedUnknown : sourceUnknown
+  const recommended = asString(corrections.next_step) || asString(card.recommended_next_step)
   const explicitMissing = asString(nextEvidence.next_evidence_needed)
   const missingInformation = explicitMissing && explicitMissing !== recommended ? [explicitMissing] : unknown
-  const priceLow = asNumber(card.price_low)
-  const priceHigh = asNumber(card.price_high)
-  const priced = priceLow !== null && priceHigh !== null && asString(card.pricing_contract_status) !== 'BLOCKED_MISSING_SOURCED_RANGE'
+  const correctedPrice = asRecord(corrections.price)
+  const correctedPriceLow = asNumber(correctedPrice.low)
+  const correctedPriceHigh = asNumber(correctedPrice.high)
+  const correctedPriceSource = asString(correctedPrice.source_reference)
+  const hasCorrectedPrice = correctedPriceLow !== null && correctedPriceHigh !== null && Boolean(correctedPriceSource)
+  const priceLow = hasCorrectedPrice ? correctedPriceLow : asNumber(card.price_low)
+  const priceHigh = hasCorrectedPrice ? correctedPriceHigh : asNumber(card.price_high)
+  const priced = priceLow !== null && priceHigh !== null && (hasCorrectedPrice || asString(card.pricing_contract_status) !== 'BLOCKED_MISSING_SOURCED_RANGE')
   const geography = asRecord(card.price_geography)
-  const priceSourceIds = asStringArray(card.price_source_refs)
+  const priceSourceIds = hasCorrectedPrice ? [correctedPriceSource] : asStringArray(card.price_source_refs)
   const weather = normalizeWeather(card)
   const contractor = asRecord(card.contractor_quote)
   const contractorAmount = asNumber(contractor.amount)
@@ -316,11 +401,16 @@ function normalizeFinding(
   const relatedFindings = [...rawRelated, ...(related.get(id) ?? [])]
     .filter((value, relatedIndex, all) => all.indexOf(value) === relatedIndex)
 
+  const rawReviewStatus = asString(reviewState.status) || asString(card.review_status) || 'needs_human_review'
+  const correctedLocation = asRecord(corrections.affected_location)
+  const locationText = asString(correctedLocation.location_text) || asString(affectedLocation.location_text)
+  const hasCorrectedLocation = Boolean(asString(correctedLocation.location_text))
   return {
     id,
     title,
     category: asString(organization.building_system) || asString(asRecord(card.source_refs).source_section) || 'Inspection findings',
     observation: asString(epistemic.source_observation) || asString(source.inspector_statement) || known[0] || title,
+    interpretation: asString(corrections.interpretation) || asString(epistemic.shelter_prep_interpretation) || 'Shelter Prep interpretation was not returned.',
     observedAt: asString(source.when_observed) || null,
     known,
     unknown,
@@ -328,8 +418,53 @@ function normalizeFinding(
     nextStep: recommended || explicitMissing || 'Human review is needed to choose the next step.',
     nextStepOwner: asString(card.next_step_owner) || 'human reviewer',
     whyNextStep: asString(card.why_next_step) || 'The artifact did not provide a next-step rationale.',
-    reviewStatus: asString(card.review_status) || 'needs_human_review',
-    reviewStatusLabel: reviewLabel(asString(card.review_status) || 'needs_human_review'),
+    reviewStatus: rawReviewStatus,
+    reviewStatusLabel: reviewLabel(rawReviewStatus),
+    reviewPriority: (['quick_review', 'careful_review', 'waiting_for_evidence'].includes(asString(reviewWorkflow.priority))
+      ? asString(reviewWorkflow.priority)
+      : 'careful_review') as Phase1FindingViewModel['reviewPriority'],
+    reviewReasons: asStringArray(reviewWorkflow.reasons),
+    reviewDecision: {
+      findingId: asString(reviewState.findingId) || null,
+      status: rawReviewStatus,
+      action: asString(reviewEvent.review_action) || null,
+      reason: asString(reviewEvent.reason) || null,
+      reviewerId: asString(reviewEvent.reviewer_id) || null,
+      reviewedAt: asString(reviewEvent.created_at) || null,
+      corrections,
+      deliveryEligible: reviewNewValue.delivery_eligible === true,
+    },
+    likelyTrade: asString(corrections.likely_trade) || asString(card.next_step_owner) || 'Human reviewer',
+    affectedLocation: {
+      orientation: asString(affectedLocation.orientation) || 'Unknown',
+      orientationStatus: (['explicit', 'inferred_low_confidence', 'unknown'].includes(asString(affectedLocation.orientation_status))
+        ? asString(affectedLocation.orientation_status)
+        : 'unknown') as Phase1AffectedLocation['orientationStatus'],
+      area: asString(affectedLocation.area) || 'Unknown',
+      level: asString(affectedLocation.level) || 'Unknown',
+      roomOrZone: asString(affectedLocation.room_or_zone) || 'Unknown',
+      element: asString(affectedLocation.element) || 'Unknown',
+      locationText: locationText || 'Location not established by the source evidence.',
+      sourceBasis: hasCorrectedLocation ? 'human_entered' : asString(affectedLocation.source_basis) || 'unknown',
+      confidence: hasCorrectedLocation ? 'human_reviewed' : asString(affectedLocation.confidence) || 'unknown',
+      needsConfirmation: !hasCorrectedLocation && asString(affectedLocation.status) === 'needs_location_confirmation',
+      resolutionPrompt: asString(affectedLocation.resolution_prompt) || 'Confirm the affected location from source evidence.',
+    },
+    sourceEvidence: {
+      documentName: asString(sourceEvidence.document_name) || 'Inspection report',
+      excerpt: asString(sourceEvidence.inspector_statement) || asString(sourceEvidence.source_excerpt) || asString(source.inspector_statement),
+      recommendation: asString(sourceEvidence.inspector_recommendation) || asString(source.inspector_recommendation),
+      page: asNumber(sourceEvidence.source_page) ?? asNumber(source.source_page),
+      itemNumber: asString(sourceEvidence.source_item_number) || asString(source.source_item_number),
+      section: asString(sourceEvidence.source_section) || asString(source.source_section),
+      primaryPhoto: Object.keys(primaryPhoto).length ? {
+        imageId: asString(primaryPhoto.image_id),
+        caption: asString(primaryPhoto.caption),
+        page: asNumber(primaryPhoto.source_page),
+        linked: asString(primaryPhoto.link_status) === 'linked',
+      } : null,
+      additionalEvidenceCount: asNumber(sourceEvidence.additional_evidence_count) ?? 0,
+    },
     evidenceReferences: evidenceRefStrings(card, entry),
     sources,
     price: {
@@ -337,9 +472,9 @@ function normalizeFinding(
       low: priced ? priceLow : null,
       high: priced ? priceHigh : null,
       label: priced ? rangeLabel(priceLow, priceHigh) ?? 'Not yet sourced' : 'Not yet sourced',
-      stage: humanize(asString(card.price_stage) || 'blocked_missing_sourced_range'),
+      stage: hasCorrectedPrice ? 'Human reviewed correction' : humanize(asString(card.price_stage) || 'blocked_missing_sourced_range'),
       geography: asString(geography.label) || humanize(asString(geography.most_defensible_available_geography)) || 'Geography not provided',
-      basis: asString(card.price_range_explanation) || 'No sourced repair range was returned.',
+      basis: hasCorrectedPrice ? `Human correction supported by ${correctedPriceSource}.` : asString(card.price_range_explanation) || 'No sourced repair range was returned.',
       sourceIds: priceSourceIds,
     },
     rangeHistory: normalizeHistory(card),
@@ -363,7 +498,7 @@ function propertyAddress(root: UnknownRecord): string | null {
 
 export function adaptPhase1ReasoningArtifact(
   input: unknown,
-  options: { mode: Phase1ArtifactMode },
+  options: { mode: Phase1ArtifactMode; audience?: 'reviewer' | 'agent' },
 ): Phase1ExperienceViewModel {
   if (!isRecord(input)) throw new Phase1ArtifactError('The reasoning response was not a structured object.')
   const entries = artifactEntries(input)
@@ -373,7 +508,11 @@ export function adaptPhase1ReasoningArtifact(
     throw new Phase1ArtifactError('Fixture-backed reasoning output is only allowed in explicit development/test mode.')
   }
   const related = relationMap(input, entries)
-  const findings = entries.map((entry, index) => normalizeFinding(input, entry, index, related))
+  const allFindings = entries.map((entry, index) => normalizeFinding(input, entry, index, related))
+  const audience = options.audience ?? 'reviewer'
+  const findings = audience === 'agent'
+    ? allFindings.filter((finding) => finding.reviewDecision.deliveryEligible && ['human_reviewed', 'human_verified'].includes(finding.reviewStatus))
+    : allFindings
   const categories = findings.map((finding) => finding.category).filter((value, index, all) => all.indexOf(value) === index)
   return {
     schemaVersion: asString(input.schemaVersion) || asString(input.schema_version) || 'unknown',
@@ -383,6 +522,8 @@ export function adaptPhase1ReasoningArtifact(
     findings,
     categories,
     openQuestionCount: findings.filter((finding) => finding.missingInformation.length > 0).length,
+    audience,
+    totalFindingCount: allFindings.length,
   }
 }
 

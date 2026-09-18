@@ -270,7 +270,7 @@ test('live frontend flow does not use an artifact URL or silently fall back to f
   const experience = await readFile(resolve('src/Phase1Experience.tsx'), 'utf8')
   const client = await readFile(resolve('src/phase1ProcessingClient.ts'), 'utf8')
   assert.doesNotMatch(experience, /VITE_PHASE1_REASONING_ARTIFACT_URL/)
-  assert.match(experience, /fixtureMode\s*\?\s*await loadPhase1ReasoningArtifact/)
+  assert.match(experience, /if \(fixtureMode\)[\s\S]*await loadPhase1ReasoningArtifact/)
   assert.match(experience, /processPhase1Evidence/)
   assert.match(experience, /resolvePhase1Property\(address\)/)
   assert.match(experience, /propertyId: propertyContext\?\.id \|\| ''/)
@@ -300,4 +300,48 @@ test('retained property context survives refresh and is rejected for a changed a
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('review actions are server-authoritative, preserve source layers, and validate price provenance', async () => {
+  const calls = []
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] }
+  const repo = {
+    async authenticate(token) { return token === 'authorized-token' ? { id: 'reviewer-1' } : null },
+    async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
+    async reviewFinding(value) { calls.push(value); return { findingId: 'finding-1', status: 'human_reviewed', eventId: 'event-1' } },
+  }
+  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact })
+  const result = await service.review({
+    token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
+    corrections: { title: 'Corrected title', price: { low: 1200, high: 2400, source_reference: 'Licensed contractor proposal dated 2026-09-18' } },
+    reason: 'Corrected against the attached proposal.',
+  })
+  assert.equal(result.status, 'human_reviewed')
+  assert.equal(calls[0].newValue.source_layer_preserved, true)
+  assert.equal(calls[0].newValue.ai_draft_preserved, true)
+  assert.equal(calls[0].newValue.delivery_eligible, true)
+  assert.deepEqual(artifact, { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] })
+  await assert.rejects(
+    service.review({
+      token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
+      corrections: { price: { low: 2400, high: 1200 } }, reason: 'Bad range.',
+    }),
+    (error) => error.code === 'invalid_price_correction',
+  )
+  await assert.rejects(
+    service.review({ token: '', requestId: 'request-1', observationId: 'observation-1', action: 'approve' }),
+    (error) => error.code === 'authorization_failed',
+  )
+  for (const action of ['approve', 'needs_more_info', 'reject']) {
+    const reason = action === 'approve' ? '' : `${action} reason`
+    await service.review({
+      token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action,
+      reason, fieldsApproved: action === 'approve' ? ['title', 'next_step'] : [],
+    })
+  }
+  assert.deepEqual(calls.slice(1).map((call) => call.action), ['approve', 'needs_more_info', 'reject'])
+  assert.equal(calls[1].newValue.delivery_eligible, true)
+  assert.deepEqual(calls[1].newValue.fields_approved, ['title', 'next_step'])
+  assert.equal(calls[2].newValue.delivery_eligible, false)
+  assert.equal(calls[3].newValue.delivery_eligible, false)
 })

@@ -9,6 +9,8 @@ export class ProcessingError extends Error {
 }
 
 export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
+  const REVIEW_ACTIONS = new Set(['approve', 'edit', 'needs_more_info', 'reject'])
+  const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'likely_trade', 'price', 'evidence_relationship'])
   async function requireActor(token) {
     if (!token) throw new ProcessingError('authorization_failed', 'Sign in is required to process property evidence.', 401)
     const actor = await repository.authenticate(token)
@@ -89,5 +91,40 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return request
   }
 
-  return { resolveProperty, upload, submit, status }
+  async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [] }) {
+    const actor = await requireActor(token)
+    if (!REVIEW_ACTIONS.has(action)) throw new ProcessingError('invalid_review_action', 'Choose Approve, Edit / Correct, Needs More Information, or Reject.')
+    if (!observationId) throw new ProcessingError('finding_required', 'Choose a finding to review.')
+    const invalidFields = Object.keys(corrections).filter((field) => !EDITABLE_FIELDS.has(field))
+    if (invalidFields.length) throw new ProcessingError('invalid_correction_fields', `Unsupported correction fields: ${invalidFields.join(', ')}.`)
+    if (action === 'edit' && !Object.keys(corrections).length) throw new ProcessingError('correction_required', 'Enter at least one correction before saving.')
+    if (corrections.price !== undefined) {
+      const price = corrections.price
+      if (!price || typeof price !== 'object'
+        || !Number.isFinite(price.low) || !Number.isFinite(price.high)
+        || price.low < 0 || price.high < price.low
+        || !String(price.source_reference || '').trim()) {
+        throw new ProcessingError('invalid_price_correction', 'A price correction requires a valid low/high range and source reference.')
+      }
+    }
+    if (['edit', 'needs_more_info', 'reject'].includes(action) && !String(reason).trim()) {
+      throw new ProcessingError('review_reason_required', 'Record the reason or exact missing information before continuing.')
+    }
+    const request = await repository.getProcessingRequest({ actor, requestId })
+    if (!request) throw new ProcessingError('authorization_failed', 'This processing request is not available.', 404)
+    const newValue = {
+      artifact_version: request.artifactVersion,
+      observation_id: observationId,
+      corrections,
+      fields_approved: action === 'approve' ? fieldsApproved : [],
+      delivery_eligible: action === 'approve' || action === 'edit',
+      source_layer_preserved: true,
+      ai_draft_preserved: true,
+    }
+    const result = await repository.reviewFinding({ actor, requestId, observationId, action, newValue, reason: String(reason).trim() })
+    if (!result) throw new ProcessingError('finding_not_found', 'This finding is not available for review.', 404)
+    return result
+  }
+
+  return { resolveProperty, upload, submit, status, review }
 }

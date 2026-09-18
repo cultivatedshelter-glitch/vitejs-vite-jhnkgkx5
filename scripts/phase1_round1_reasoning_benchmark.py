@@ -663,6 +663,168 @@ def source_stated_cause(text: str) -> str:
     return ""
 
 
+ORIENTATION_PATTERNS = [
+    ("NE", re.compile(r"\b(?:north[ -]?east|northeast)\b", re.I)),
+    ("NW", re.compile(r"\b(?:north[ -]?west|northwest)\b", re.I)),
+    ("SE", re.compile(r"\b(?:south[ -]?east|southeast)\b", re.I)),
+    ("SW", re.compile(r"\b(?:south[ -]?west|southwest)\b", re.I)),
+    ("N", re.compile(r"\bnorth(?:ern)?\b", re.I)),
+    ("E", re.compile(r"\beast(?:ern)?\b", re.I)),
+    ("S", re.compile(r"\bsouth(?:ern)?\b", re.I)),
+    ("W", re.compile(r"\bwest(?:ern)?\b", re.I)),
+    ("front", re.compile(r"\bfront(?: side| elevation| exterior)?\b", re.I)),
+    ("rear", re.compile(r"\b(?:rear|back)(?: side| elevation| exterior)?\b", re.I)),
+    ("left", re.compile(r"\bleft(?: side| elevation| exterior)\b", re.I)),
+    ("right", re.compile(r"\bright(?: side| elevation| exterior)\b", re.I)),
+]
+
+LEVEL_PATTERNS = [
+    ("crawlspace", re.compile(r"\bcrawl\s*space\b", re.I)),
+    ("basement", re.compile(r"\bbasement\b", re.I)),
+    ("first floor", re.compile(r"\b(?:first|1st) floor\b", re.I)),
+    ("second floor", re.compile(r"\b(?:second|2nd) floor\b", re.I)),
+    ("attic", re.compile(r"\battic\b", re.I)),
+    ("roof", re.compile(r"\broof\b", re.I)),
+]
+
+ROOM_PATTERNS = [
+    ("kitchen", re.compile(r"\bkitchen\b", re.I)),
+    ("laundry", re.compile(r"\blaundry\b", re.I)),
+    ("garage", re.compile(r"\bgarage\b", re.I)),
+    ("primary bathroom", re.compile(r"\b(?:primary|master) bathroom\b", re.I)),
+    ("bathroom", re.compile(r"\bbathroom\b", re.I)),
+    ("bedroom", re.compile(r"\bbedroom\b", re.I)),
+    ("living room", re.compile(r"\bliving room\b", re.I)),
+    ("family room", re.compile(r"\bfamily room\b", re.I)),
+]
+
+AREA_PATTERNS = [
+    ("siding", re.compile(r"\bsiding\b", re.I)),
+    ("eave", re.compile(r"\beaves?\b", re.I)),
+    ("chimney", re.compile(r"\bchimney\b", re.I)),
+    ("porch", re.compile(r"\bporch\b", re.I)),
+    ("deck", re.compile(r"\bdeck(?:ing)?\b", re.I)),
+    ("foundation", re.compile(r"\bfoundation\b", re.I)),
+    ("window", re.compile(r"\bwindows?\b", re.I)),
+    ("roof plane", re.compile(r"\broof(?: plane| covering)?\b", re.I)),
+    ("valley", re.compile(r"\bvalley\b", re.I)),
+    ("walkway", re.compile(r"\bwalkways?\b", re.I)),
+]
+
+ELEMENT_PATTERNS = [
+    ("window", re.compile(r"\bwindows?\b", re.I)),
+    ("trim joint", re.compile(r"\btrim\b", re.I)),
+    ("siding seam", re.compile(r"\bsiding\b", re.I)),
+    ("footing", re.compile(r"\bfooting\b", re.I)),
+    ("vent", re.compile(r"\bvents?\b", re.I)),
+    ("flashing", re.compile(r"\bflashings?\b", re.I)),
+    ("receptacle", re.compile(r"\breceptacles?\b", re.I)),
+    ("alarm", re.compile(r"\b(?:smoke|carbon monoxide|co) alarms?\b", re.I)),
+    ("toilet", re.compile(r"\btoilets?\b", re.I)),
+]
+
+
+def first_pattern_value(text: str, patterns: list[tuple[str, re.Pattern[str]]]) -> str | None:
+    return next((value for value, pattern in patterns if pattern.search(text)), None)
+
+
+def normalize_affected_location(finding: dict[str, Any], captions: list[dict[str, Any]]) -> dict[str, Any]:
+    explicit_locations = [clean_inline(value) for value in finding.get("locations", []) if clean_inline(value)]
+    report_text = clean_inline(
+        " ".join(
+            [
+                finding.get("source_section", ""),
+                finding.get("title", ""),
+                finding.get("inspector_statement", ""),
+                *explicit_locations,
+            ]
+        )
+    )
+    caption_text = clean_inline(" ".join(caption.get("caption", "") for caption in captions))
+    orientation = first_pattern_value(report_text, ORIENTATION_PATTERNS)
+    orientation_basis = "explicit_report_text" if orientation else "unknown"
+    if not orientation and caption_text:
+        orientation = first_pattern_value(caption_text, ORIENTATION_PATTERNS)
+        orientation_basis = "explicit_photo_caption" if orientation else "unknown"
+
+    level = first_pattern_value(report_text, LEVEL_PATTERNS)
+    room_or_zone = first_pattern_value(report_text, ROOM_PATTERNS)
+    area = first_pattern_value(report_text, AREA_PATTERNS)
+    element = first_pattern_value(report_text, ELEMENT_PATTERNS)
+    location_text = explicit_locations[0] if explicit_locations else clean_inline(
+        ", ".join(value for value in [orientation, level, room_or_zone, area, element] if value)
+    )
+    has_explicit_location = bool(location_text)
+    source_basis = "explicit_report_text" if has_explicit_location else "unknown"
+    if not has_explicit_location and caption_text:
+        caption_location = clean_inline(
+            ", ".join(
+                value
+                for value in [
+                    first_pattern_value(caption_text, LEVEL_PATTERNS),
+                    first_pattern_value(caption_text, ROOM_PATTERNS),
+                    first_pattern_value(caption_text, AREA_PATTERNS),
+                    first_pattern_value(caption_text, ELEMENT_PATTERNS),
+                ]
+                if value
+            )
+        )
+        if caption_location:
+            location_text = caption_location
+            source_basis = "explicit_photo_caption"
+
+    return {
+        "orientation": orientation,
+        "orientation_status": "explicit" if orientation else "unknown",
+        "orientation_source_basis": orientation_basis,
+        "area": area,
+        "level": level,
+        "room_or_zone": room_or_zone,
+        "element": element,
+        "location_text": location_text or "Location not established by the source evidence.",
+        "source_basis": source_basis,
+        "source_refs": {
+            "source_file_id": finding.get("source_file_id", ""),
+            "source_page": finding.get("source_page"),
+            "source_item_number": finding.get("source_item_number", ""),
+            "photo_caption_ids": [caption.get("id", "") for caption in captions if caption.get("id")],
+        },
+        "confidence": "high" if explicit_locations else "medium" if source_basis != "unknown" else "unknown",
+        "status": "source_supported" if source_basis != "unknown" else "needs_location_confirmation",
+        "resolution_prompt": (
+            "Confirm photo direction or mark the affected area on the property diagram."
+            if not orientation
+            else "No orientation confirmation is required from the current source text."
+        ),
+    }
+
+
+def build_review_workflow(record: dict[str, Any]) -> dict[str, Any]:
+    domain = record.get("organization", {}).get("domain_key", "")
+    category = record.get("organization", {}).get("technical_attention_category", "")
+    location = record.get("affected_location", {})
+    evidence = record.get("evidence_links", {})
+    reasons: list[str] = ["interpretation_check"]
+    careful_domains = {"roof", "electrical", "moisture_envelope", "life_safety", "crawlspace_drainage_pest_pathway"}
+    if domain in careful_domains or category in {"active_damage_or_water", "safety_or_habitability", "structural_or_movement"}:
+        reasons.append("high_consequence_system")
+    if location.get("status") == "needs_location_confirmation":
+        reasons.append("needs_location_confirmation")
+    if not evidence.get("image_ids"):
+        reasons.append("image_unavailable")
+    if record.get("localized_cost_context", {}).get("status") == "blocked_missing_sourced_range":
+        reasons.append("missing_price_source")
+
+    if location.get("status") == "needs_location_confirmation" and not evidence.get("image_ids"):
+        priority = "waiting_for_evidence"
+    elif any(reason in reasons for reason in ["high_consequence_system", "needs_location_confirmation"]):
+        priority = "careful_review"
+    else:
+        priority = "quick_review"
+        reasons.append("ready_for_quick_approval")
+    return {"priority": priority, "reasons": reasons, "status": "needs_review"}
+
+
 def environmental_context_relevance(conditions: list[str], mechanisms: list[str]) -> bool:
     mechanism_set = set(mechanisms)
     return bool(
@@ -1102,6 +1264,7 @@ def evidence_maps(cache: dict[str, Any]) -> dict[str, Any]:
         "images_by_caption_id": images_by_caption_id,
         "images_by_id": images_by_id,
         "visual_records_by_hash": visual_records_by_hash,
+        "source_document": cache.get("sourceDocument", {}),
     }
 
 
@@ -1213,6 +1376,7 @@ def build_atomic_observation(
             "issues": extraction_issues,
         },
     }
+    record["affected_location"] = normalize_affected_location(finding, captions)
     record["smallest_useful_next_evidence"] = make_next_evidence(record)
     record["recommended_next_step"] = {
         "move": record["smallest_useful_next_evidence"]["next_evidence_needed"],
@@ -1222,6 +1386,7 @@ def build_atomic_observation(
     }
     record["environmental_context"] = build_environmental_context(observed_when, conditions, mechanisms, property_report)
     record["localized_cost_context"] = build_localized_cost_context(record, property_report)
+    record["review_workflow"] = build_review_workflow(record)
     record["known_facts"] = [
         fact
         for fact in [
@@ -1234,6 +1399,30 @@ def build_atomic_observation(
         if fact
     ]
     record["finding_card"] = build_unpriced_finding_card(record)
+    record["finding_card"]["finding_title"] = finding.get("title") or record["finding_card"]["finding_title"]
+    record["finding_card"]["affected_location"] = record["affected_location"]
+    record["finding_card"]["review_workflow"] = record["review_workflow"]
+    record["finding_card"]["source_evidence"] = {
+        "document_name": maps.get("source_document", {}).get("filename", "Inspection report"),
+        "source_excerpt": finding.get("source_excerpt", ""),
+        "inspector_statement": finding.get("inspector_statement", ""),
+        "inspector_recommendation": finding.get("inspector_recommendation", ""),
+        "source_page": finding.get("source_page"),
+        "source_item_number": finding.get("source_item_number", ""),
+        "source_section": finding.get("source_section", ""),
+        "primary_photo": (
+            {
+                "image_id": images[0].get("id", ""),
+                "caption_id": captions[0].get("id", "") if captions else "",
+                "caption": captions[0].get("caption", "") if captions else "",
+                "source_page": images[0].get("source_page"),
+                "link_status": "linked",
+            }
+            if images
+            else None
+        ),
+        "additional_evidence_count": max(len(images) + len(captions) - 1, 0),
+    }
     return record
 
 
@@ -2359,6 +2548,39 @@ Sewer and private systems are not inspected.""",
         assert record["finding_card"]["price_low"] is None
         assert record["finding_card"]["price_high"] is None
         assert record["finding_card"]["recommended_next_step"]
+        assert record["affected_location"]["orientation_status"] in {"explicit", "unknown"}
+        assert record["affected_location"]["orientation_status"] != "inferred_low_confidence"
+        assert record["finding_card"]["source_evidence"]["inspector_statement"]
+        assert record["review_workflow"]["priority"] in {"quick_review", "careful_review", "waiting_for_evidence"}
+    explicit_location = normalize_affected_location(
+        {
+            "source_file_id": "synthetic-source",
+            "source_page": 2,
+            "source_item_number": "12",
+            "source_section": "Exterior",
+            "title": "West wall siding",
+            "inspector_statement": "Damage at west exterior wall",
+            "locations": ["West exterior wall"],
+        },
+        [],
+    )
+    unknown_location = normalize_affected_location(
+        {
+            "source_file_id": "synthetic-source",
+            "source_page": 2,
+            "source_item_number": "13",
+            "source_section": "General",
+            "title": "Damaged finish",
+            "inspector_statement": "Damaged finish observed",
+            "locations": [],
+        },
+        [],
+    )
+    assert explicit_location["orientation"] == "W"
+    assert explicit_location["orientation_source_basis"] == "explicit_report_text"
+    assert unknown_location["orientation"] is None
+    assert unknown_location["source_basis"] == "unknown"
+    assert unknown_location["status"] == "needs_location_confirmation"
     assert artifact["incompleteExtractionIssues"][0]["issue"] == "missing_source_page"
     records_by_id = {record["id"]: record for record in artifact["atomicObservations"]}
     assert location_relationship(

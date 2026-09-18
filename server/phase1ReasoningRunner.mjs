@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { enrichPhase1EnvironmentalContext } from './phase1EnvironmentalEnrichment.mjs'
 
 const SCRIPT = resolve('scripts/phase1_round1_reasoning_benchmark.py')
 
@@ -33,7 +34,10 @@ export async function runExistingPhase1Reasoning({ evidence }) {
       '--output-dir', workDir,
       '--output-file', outputName,
     ])
-    return JSON.parse(await readFile(join(workDir, outputName), 'utf8'))
+    const artifact = JSON.parse(await readFile(join(workDir, outputName), 'utf8'))
+    return process.env.SHELTER_PREP_ENABLE_LIVE_WEATHER === 'true'
+      ? enrichPhase1EnvironmentalContext(artifact)
+      : artifact
   } finally {
     await rm(workDir, { recursive: true, force: true })
   }

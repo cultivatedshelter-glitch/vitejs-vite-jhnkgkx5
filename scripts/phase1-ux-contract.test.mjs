@@ -37,18 +37,24 @@ test('property asks one question and evidence uses four large action cards', () 
 test('finding UI renders adapter fields without embedding fixture findings', () => {
   for (const required of [
     'Development fixture',
-    'Observation',
-    'What we know',
-    "What we don't know",
-    'Next step',
+    'Inspector reported',
+    'Primary evidence',
+    'Affected location',
+    'Shelter Prep interpretation',
+    'Known',
+    'Unknown',
+    'Shelter Prep recommends',
     'Why this next step',
     'Missing information',
-    'Weather and environment',
+    'Environmental context',
     'Contractor input',
     'does not verify this finding',
-    'Price basis',
     'Range history',
     'Related findings',
+    'Approve',
+    'Edit / Correct',
+    'Needs More Information',
+    'Reject',
   ]) {
     assert.match(component, new RegExp(required, 'i'))
   }
@@ -58,7 +64,23 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
   assert.match(component, /finding\.weather &&/)
   assert.match(component, /loadPhase1ReasoningArtifact/)
   assert.doesNotMatch(component, /\$900|\$3,000|\$1,475|Ceiling water staining|Crawlspace moisture/)
-  assert.doesNotMatch(component, /human_verified|contractor_verified/)
+  assert.doesNotMatch(component, /reviewStatus\s*=\s*['"]human_verified/)
+})
+
+test('reviewer and agent views keep evidence, correction, and release states distinct', () => {
+  assert.match(component, /function AgentView/)
+  assert.match(component, /audienceFromLocation/)
+  assert.match(component, /reviewPhase1Finding/)
+  assert.match(component, /Source-supported price correction/)
+  assert.match(component, /Evidence relationship/)
+  assert.match(component, /Under review/)
+  assert.match(component, /Reviewed by Shelter Prep/)
+  const findingView = component.slice(component.indexOf('function FindingStep'), component.indexOf('function AgentView'))
+  assert.ok(findingView.indexOf('Primary evidence') < findingView.indexOf('Shelter Prep interpretation'))
+  assert.doesNotMatch(findingView, /sourceFileId|source_file_id|sha256|checksum/)
+  const agentView = component.slice(component.indexOf('function AgentView'), component.indexOf('function GapStep'))
+  assert.match(agentView, /finding\.nextStep/)
+  assert.doesNotMatch(agentView, /reviewerId|parser|review queue|source_file_id|sha256/)
 })
 
 test('secondary evidence, sources, context, and history use collapsed disclosure controls', () => {
