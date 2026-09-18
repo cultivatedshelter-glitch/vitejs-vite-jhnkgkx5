@@ -73,6 +73,15 @@ test('processing reflects artifact request state without simulated timers', () =
   assert.doesNotMatch(component, /setTimeout|activeTask|PROCESSING_TASKS/)
 })
 
+test('evidence stays visible until upload and request creation succeed', () => {
+  assert.match(component, /aria-label="Selected evidence" aria-live="polite"/)
+  assert.match(component, /file\.size \/ 1024 \/ 1024/)
+  assert.match(component, /Uploading evidence…/)
+  assert.match(component, /error && <p className="phase1-inline-error" role="alert">\{error\}<\/p>/)
+  assert.match(component, /state === 'queued' \|\| state === 'processing'[\s\S]*setStep\('processing'\)/)
+  assert.match(component, /else \{[\s\S]*setStep\('evidence'\)[\s\S]*setEvidenceError\(message\)/)
+})
+
 test('layout is mobile-first with stable controls, price-first stacking, and one primary action class', () => {
   assert.match(css, /@media \(max-width: 720px\)/)
   assert.match(css, /\.phase1-primary[\s\S]*?min-height: 52px/)

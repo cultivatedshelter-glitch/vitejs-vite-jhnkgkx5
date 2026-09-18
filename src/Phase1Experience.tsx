@@ -106,12 +106,16 @@ function PropertyStep({
 function EvidenceStep({
   files,
   note,
+  submitting,
+  error,
   onFiles,
   onNote,
   onContinue,
 }: {
   files: File[]
   note: string
+  submitting: boolean
+  error: string
   onFiles: (files: File[]) => void
   onNote: (value: string) => void
   onContinue: () => void
@@ -135,14 +139,15 @@ function EvidenceStep({
         <button className="phase1-evidence-option" type="button" onClick={() => noteRef.current?.focus()}><span className="phase1-option-icon" aria-hidden="true">?</span><strong>Type a note or question</strong><small>Describe the repair concern</small></button>
         <button className="phase1-evidence-option" type="button" onClick={() => cameraRef.current?.click()}><span className="phase1-option-icon phase1-camera-icon" aria-hidden="true" /><strong>Take a photo</strong><small>Use your camera</small></button>
       </div>
-      {files.length > 0 && <ul className="phase1-file-list" aria-label="Selected evidence">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}</li>)}</ul>}
+      {files.length > 0 && <ul className="phase1-file-list" aria-label="Selected evidence" aria-live="polite">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name} <small>{(file.size / 1024 / 1024).toFixed(1)} MB</small></li>)}</ul>}
       <label className="phase1-field">
         <span>Anything specific we should know? <small>Optional</small></span>
         <textarea ref={noteRef} rows={3} value={note} onChange={(event) => onNote(event.target.value)} placeholder="Add a note or repair question" />
       </label>
+      {error && <p className="phase1-inline-error" role="alert">{error}</p>}
       <p className="phase1-privacy"><span aria-hidden="true">✓</span> Your files are secure and private.</p>
       <div className="phase1-actions">
-        <button className="phase1-primary" type="button" disabled={!canContinue} onClick={onContinue}>Continue <span aria-hidden="true">→</span></button>
+        <button className="phase1-primary" type="button" disabled={!canContinue || submitting} onClick={onContinue}>{submitting ? 'Uploading evidence…' : <>Continue <span aria-hidden="true">→</span></>}</button>
       </div>
     </main>
   )
@@ -325,6 +330,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [propertyError, setPropertyError] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [note, setNote] = useState('')
+  const [evidenceSubmitting, setEvidenceSubmitting] = useState(false)
+  const [evidenceError, setEvidenceError] = useState('')
   const [processingState, setProcessingState] = useState<ProcessingState>('idle')
   const [processingError, setProcessingError] = useState('')
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
@@ -428,25 +435,44 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   }
 
   async function organizeEvidence() {
-    setStep('processing')
     setProcessingState('idle')
     setProcessingError('')
+    setEvidenceError('')
+    setEvidenceSubmitting(true)
+    let processingStarted = false
     try {
+      if (fixtureMode) setStep('processing')
       const result = fixtureMode
         ? await loadPhase1ReasoningArtifact({ mode: 'fixture' })
         : adaptPhase1ReasoningArtifact(await processPhase1Evidence({
           propertyId: propertyContext?.id || '',
           files,
           note,
-          onState: setProcessingState,
+          onState: (state) => {
+            setProcessingState(state)
+            if (state === 'queued' || state === 'processing') {
+              processingStarted = true
+              setStep('processing')
+            }
+          },
         }), { mode: 'live' })
       setArtifact(result)
       setFindingIndex(0)
       setProcessingState('completed')
     } catch (error) {
       setArtifact(null)
-      setProcessingState('failed')
-      setProcessingError(error instanceof Error ? error.message : 'Processing failed. The selected evidence was not replaced with fixture data.')
+      const message = error instanceof Error ? error.message : 'Processing failed. The selected evidence was not replaced with fixture data.'
+      if (processingStarted || fixtureMode) {
+        setStep('processing')
+        setProcessingState('failed')
+        setProcessingError(message)
+      } else {
+        setStep('evidence')
+        setProcessingState('idle')
+        setEvidenceError(message)
+      }
+    } finally {
+      setEvidenceSubmitting(false)
     }
   }
 
@@ -473,7 +499,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     <div className="phase1-shell">
       <PhaseHeader step={step} email={fixtureMode ? undefined : session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} />
       {step === 'property' && <PropertyStep address={address} resolving={propertyResolving} error={propertyError} onAddressChange={changeAddress} onContinue={() => void continueFromProperty()} />}
-      {step === 'evidence' && <EvidenceStep files={files} note={note} onFiles={setFiles} onNote={setNote} onContinue={() => void organizeEvidence()} />}
+      {step === 'evidence' && <EvidenceStep files={files} note={note} submitting={evidenceSubmitting} error={evidenceError} onFiles={(nextFiles) => { setFiles(nextFiles); setEvidenceError('') }} onNote={setNote} onContinue={() => void organizeEvidence()} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
       {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={(index) => { setFindingIndex(index); setStep('finding') }} />}
       {step === 'finding' && artifact && finding && <FindingStep finding={finding} isFixture={artifact.isFixture} onBack={() => setStep('overview')} onContinue={() => setStep(finding.missingInformation.length ? 'gap' : 'next')} />}

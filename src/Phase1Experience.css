@@ -68,7 +68,8 @@ button { color: inherit; }
 .phase1-camera-icon::before { width: 20px; height: 14px; border: 2px solid #27583f; border-radius: 3px; content: ""; }
 .phase1-camera-icon::after { position: absolute; width: 6px; height: 6px; border: 2px solid #27583f; border-radius: 50%; content: ""; }
 .phase1-file-list { margin: 0 0 24px; padding: 0; list-style: none; }
-.phase1-file-list li { overflow-wrap: anywhere; padding: 11px 0; border-bottom: 1px solid #e2e3df; color: #4d5a51; font-size: 14px; }
+.phase1-file-list li { display: flex; justify-content: space-between; gap: 16px; overflow-wrap: anywhere; padding: 11px 0; border-bottom: 1px solid #e2e3df; color: #4d5a51; font-size: 14px; }
+.phase1-file-list small { flex: none; color: #6f7a72; }
 .phase1-privacy { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 24px 0 0; color: #79817b; font-size: 13px; }
 .phase1-privacy span { color: #2e684a; }
 .phase1-hidden-input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }

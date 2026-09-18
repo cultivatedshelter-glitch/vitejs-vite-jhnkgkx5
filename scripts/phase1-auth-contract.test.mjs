@@ -18,10 +18,19 @@ test('guided intake uses a minimal Supabase email and password session', () => {
 })
 
 test('authenticated user context is retained with the Property workspace', () => {
-  assert.match(client, /userId: data\.session\.user\.id/)
+  assert.match(client, /userId: verified\.data\.user\.id/)
   assert.match(client, /return \{ id: property\.id, address:[^}]+userId \}/)
   assert.match(context, /propertyContextBelongsToUser/)
   assert.match(context, /value\.userId/)
+})
+
+test('live requests verify cached sessions, refresh expiring tokens, and retry one unauthorized response', () => {
+  assert.match(client, /supabase\.auth\.getUser\(session\.access_token\)/)
+  assert.match(client, /supabase\.auth\.refreshSession\(\)/)
+  assert.match(client, /expires_at[\s\S]*Date\.now\(\)/)
+  assert.match(client, /\/api\/phase1\/evidence'[\s\S]*verifySession: true/)
+  assert.match(client, /result\.response\.status === 401[\s\S]*send\(true\)/)
+  assert.match(client, /Your session expired\. Sign in again before uploading evidence\./)
 })
 
 test('test identity provisioning stays server-only and project-pinned', () => {
