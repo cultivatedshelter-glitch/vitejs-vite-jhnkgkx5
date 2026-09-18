@@ -369,3 +369,18 @@ test('completed human review releases once and delivery failure cannot erase app
   assert.equal(errors.length, 1)
   assert.equal(first.status, 'human_verified')
 })
+
+test('normal agents cannot invoke review mutations', async () => {
+  let mutationCalled = false
+  const repo = {
+    async authenticate() { return { id: 'agent-1' } },
+    async isReviewer() { return false },
+    async reviewFinding() { mutationCalled = true },
+  }
+  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => ({}) })
+  await assert.rejects(
+    service.review({ token: 'agent-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' }),
+    (error) => error.code === 'authorization_failed' && error.status === 403,
+  )
+  assert.equal(mutationCalled, false)
+})

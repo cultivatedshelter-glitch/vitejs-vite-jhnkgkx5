@@ -106,6 +106,9 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
 
   async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [] }) {
     const actor = await requireActor(token)
+    if (repository.isReviewer && !await repository.isReviewer(actor.id)) {
+      throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
+    }
     if (!REVIEW_ACTIONS.has(action)) throw new ProcessingError('invalid_review_action', 'Choose Approve, Edit / Correct, Needs More Information, or Reject.')
     if (!observationId) throw new ProcessingError('finding_required', 'Choose a finding to review.')
     const invalidFields = Object.keys(corrections).filter((field) => !EDITABLE_FIELDS.has(field))
