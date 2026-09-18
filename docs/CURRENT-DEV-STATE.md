@@ -329,3 +329,15 @@ Date: 2026-09-17
 - Real outbound email and remote HTTPS deployment remain blocked because `RESEND_API_KEY`, `SHELTER_PREP_REVIEW_EMAIL`, a verified sender, and Railway credentials/project are not configured.
 - The current Supabase project remains development-only and contains test identities/data. Recommendation: use a separate production Supabase project for real pilot agents. No second project was created, no real pilot data was moved, no DNS record was changed, and `main` was not modified.
 - `npm test` passes with 63 tests, the focused Phase 1 suite passes with 57 tests, all eight Python self-tests pass, `npm run build` passes, the local production-mode HTTP smoke test passes, and `git diff --check` passes. The repository defines no lint script.
+
+## Round 1Q Numbered Inspection Report Extraction
+
+- Diagnosed the production `atomic observations are missing` failure against the authorized real report without committing or logging its contents. PDF extraction succeeded for all 131 pages and produced 71,790 text characters, but the original parser recognized only fixed issue-section headings and `N)` recommendations. It therefore produced zero normalized findings and serialized an otherwise versioned artifact with zero observations.
+- Added deterministic support for reports that index findings with hierarchical item numbers and provide detailed observation/recommendation blocks. The parser joins blocks that cross page boundaries, preserves detail and summary page provenance, keeps source item numbers, and does not invent recommendations when the source supplies none.
+- Bumped the shared evidence-cache schema to v2 so prior zero-finding caches are rebuilt. NUL characters emitted by PDF extraction are removed during text normalization.
+- Added a second deterministic cover-header form for source-backed inspection dates. Observation date remains distinct from upload time.
+- Zero-finding reports now fail at extraction with explicit page/text diagnostics. They no longer continue to generic artifact validation, and validation itself remains unchanged.
+- The same production report format now yields 31 normalized findings and 31 atomic observations. Every observation has source page, item number, inspection date, and provenance. The unchanged server validator passes, and the existing frontend adapter produces 31 non-fixture finding view models.
+- Production verification against `lbyzkvbtolpwrvjfbhlq` completed through the existing authenticated API and reused the already-uploaded private evidence object. The new run persisted one artifact, reached pipeline status `needs_review` and stage `human_review`, rendered 31 findings in the live UI, and sent one `needs_review` reviewer email with a recorded provider message.
+- The original failed run persisted no model artifact. Its evidence remains durably linked to both the failed run and the successful verification run, so no orphaned evidence or partial artifact was created by this failure.
+- `npm test` passes with 66 tests, `npm run build` passes, and `git diff --check` passes. The repository defines no lint script.
