@@ -88,8 +88,9 @@ export function createPhase1NotificationService({ repository, provider, recipien
     notifyProcessingFailed: ({ requestId }) => notify({ eventType: 'processing_failed', requestId }),
     notifyReviewedResult: async ({ requestId, artifact }) => {
       const context = await repository.getNotificationContext(requestId)
-      if (!context.submittingEmail) throw new Error('The submitting agent has no deliverable email address.')
-      return notify({ eventType: 'reviewed_result_ready', requestId, artifact, recipientOverride: context.submittingEmail })
+      const deliveryRecipient = context.deliveryRecipient || context.submittingEmail
+      if (!deliveryRecipient) throw new Error('The submission has no deliverable result recipient.')
+      return notify({ eventType: 'reviewed_result_ready', requestId, artifact, recipientOverride: deliveryRecipient })
     },
   }
 }

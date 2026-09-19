@@ -139,7 +139,23 @@ export function createPhase1SupabaseRepository() {
       const { data, error } = await admin.auth.getUser(token)
       if (error || !data.user) return null
       tokens.set(data.user.id, token)
-      return { id: data.user.id }
+      return { id: data.user.id, email: data.user.email || null }
+    },
+
+    async getActorProfile({ actor }) {
+      const { data, error } = await admin.from('profiles')
+        .select('id,email,full_name,role,active')
+        .eq('id', actor.id)
+        .maybeSingle()
+      if (error) throw new Error(`Profile lookup failed: ${error.message}`)
+      return {
+        id: actor.id,
+        email: data?.email || actor.email || null,
+        fullName: data?.full_name || null,
+        role: data?.active === true ? data.role : 'viewer',
+        active: data?.active === true,
+        isReviewer: data?.active === true && ['owner', 'admin'].includes(data.role),
+      }
     },
 
     async canAccessProperty(actorId, propertyId) {
@@ -244,29 +260,142 @@ export function createPhase1SupabaseRepository() {
       }
     },
 
+    async validateEvidenceReferences({ actor, propertyId, evidenceReferences }) {
+      const client = userClient(tokens.get(actor.id))
+      const ids = evidenceReferences.map((item) => item.id).filter(Boolean)
+      if (!ids.length) return false
+      const { data, error } = await client.from('inspection_reports')
+        .select('id,source_file_id')
+        .eq('property_id', propertyId)
+        .in('id', ids)
+      if (error) throw new Error(`Evidence validation failed: ${error.message}`)
+      const byId = new Map((data || []).map((item) => [item.id, item]))
+      return evidenceReferences.every((reference) => byId.get(reference.id)?.source_file_id === reference.sourceFileId)
+    },
+
     async releaseEvidence(evidence) {
       const dirs = [...new Set(evidence.map((item) => item.workDir).filter(Boolean))]
       await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })))
     },
 
-    async createProcessingRequest({ actor, propertyId, evidenceReferences, note }) {
+    async createProcessingRequest({ actor, propertyId, evidenceReferences, note, deliveryRecipient = null, draft = false }) {
       const primary = evidenceReferences[0]
       const inputHash = createHash('sha256').update(JSON.stringify({ propertyId, evidenceReferences, note })).digest('hex')
+      const profile = await this.getActorProfile({ actor })
+      const recipientEmail = String(deliveryRecipient?.email || profile.email || '').trim().toLowerCase()
+      const recipientName = String(deliveryRecipient?.name || '').trim() || null
+      const recipientSource = deliveryRecipient?.source === 'manually_changed' ? 'manually_changed' : 'submitter_default'
       const { data, error } = await admin.from('inspection_pipeline_runs').insert({
         property_id: propertyId,
         inspection_report_id: primary.id,
         source_file_id: primary.sourceFileId,
         input_hash: inputHash,
         requested_by: actor.id,
+        submitter_name: profile.fullName,
+        submitter_email: profile.email,
+        delivery_recipient_name: recipientName,
+        delivery_recipient_email: recipientEmail,
+        delivery_recipient_source: recipientSource,
         stage_statuses: { evidence_references: evidenceReferences, note, upload_status: 'uploaded' },
-        status: 'queued',
+        current_stage: draft ? 'submission_review' : 'document_extraction',
+        workflow_state: draft ? 'draft' : 'submitted',
+        next_responsible_role: draft ? 'submitter' : 'system',
+        next_action: draft ? 'Review and submit evidence' : 'Process submitted evidence',
+        last_activity_at: new Date().toISOString(),
+        submitted_at: draft ? null : new Date().toISOString(),
+        status: draft ? 'draft' : 'queued',
       }).select('*').single()
       if (error) throw new Error(`Processing request failed: ${error.message}`)
-      return { id: data.id, propertyId, processingStatus: 'queued', createdAt: data.created_at }
+      return { id: data.id, propertyId, processingStatus: data.status, createdAt: data.created_at }
+    },
+
+    async finalizeSubmission({ actor, requestId, deliveryRecipient }) {
+      const { data: existing, error: lookupError } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,requested_by,status,submitter_email,delivery_recipient_email,delivery_recipient_name,delivery_recipient_source,stage_statuses')
+        .eq('id', requestId)
+        .eq('requested_by', actor.id)
+        .maybeSingle()
+      if (lookupError) throw new Error(`Submission lookup failed: ${lookupError.message}`)
+      if (!existing || existing.status !== 'draft') return null
+      const email = String(deliveryRecipient?.email || existing.delivery_recipient_email || existing.submitter_email || '').trim().toLowerCase()
+      const name = String(deliveryRecipient?.name || existing.delivery_recipient_name || '').trim() || null
+      const source = email === String(existing.submitter_email || '').trim().toLowerCase() ? 'submitter_default' : 'manually_changed'
+      const now = new Date().toISOString()
+      const { data, error } = await admin.from('inspection_pipeline_runs').update({
+        delivery_recipient_name: name,
+        delivery_recipient_email: email,
+        delivery_recipient_source: source,
+        submitted_at: now,
+        status: 'queued',
+        current_stage: 'document_extraction',
+        workflow_state: 'submitted',
+        next_responsible_role: 'system',
+        next_action: 'Process submitted evidence',
+        last_activity_at: now,
+      }).eq('id', requestId).eq('status', 'draft').select('*').maybeSingle()
+      if (error) throw new Error(`Submission finalization failed: ${error.message}`)
+      if (!data) return null
+      const { error: eventError } = await admin.from('workflow_events').insert({
+        property_id: existing.property_id,
+        actor_id: actor.id,
+        actor_type: 'agent',
+        event_type: 'phase1_submission_created',
+        event_title: 'Phase 1 evidence submitted for review',
+        object_type: 'inspection_pipeline_run',
+        object_id: requestId,
+        metadata: {
+          delivery_recipient_email: email,
+          delivery_recipient_name: name,
+          delivery_recipient_source: source,
+          evidence_count: (existing.stage_statuses?.evidence_references || []).length,
+        },
+      })
+      if (eventError) {
+        await admin.from('inspection_pipeline_runs').update({
+          status: 'draft',
+          current_stage: 'submission_review',
+          workflow_state: 'draft',
+          next_responsible_role: 'submitter',
+          next_action: 'Review and submit evidence',
+          submitted_at: null,
+          last_activity_at: now,
+        }).eq('id', requestId).eq('status', 'queued')
+        throw new Error(`Submission audit event failed: ${eventError.message}`)
+      }
+      return { ...data, evidenceReferences: data.stage_statuses?.evidence_references || [], note: data.stage_statuses?.note || '' }
+    },
+
+    async updateSubmissionDraft({ actor, requestId, propertyId, evidenceReferences, note, deliveryRecipient }) {
+      const { data: existing, error: lookupError } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,requested_by,status,submitter_email,stage_statuses')
+        .eq('id', requestId)
+        .eq('property_id', propertyId)
+        .eq('requested_by', actor.id)
+        .maybeSingle()
+      if (lookupError) throw new Error(`Submission draft lookup failed: ${lookupError.message}`)
+      if (!existing || existing.status !== 'draft') return null
+      const email = String(deliveryRecipient?.email || existing.submitter_email || '').trim().toLowerCase()
+      const name = String(deliveryRecipient?.name || '').trim() || null
+      const primary = evidenceReferences[0]
+      const inputHash = createHash('sha256').update(JSON.stringify({ propertyId, evidenceReferences, note })).digest('hex')
+      const now = new Date().toISOString()
+      const { data, error } = await admin.from('inspection_pipeline_runs').update({
+        inspection_report_id: primary.id,
+        source_file_id: primary.sourceFileId,
+        input_hash: inputHash,
+        stage_statuses: { ...(existing.stage_statuses || {}), evidence_references: evidenceReferences, note, upload_status: 'uploaded' },
+        delivery_recipient_name: name,
+        delivery_recipient_email: email,
+        delivery_recipient_source: email === String(existing.submitter_email || '').trim().toLowerCase() ? 'submitter_default' : 'manually_changed',
+        last_activity_at: now,
+      }).eq('id', requestId).eq('status', 'draft').select('id,property_id,status,created_at').maybeSingle()
+      if (error) throw new Error(`Submission draft update failed: ${error.message}`)
+      return data ? { id: data.id, propertyId: data.property_id, processingStatus: data.status, createdAt: data.created_at } : null
     },
 
     async markProcessing(id) {
-      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'running', current_stage: 'document_extraction', started_at: new Date().toISOString() }).eq('id', id)
+      const now = new Date().toISOString()
+      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'running', current_stage: 'document_extraction', workflow_state: 'processing', next_responsible_role: 'system', next_action: 'Process submitted evidence', last_activity_at: now, started_at: now }).eq('id', id)
       if (error) throw new Error(error.message)
     },
 
@@ -317,18 +446,20 @@ export function createPhase1SupabaseRepository() {
         },
       }).eq('id', request.inspection_report_id)
       if (reportError) throw new Error(`Inspection report update failed: ${reportError.message}`)
-      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'needs_review', current_stage: 'human_review', completed_at: new Date().toISOString() }).eq('id', id)
+      const now = new Date().toISOString()
+      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'needs_review', current_stage: 'human_review', workflow_state: 'under_review', next_responsible_role: 'reviewer', next_action: `Review ${rows.length} remaining findings`, last_activity_at: now, completed_at: now }).eq('id', id)
       if (error) throw new Error(error.message)
     },
 
     async failProcessing(id, message) {
-      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'failed', error_message: message, completed_at: new Date().toISOString() }).eq('id', id)
+      const now = new Date().toISOString()
+      const { error } = await admin.from('inspection_pipeline_runs').update({ status: 'failed', workflow_state: 'failed', next_responsible_role: 'reviewer', next_action: 'Review processing failure', last_activity_at: now, error_message: message, completed_at: now }).eq('id', id)
       if (error) throw new Error(error.message)
     },
 
     async getNotificationContext(requestId) {
       const { data: request, error: requestError } = await admin.from('inspection_pipeline_runs')
-        .select('id, property_id, work_request_id, requested_by, stage_statuses')
+        .select('id, property_id, work_request_id, requested_by, stage_statuses, submitter_email, delivery_recipient_email')
         .eq('id', requestId)
         .single()
       if (requestError) throw new Error(`Notification request lookup failed: ${requestError.message}`)
@@ -360,6 +491,7 @@ export function createPhase1SupabaseRepository() {
         workRequestId: request.work_request_id,
         propertyAddress,
         submittingEmail,
+        deliveryRecipient: request.delivery_recipient_email || request.submitter_email || submittingEmail,
         evidenceSummary,
       }
     },
@@ -467,7 +599,45 @@ export function createPhase1SupabaseRepository() {
       const state = request.status === 'running' ? 'processing'
         : request.status === 'needs_review' ? (reviewer ? 'completed' : 'under_review')
           : request.status === 'completed' ? (reviewer ? 'completed' : 'ready') : request.status
-      return { id: request.id, propertyId: request.property_id, processingStatus: state, audience: reviewer ? 'reviewer' : 'agent', totalFindingCount, artifactVersion: artifact?.schemaVersion || artifact?.schema_version || null, artifact, error: request.error_message || null }
+      const evidenceIds = (request.stage_statuses?.evidence_references || []).map((item) => item.id).filter(Boolean)
+      const { data: reports, error: reportsError } = evidenceIds.length
+        ? await client.from('inspection_reports').select('id,source_file_id,original_filename,extraction_summary').in('id', evidenceIds)
+        : { data: [], error: null }
+      if (reportsError) throw new Error(reportsError.message)
+      const { data: property, error: propertyError } = await client.from('properties')
+        .select('source_address,address_line1,city,state,zip')
+        .eq('id', request.property_id)
+        .maybeSingle()
+      if (propertyError) throw new Error(propertyError.message)
+      const propertyAddress = property?.source_address || [property?.address_line1, property?.city, property?.state, property?.zip].filter(Boolean).join(', ') || 'Property address unavailable'
+      return {
+        id: request.id,
+        propertyId: request.property_id,
+        processingStatus: state,
+        audience: reviewer ? 'reviewer' : 'agent',
+        totalFindingCount,
+        artifactVersion: artifact?.schemaVersion || artifact?.schema_version || request.released_artifact_version || null,
+        artifact,
+        error: request.error_message || null,
+        submission: {
+          propertyAddress,
+          submitterName: request.submitter_name || null,
+          submitterEmail: request.submitter_email || actor.email || null,
+          submittedAt: request.submitted_at || request.created_at,
+          note: request.stage_statuses?.note || '',
+          evidence: (reports || []).map((report) => ({ id: report.id, sourceFileId: report.source_file_id, name: report.original_filename || 'Evidence file', mediaType: report.extraction_summary?.media_type || null })),
+          deliveryRecipientName: request.delivery_recipient_name || null,
+          deliveryRecipientEmail: request.delivery_recipient_email || request.submitter_email || actor.email || null,
+          deliveryRecipientSource: request.delivery_recipient_source || 'submitter_default',
+          workflowState: request.workflow_state || null,
+          nextResponsibleRole: request.next_responsible_role || null,
+          nextAction: request.next_action || null,
+          lastActivityAt: request.last_activity_at || request.updated_at || request.created_at,
+          lastViewedObservationId: request.last_viewed_observation_id || null,
+          releasedArtifactVersion: request.released_artifact_version || null,
+          releasedAt: request.released_at || null,
+        },
+      }
     },
 
     async getSourceDocument({ actor, requestId }) {
@@ -496,9 +666,9 @@ export function createPhase1SupabaseRepository() {
     async listReviewQueue({ actor }) {
       if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
       const { data: requests, error: requestError } = await admin.from('inspection_pipeline_runs')
-        .select('id,property_id,inspection_report_id,input_hash,requested_by,status,created_at,error_message')
+        .select('id,property_id,inspection_report_id,input_hash,requested_by,status,created_at,updated_at,last_activity_at,last_viewed_observation_id,workflow_state,next_responsible_role,next_action,submitter_name,submitter_email,delivery_recipient_email,released_artifact_version,released_at,error_message')
         .in('status', ['queued', 'running', 'needs_review', 'completed', 'failed'])
-        .order('created_at', { ascending: false })
+        .order('last_activity_at', { ascending: false })
         .limit(100)
       if (requestError) throw new Error(`Review queue lookup failed: ${requestError.message}`)
       const propertyIds = [...new Set((requests || []).map((item) => item.property_id).filter(Boolean))]
@@ -513,6 +683,12 @@ export function createPhase1SupabaseRepository() {
         const { data } = await admin.auth.admin.getUserById(id)
         if (data?.user?.email) emailById.set(id, data.user.email)
       }))
+      const requestIds = (requests || []).map((item) => item.id)
+      const { data: deliveries, error: deliveryError } = requestIds.length
+        ? await admin.from('phase1_notifications').select('processing_request_id,recipient,delivery_status,sent_at,provider_message_id,failure_reason,attempt_count').eq('event_type', 'reviewed_result_ready').in('processing_request_id', requestIds)
+        : { data: [], error: null }
+      if (deliveryError) throw new Error(`Review queue delivery lookup failed: ${deliveryError.message}`)
+      const deliveryByRequest = new Map((deliveries || []).map((item) => [item.processing_request_id, item]))
 
       const items = []
       for (const request of requests || []) {
@@ -531,28 +707,116 @@ export function createPhase1SupabaseRepository() {
           : { data: [] }
         const actionByEvent = new Map((events || []).map((event) => [event.id, event.review_action]))
         const waiting = (findings || []).some((finding) => actionByEvent.get(finding.review_event_id) === 'needs_more_info')
+        const reviewedCount = (findings || []).filter((finding) => !['ai_draft', 'needs_review'].includes(finding.review_status)).length
+        const remainingCount = Math.max((findings || []).length - reviewedCount, 0)
         const priorities = (modelRun?.output?.atomicObservations || []).map((entry) => entry.review_workflow?.priority).filter(Boolean)
         const priority = priorities.includes('waiting_for_evidence') ? 'waiting_for_evidence'
           : priorities.includes('careful_review') ? 'careful_review' : 'quick_review'
         const property = propertyById.get(request.property_id) || {}
         const propertyAddress = property.source_address || [property.address_line1, property.city, property.state, property.zip].filter(Boolean).join(', ')
         const queueStatus = request.status === 'failed' ? 'failed'
-          : request.status === 'completed' ? 'reviewed'
+          : request.status === 'completed' ? 'released'
             : waiting ? 'waiting_for_evidence'
-              : request.status === 'queued' || request.status === 'running' ? 'processing' : 'needs_review'
+              : request.status === 'queued' || request.status === 'running' ? 'processing'
+                : reviewedCount > 0 ? 'in_review' : 'needs_review'
         items.push({
           requestId: request.id,
           propertyId: request.property_id,
           propertyAddress: propertyAddress || 'Property address unavailable',
-          submittingAgent: emailById.get(request.requested_by) || 'Authenticated agent',
+          submittingAgent: request.submitter_name || request.submitter_email || emailById.get(request.requested_by) || 'Authenticated submitter',
           findingCount: (findings || []).length,
+          reviewedCount,
+          remainingCount,
           reviewPriority: priority,
           queueStatus,
           createdAt: request.created_at,
+          lastActivityAt: request.last_activity_at || request.updated_at || request.created_at,
+          lastViewedObservationId: request.last_viewed_observation_id || null,
+          nextResponsibleRole: request.next_responsible_role || (queueStatus === 'released' ? 'submitter' : 'reviewer'),
+          nextAction: request.next_action || (remainingCount ? `Review ${remainingCount} remaining findings` : 'Open request'),
+          deliveryRecipientEmail: request.delivery_recipient_email || request.submitter_email || null,
+          releasedArtifactVersion: request.released_artifact_version || null,
+          releasedAt: request.released_at || null,
+          delivery: deliveryByRequest.get(request.id) || null,
           error: request.error_message || null,
         })
       }
       return items
+    },
+
+    async listMyProperties({ actor }) {
+      const { data: requests, error } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,status,created_at,submitted_at,last_activity_at,workflow_state,next_responsible_role,next_action,delivery_recipient_email,delivery_recipient_name,released_artifact_version,released_at')
+        .eq('requested_by', actor.id)
+        .neq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (error) throw new Error(`Property history lookup failed: ${error.message}`)
+      const propertyIds = [...new Set((requests || []).map((item) => item.property_id).filter(Boolean))]
+      const { data: properties, error: propertyError } = propertyIds.length
+        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip').in('id', propertyIds)
+        : { data: [], error: null }
+      if (propertyError) throw new Error(`Property history address lookup failed: ${propertyError.message}`)
+      const propertyById = new Map((properties || []).map((item) => [item.id, item]))
+      const requestIds = (requests || []).map((item) => item.id)
+      const { data: deliveries, error: deliveryError } = requestIds.length
+        ? await admin.from('phase1_notifications').select('processing_request_id,recipient,delivery_status,sent_at,provider_message_id,failure_reason,attempt_count').eq('event_type', 'reviewed_result_ready').in('processing_request_id', requestIds)
+        : { data: [], error: null }
+      if (deliveryError) throw new Error(`Property history delivery lookup failed: ${deliveryError.message}`)
+      const deliveryByRequest = new Map((deliveries || []).map((item) => [item.processing_request_id, item]))
+      return (requests || []).map((request) => {
+        const property = propertyById.get(request.property_id) || {}
+        const address = property.source_address || [property.address_line1, property.city, property.state, property.zip].filter(Boolean).join(', ') || 'Property address unavailable'
+        const status = request.status === 'completed' ? 'Ready'
+          : request.workflow_state === 'needs_information' ? 'Needs Information'
+            : request.status === 'needs_review' ? 'Under Review'
+              : ['running', 'failed'].includes(request.status) ? 'Processing' : 'Submitted'
+        const submitterNextAction = status === 'Ready' ? 'View reviewed result'
+          : status === 'Needs Information' ? 'Add requested evidence'
+            : status === 'Under Review' ? 'Await reviewed result'
+              : status === 'Processing' ? 'View submission status' : 'View submission'
+        return {
+          requestId: request.id,
+          propertyId: request.property_id,
+          propertyAddress: address,
+          submittedAt: request.submitted_at || request.created_at,
+          lastActivityAt: request.last_activity_at || request.created_at,
+          status,
+          resultRecipientName: request.delivery_recipient_name || null,
+          resultRecipientEmail: request.delivery_recipient_email || actor.email || null,
+          nextResponsibleRole: request.next_responsible_role || 'system',
+          nextAction: submitterNextAction,
+          releasedArtifactVersion: request.released_artifact_version || null,
+          releasedAt: request.released_at || null,
+          delivery: deliveryByRequest.get(request.id) || null,
+        }
+      })
+    },
+
+    async saveReviewPosition({ actor, requestId, observationId }) {
+      if (!await isReviewerId(actor.id)) return null
+      const { data: request, error: requestError } = await admin.from('inspection_pipeline_runs')
+        .select('id,property_id,input_hash,status')
+        .eq('id', requestId)
+        .maybeSingle()
+      if (requestError) throw new Error(`Review position lookup failed: ${requestError.message}`)
+      if (!request || !['needs_review', 'completed'].includes(request.status)) return null
+      const { data: modelRun, error: modelError } = await admin.from('model_runs')
+        .select('output')
+        .eq('property_id', request.property_id)
+        .eq('input_hash', request.input_hash)
+        .eq('stage', 'inspection_interpretation')
+        .maybeSingle()
+      if (modelError) throw new Error(`Review position artifact lookup failed: ${modelError.message}`)
+      if (!(modelRun?.output?.atomicObservations || []).some((item) => item.id === observationId)) return null
+      const now = new Date().toISOString()
+      const { data, error } = await admin.from('inspection_pipeline_runs').update({
+        last_viewed_observation_id: observationId,
+        last_activity_at: now,
+        next_responsible_role: request.status === 'completed' ? 'submitter' : 'reviewer',
+      }).eq('id', requestId).select('id,last_viewed_observation_id,last_activity_at').single()
+      if (error) throw new Error(`Review position persistence failed: ${error.message}`)
+      return data
     },
 
     async reviewFinding({ actor, requestId, observationId, action, newValue, reason }) {
@@ -592,6 +856,26 @@ export function createPhase1SupabaseRepository() {
         .eq('id', finding.id)
         .single()
       if (reviewedError) throw new Error(reviewedError.message)
+      const { data: allFindings, error: countError } = await admin.from('inspection_findings')
+        .select('review_status,review_event_id')
+        .eq('model_run_id', modelRun.id)
+      if (countError) throw new Error(`Review progress lookup failed: ${countError.message}`)
+      const remaining = (allFindings || []).filter((item) => ['ai_draft', 'needs_review'].includes(item.review_status)).length
+      const eventIds = (allFindings || []).map((item) => item.review_event_id).filter(Boolean)
+      const { data: reviewEvents, error: eventsError } = eventIds.length
+        ? await admin.from('review_events').select('id,review_action').in('id', eventIds)
+        : { data: [], error: null }
+      if (eventsError) throw new Error(`Review progress event lookup failed: ${eventsError.message}`)
+      const now = new Date().toISOString()
+      const waitingForEvidence = (reviewEvents || []).some((event) => event.review_action === 'needs_more_info')
+      const { error: continuityError } = await admin.from('inspection_pipeline_runs').update({
+        workflow_state: waitingForEvidence ? 'needs_information' : 'under_review',
+        next_responsible_role: waitingForEvidence ? 'submitter' : 'reviewer',
+        next_action: waitingForEvidence ? 'Add requested evidence' : (remaining ? `Review ${remaining} remaining findings` : 'Release reviewed result'),
+        last_viewed_observation_id: observationId,
+        last_activity_at: now,
+      }).eq('id', requestId)
+      if (continuityError) throw new Error(`Review continuity update failed: ${continuityError.message}`)
       return { findingId: reviewed.id, status: reviewed.review_status, eventId }
     },
 
@@ -603,7 +887,7 @@ export function createPhase1SupabaseRepository() {
         .single()
       if (requestError) throw new Error(`Release request lookup failed: ${requestError.message}`)
       const { data: modelRun, error: modelError } = await admin.from('model_runs')
-        .select('id')
+        .select('id,prompt_version')
         .eq('property_id', request.property_id)
         .eq('input_hash', request.input_hash)
         .eq('stage', 'inspection_interpretation')
@@ -618,8 +902,9 @@ export function createPhase1SupabaseRepository() {
       const pending = (findings || []).filter((item) => ['ai_draft', 'needs_review'].includes(item.review_status)).length
       const ready = total > 0 && pending === 0 && approved > 0
       if (!ready || request.status === 'completed') return { ready, released: false, total, approved, pending }
+      const now = new Date().toISOString()
       const { data: updated, error: updateError } = await admin.from('inspection_pipeline_runs')
-        .update({ status: 'completed', current_stage: 'released_result', completed_at: new Date().toISOString() })
+        .update({ status: 'completed', current_stage: 'released_result', workflow_state: 'released', next_responsible_role: 'submitter', next_action: 'View reviewed result', released_artifact_version: modelRun.prompt_version, released_at: now, last_activity_at: now, completed_at: now })
         .eq('id', requestId)
         .eq('status', 'needs_review')
         .select('id')

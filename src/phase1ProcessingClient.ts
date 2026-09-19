@@ -1,9 +1,9 @@
 import { supabase } from './supabase'
 import type { Phase1PropertyContext } from './phase1PropertyContext'
 
-export type LiveProcessingState = 'uploaded' | 'queued' | 'processing' | 'completed' | 'under_review' | 'ready' | 'failed'
+export type LiveProcessingState = 'draft' | 'uploaded' | 'queued' | 'processing' | 'completed' | 'under_review' | 'ready' | 'failed'
 
-type EvidenceReference = { id: string; sourceFileId: string }
+export type EvidenceReference = { id: string; sourceFileId: string }
 export type ProcessingResponse = {
   id: string
   propertyId: string
@@ -12,6 +12,27 @@ export type ProcessingResponse = {
   error?: string | null
   audience?: 'reviewer' | 'agent'
   totalFindingCount?: number
+  submission?: Phase1SubmissionMetadata
+}
+
+export type Phase1Identity = { id: string; email: string | null; fullName: string | null; role: string; active: boolean; isReviewer: boolean }
+export type Phase1SubmissionMetadata = {
+  propertyAddress: string
+  submitterName: string | null
+  submitterEmail: string | null
+  submittedAt: string | null
+  note: string
+  evidence: Array<{ id: string; sourceFileId: string; name: string; mediaType: string | null }>
+  deliveryRecipientName: string | null
+  deliveryRecipientEmail: string | null
+  deliveryRecipientSource: 'submitter_default' | 'manually_changed'
+  workflowState: string | null
+  nextResponsibleRole: string | null
+  nextAction: string | null
+  lastActivityAt: string | null
+  lastViewedObservationId: string | null
+  releasedArtifactVersion: string | null
+  releasedAt: string | null
 }
 
 export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
@@ -21,10 +42,45 @@ export type Phase1ReviewQueueItem = {
   propertyAddress: string
   submittingAgent: string
   findingCount: number
+  reviewedCount: number
+  remainingCount: number
   reviewPriority: 'quick_review' | 'careful_review' | 'waiting_for_evidence'
-  queueStatus: 'processing' | 'needs_review' | 'waiting_for_evidence' | 'failed' | 'reviewed'
+  queueStatus: 'processing' | 'needs_review' | 'in_review' | 'waiting_for_evidence' | 'failed' | 'released'
   createdAt: string
+  lastActivityAt: string
+  lastViewedObservationId: string | null
+  nextResponsibleRole: string
+  nextAction: string
+  deliveryRecipientEmail: string | null
+  releasedArtifactVersion: string | null
+  releasedAt: string | null
+  delivery: Phase1DeliveryRecord | null
   error: string | null
+}
+
+export type Phase1DeliveryRecord = {
+  recipient: string
+  delivery_status: 'pending' | 'sending' | 'sent' | 'failed'
+  sent_at: string | null
+  provider_message_id: string | null
+  failure_reason: string | null
+  attempt_count: number
+}
+
+export type Phase1PropertyHistoryItem = {
+  requestId: string
+  propertyId: string
+  propertyAddress: string
+  submittedAt: string
+  lastActivityAt: string
+  status: 'Submitted' | 'Processing' | 'Under Review' | 'Needs Information' | 'Ready'
+  resultRecipientName: string | null
+  resultRecipientEmail: string | null
+  nextResponsibleRole: string
+  nextAction: string
+  releasedArtifactVersion: string | null
+  releasedAt: string | null
+  delivery: Phase1DeliveryRecord | null
 }
 
 async function authContext(forceRefresh = false, verifySession = false): Promise<{ token: string; userId: string }> {
@@ -89,6 +145,67 @@ export async function resolvePhase1Property(address: string): Promise<Phase1Prop
   return { id: property.id, address: property.address || address.trim(), userId }
 }
 
+export async function loadPhase1Identity(): Promise<Phase1Identity> {
+  return jsonRequest<Phase1Identity>('/api/phase1/me', { method: 'GET' }, { verifySession: true })
+}
+
+export async function uploadPhase1Evidence({ propertyId, files }: { propertyId: string; files: File[] }) {
+  if (!propertyId) throw new Error('Property context is required before evidence can be uploaded.')
+  if (!files.length) throw new Error('Choose at least one evidence file.')
+  const form = new FormData()
+  form.set('propertyId', propertyId)
+  files.forEach((file) => form.append('evidence', file))
+  return jsonRequest<{ evidenceReferences: EvidenceReference[] }>(
+    '/api/phase1/evidence',
+    { method: 'POST', body: form },
+    { verifySession: true },
+  )
+}
+
+export async function createPhase1SubmissionDraft({ propertyId, evidenceReferences, note, deliveryRecipient }: {
+  propertyId: string
+  evidenceReferences: EvidenceReference[]
+  note: string
+  deliveryRecipient: { name?: string; email: string }
+}) {
+  return jsonRequest<ProcessingResponse>('/api/phase1/submissions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ propertyId, evidenceReferences, note, deliveryRecipient }),
+  }, { verifySession: true })
+}
+
+export async function submitPhase1SubmissionDraft(requestId: string, deliveryRecipient: { name?: string; email: string }) {
+  return jsonRequest<ProcessingResponse>(`/api/phase1/submissions/${encodeURIComponent(requestId)}/submit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deliveryRecipient }),
+  }, { verifySession: true })
+}
+
+export async function updatePhase1SubmissionDraft(requestId: string, { propertyId, evidenceReferences, note, deliveryRecipient }: {
+  propertyId: string
+  evidenceReferences: EvidenceReference[]
+  note: string
+  deliveryRecipient: { name?: string; email: string }
+}) {
+  return jsonRequest<ProcessingResponse>(`/api/phase1/submissions/${encodeURIComponent(requestId)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ propertyId, evidenceReferences, note, deliveryRecipient }),
+  }, { verifySession: true })
+}
+
+export async function waitForPhase1Processing(requestId: string, onState: (state: LiveProcessingState) => void) {
+  for (;;) {
+    await wait(750)
+    const status = await loadPhase1ProcessingRequest(requestId)
+    onState(status.processingStatus)
+    if (['under_review', 'ready', 'completed'].includes(status.processingStatus)) return status
+    if (status.processingStatus === 'failed') throw new Error(status.error || 'Processing failed.')
+  }
+}
+
 export async function processPhase1Evidence({
   propertyId,
   files,
@@ -102,14 +219,7 @@ export async function processPhase1Evidence({
 }): Promise<ProcessingResponse> {
   if (!propertyId) throw new Error('Property context is required before evidence can be processed.')
   if (!files.length) throw new Error('The live processor currently requires one PDF inspection report.')
-  const form = new FormData()
-  form.set('propertyId', propertyId)
-  files.forEach((file) => form.append('evidence', file))
-  const upload = await jsonRequest<{ evidenceReferences: EvidenceReference[] }>(
-    '/api/phase1/evidence',
-    { method: 'POST', body: form },
-    { verifySession: true },
-  )
+  const upload = await uploadPhase1Evidence({ propertyId, files })
   onState('uploaded')
   const request = await jsonRequest<ProcessingResponse>(
     '/api/phase1/processing-requests',
@@ -141,6 +251,23 @@ export async function loadPhase1ProcessingRequest(requestId: string): Promise<Pr
 export async function loadPhase1ReviewQueue(): Promise<Phase1ReviewQueueItem[]> {
   const response = await jsonRequest<{ items: Phase1ReviewQueueItem[] }>('/api/phase1/review-queue', { method: 'GET' })
   return response.items
+}
+
+export async function loadPhase1Dashboard(): Promise<Phase1ReviewQueueItem[]> {
+  const response = await jsonRequest<{ items: Phase1ReviewQueueItem[] }>('/api/phase1/dashboard', { method: 'GET' })
+  return response.items
+}
+
+export async function loadPhase1MyProperties(): Promise<Phase1PropertyHistoryItem[]> {
+  const response = await jsonRequest<{ items: Phase1PropertyHistoryItem[] }>('/api/phase1/my-properties', { method: 'GET' })
+  return response.items
+}
+
+export async function savePhase1ReviewPosition(requestId: string, observationId: string) {
+  return jsonRequest<{ id: string; last_viewed_observation_id: string; last_activity_at: string }>(
+    `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/review-position`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ observationId }) },
+  )
 }
 
 export async function openPhase1SourceDocument(requestId: string, page?: number | null) {

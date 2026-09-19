@@ -18,37 +18,20 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return actor
   }
 
-  async function upload({ token, propertyId, files }) {
-    const actor = await requireActor(token)
-    if (!propertyId || !await repository.canAccessProperty(actor.id, propertyId)) {
-      throw new ProcessingError('authorization_failed', 'You do not have access to this property.', 403)
+  function normalizeRecipient(value, fallbackEmail = '') {
+    const email = String(value?.email || fallbackEmail || '').trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new ProcessingError('delivery_recipient_invalid', 'Enter a valid email address for the reviewed result.')
     }
-    if (!files.length) throw new ProcessingError('source_unavailable', 'Choose at least one evidence file.')
-    const references = []
-    for (const file of files) references.push(await repository.storeEvidence({ actor, propertyId, file }))
-    return { propertyId, processingStatus: 'uploaded', evidenceReferences: references }
+    return { name: String(value?.name || '').trim() || null, email, source: email === String(fallbackEmail || '').trim().toLowerCase() ? 'submitter_default' : 'manually_changed' }
   }
 
-  async function resolveProperty({ token, address }) {
-    const actor = await requireActor(token)
-    if (typeof address !== 'string' || !address.trim()) {
-      throw new ProcessingError('property_address_required', 'Enter a property address before continuing.')
-    }
-    const property = await repository.resolveOrCreateProperty({ actor, address: address.trim() })
-    if (!property?.id) throw new ProcessingError('property_persistence_failed', 'The property workspace could not be created.', 503)
-    return property
-  }
-
-  async function submit({ token, propertyId, evidenceReferences, note = '' }) {
-    const actor = await requireActor(token)
-    if (!propertyId || !await repository.canAccessProperty(actor.id, propertyId)) {
-      throw new ProcessingError('authorization_failed', 'You do not have access to this property.', 403)
-    }
+  async function queueProcessing({ request, actor, propertyId, evidenceReferences, note }) {
     const evidence = await repository.resolveEvidence({ actor, propertyId, evidenceReferences })
     if (evidence.length !== evidenceReferences.length) {
+      await repository.releaseEvidence?.(evidence)
       throw new ProcessingError('authorization_failed', 'One or more evidence references do not belong to this property.', 403)
     }
-    const request = await repository.createProcessingRequest({ actor, propertyId, evidenceReferences, note })
     queueMicrotask(async () => {
       try {
         await repository.markProcessing(request.id)
@@ -84,6 +67,74 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return request
   }
 
+  async function identity({ token }) {
+    const actor = await requireActor(token)
+    return repository.getActorProfile({ actor })
+  }
+
+  async function upload({ token, propertyId, files }) {
+    const actor = await requireActor(token)
+    if (!propertyId || !await repository.canAccessProperty(actor.id, propertyId)) {
+      throw new ProcessingError('authorization_failed', 'You do not have access to this property.', 403)
+    }
+    if (!files.length) throw new ProcessingError('source_unavailable', 'Choose at least one evidence file.')
+    const references = []
+    for (const file of files) references.push(await repository.storeEvidence({ actor, propertyId, file }))
+    return { propertyId, processingStatus: 'uploaded', evidenceReferences: references }
+  }
+
+  async function resolveProperty({ token, address }) {
+    const actor = await requireActor(token)
+    if (typeof address !== 'string' || !address.trim()) {
+      throw new ProcessingError('property_address_required', 'Enter a property address before continuing.')
+    }
+    const property = await repository.resolveOrCreateProperty({ actor, address: address.trim() })
+    if (!property?.id) throw new ProcessingError('property_persistence_failed', 'The property workspace could not be created.', 503)
+    return property
+  }
+
+  async function createSubmissionDraft({ token, propertyId, evidenceReferences, note = '', deliveryRecipient = null }) {
+    const actor = await requireActor(token)
+    if (!propertyId || !await repository.canAccessProperty(actor.id, propertyId)) {
+      throw new ProcessingError('authorization_failed', 'You do not have access to this property.', 403)
+    }
+    if (!evidenceReferences.length || !await repository.validateEvidenceReferences({ actor, propertyId, evidenceReferences })) {
+      throw new ProcessingError('authorization_failed', 'One or more evidence references do not belong to this property.', 403)
+    }
+    const profile = await repository.getActorProfile({ actor })
+    const recipient = normalizeRecipient(deliveryRecipient, profile.email || actor.email)
+    return repository.createProcessingRequest({ actor, propertyId, evidenceReferences, note, deliveryRecipient: recipient, draft: true })
+  }
+
+  async function finalizeSubmission({ token, requestId, deliveryRecipient = null }) {
+    const actor = await requireActor(token)
+    const profile = await repository.getActorProfile({ actor })
+    const recipient = normalizeRecipient(deliveryRecipient, profile.email || actor.email)
+    const request = await repository.finalizeSubmission({ actor, requestId, deliveryRecipient: recipient })
+    if (!request) throw new ProcessingError('submission_not_available', 'This submission draft is not available.', 404)
+    return queueProcessing({ request: { id: request.id, propertyId: request.property_id, processingStatus: 'queued', createdAt: request.created_at }, actor, propertyId: request.property_id, evidenceReferences: request.evidenceReferences, note: request.note })
+  }
+
+  async function updateSubmissionDraft({ token, requestId, propertyId, evidenceReferences, note = '', deliveryRecipient = null }) {
+    const actor = await requireActor(token)
+    if (!propertyId || !await repository.canAccessProperty(actor.id, propertyId)) {
+      throw new ProcessingError('authorization_failed', 'You do not have access to this property.', 403)
+    }
+    if (!evidenceReferences.length || !await repository.validateEvidenceReferences({ actor, propertyId, evidenceReferences })) {
+      throw new ProcessingError('authorization_failed', 'One or more evidence references do not belong to this property.', 403)
+    }
+    const profile = await repository.getActorProfile({ actor })
+    const recipient = normalizeRecipient(deliveryRecipient, profile.email || actor.email)
+    const result = await repository.updateSubmissionDraft({ actor, requestId, propertyId, evidenceReferences, note, deliveryRecipient: recipient })
+    if (!result) throw new ProcessingError('submission_not_available', 'This submission draft is not available.', 404)
+    return result
+  }
+
+  async function submit({ token, propertyId, evidenceReferences, note = '', deliveryRecipient = null }) {
+    const draft = await createSubmissionDraft({ token, propertyId, evidenceReferences, note, deliveryRecipient })
+    return finalizeSubmission({ token, requestId: draft.id, deliveryRecipient })
+  }
+
   async function status({ token, requestId }) {
     const actor = await requireActor(token)
     const request = await repository.getProcessingRequest({ actor, requestId })
@@ -102,6 +153,25 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const actor = await requireActor(token)
     if (!await repository.isReviewer(actor.id)) throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
     return { items: await repository.listReviewQueue({ actor }) }
+  }
+
+  async function dashboard({ token }) {
+    const actor = await requireActor(token)
+    if (!await repository.isReviewer(actor.id)) throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
+    return { items: await repository.listReviewQueue({ actor }) }
+  }
+
+  async function myProperties({ token }) {
+    const actor = await requireActor(token)
+    return { items: await repository.listMyProperties({ actor }) }
+  }
+
+  async function saveReviewPosition({ token, requestId, observationId }) {
+    const actor = await requireActor(token)
+    if (!await repository.isReviewer(actor.id)) throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
+    const result = await repository.saveReviewPosition({ actor, requestId, observationId })
+    if (!result) throw new ProcessingError('finding_not_found', 'This review position is not available.', 404)
+    return result
   }
 
   async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [] }) {
@@ -161,5 +231,5 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return { ...result, release }
   }
 
-  return { resolveProperty, upload, submit, status, sourceDocument, reviewQueue, review }
+  return { identity, resolveProperty, upload, createSubmissionDraft, updateSubmissionDraft, finalizeSubmission, submit, status, sourceDocument, reviewQueue, dashboard, myProperties, saveReviewPosition, review }
 }

@@ -30,6 +30,9 @@ button { color: inherit; }
 .phase1-brand strong { color: #143e2d; font-size: 16px; font-weight: 800; letter-spacing: 0.08em; }
 .phase1-brand span { color: #79817b; font-family: Georgia, "Times New Roman", serif; font-size: 12px; }
 .phase1-header-actions { display: flex; align-items: center; gap: 24px; }
+.phase1-role-nav { display: flex; align-items: center; gap: 4px; }
+.phase1-role-nav button { min-height: 38px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: #3f5949; font-size: 12px; font-weight: 700; cursor: pointer; }
+.phase1-role-nav button:hover { background: #edf1ed; }
 .phase1-progress { display: flex; align-items: center; gap: 26px; color: #969c97; font-size: 12px; font-weight: 650; }
 .phase1-progress span { position: relative; min-width: 52px; text-align: center; }
 .phase1-progress span + span::before { position: absolute; top: 50%; right: calc(100% + 7px); width: 12px; height: 1px; background: #d1d5d1; content: ""; }
@@ -73,6 +76,25 @@ button { color: inherit; }
 .phase1-privacy { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 24px 0 0; color: #79817b; font-size: 13px; }
 .phase1-privacy span { color: #2e684a; }
 .phase1-hidden-input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+
+.phase1-page-title { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+.phase1-page-title > button, .phase1-queue-row button, .phase1-recent-property, .phase1-properties article button { min-height: 42px; padding: 0 14px; border: 1px solid #b9c4bc; border-radius: 6px; background: #fff; color: #28543d; font-weight: 700; cursor: pointer; }
+.phase1-submission-card { padding: 22px 0; border-top: 1px solid #dde0dc; }
+.phase1-submission-card:last-of-type { border-bottom: 1px solid #dde0dc; }
+.phase1-submission-card h2, .phase1-submitted h2, .phase1-properties h2 { margin: 0 0 10px; font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 500; }
+.phase1-submission-card h3, .phase1-submitted h3 { margin: 18px 0 6px; font-size: 13px; }
+.phase1-submission-card p, .phase1-submitted p { color: #566159; line-height: 1.55; }
+.phase1-submission-card ul, .phase1-submitted ul { color: #566159; line-height: 1.7; }
+.phase1-submission-card .phase1-field { margin: 18px 0; }
+.phase1-submitted-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; margin: 36px 0; padding: 26px 0; border-top: 1px solid #dde0dc; border-bottom: 1px solid #dde0dc; }
+.phase1-submitted-grid section + section { padding-left: 24px; border-left: 1px solid #dde0dc; }
+.phase1-empty-state { max-width: 560px; padding: 28px; border: 1px solid #d9ddda; border-radius: 8px; background: #fff; }
+.phase1-empty-state .phase1-primary { margin-top: 14px; }
+.phase1-property-list { display: grid; gap: 12px; margin-top: 34px; }
+.phase1-property-list article { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 28px; align-items: center; padding: 22px; border: 1px solid #d9ddda; border-radius: 7px; background: #fff; }
+.phase1-property-list article > div:last-child { display: grid; justify-items: end; text-align: right; }
+.phase1-property-list article p { margin: 6px 0; color: #68716b; font-size: 13px; line-height: 1.5; }
+.phase1-property-list article .phase1-primary { width: auto; margin-top: 10px; }
 
 .phase1-actions { position: fixed; right: 0; bottom: 0; left: 0; z-index: 9; display: flex; justify-content: center; gap: 12px; padding: 14px 24px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid #e0e1dc; background: rgba(250, 249, 246, 0.98); }
 .phase1-primary { width: min(100%, 760px); min-height: 52px; padding: 12px 22px; border: 1px solid #153f2e; border-radius: 7px; background: #174a35; color: #fff; font-weight: 720; cursor: pointer; }
@@ -233,13 +255,20 @@ button { color: inherit; }
 .phase1-candidate-evidence button, .phase1-page-preview button, .phase1-source-button { min-height: 38px; padding: 0 12px; border: 1px solid #aebbb2; border-radius: 5px; background: #fff; color: #28533c; font-weight: 700; cursor: pointer; }
 .phase1-source-button { margin-top: 14px; }
 .phase1-review-queue { width: min(100%, 1050px); }
+.phase1-resume { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: center; margin: 30px 0; padding: 24px; border: 1px solid #aebfb3; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(32, 50, 39, 0.05); }
+.phase1-resume .phase1-kicker { grid-column: 1 / -1; margin-bottom: -8px; }
+.phase1-resume h2 { margin: 0 0 8px; font-family: Georgia, "Times New Roman", serif; font-size: 26px; font-weight: 500; }
+.phase1-resume p { margin: 5px 0; color: #657068; font-size: 13px; }
+.phase1-resume .phase1-primary { width: auto; min-width: 170px; }
+.phase1-search { max-width: 520px; margin-top: 24px; }
 .phase1-queue-group { margin-top: 34px; }
 .phase1-queue-group h2 { display: flex; justify-content: space-between; margin: 0; padding-bottom: 10px; border-bottom: 1px solid #d9ddd9; font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 500; }
 .phase1-queue-group h2 span { color: #727b75; font-family: inherit; }
-.phase1-queue-row { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(90px, .7fr)) 70px; gap: 14px; align-items: center; min-height: 76px; border-bottom: 1px solid #e1e3df; font-size: 13px; }
+.phase1-queue-row { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(130px, .8fr) auto; gap: 14px; align-items: center; min-height: 84px; border-bottom: 1px solid #e1e3df; font-size: 13px; }
 .phase1-queue-row > div { display: grid; gap: 4px; }
 .phase1-queue-row > div span, .phase1-queue-row > span { color: #6d766f; }
-.phase1-queue-row a { color: #28583f; font-weight: 750; }
+.phase1-recent-property { display: flex; justify-content: space-between; align-items: center; width: 100%; border-width: 0 0 1px; border-radius: 0; text-align: left; }
+.phase1-recent-property span { color: #6d766f; font-size: 12px; text-transform: capitalize; }
 .phase1-agent-view { max-width: 820px; }
 .phase1-agent-finding strong { display: block; color: #27382d; }
 .phase1-agent-finding h2 { margin: 0 0 18px; font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-weight: 500; }
@@ -248,13 +277,15 @@ button { color: inherit; }
 .phase1-gap .phase1-lede { max-width: 680px; }
 
 @media (max-width: 720px) {
-  .phase1-header { min-height: 66px; padding: 11px 18px; }
+  .phase1-header { flex-wrap: wrap; min-height: 66px; padding: 11px 18px; }
   .phase1-brand span { display: none; }
   .phase1-brand strong { font-size: 14px; }
   .phase1-progress { gap: 17px; font-size: 11px; }
   .phase1-progress span { min-width: auto; }
   .phase1-progress span + span::before { display: none; }
-  .phase1-header-actions { gap: 10px; }
+  .phase1-header-actions { flex: 1 1 100%; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+  .phase1-role-nav { order: 3; width: 100%; overflow-x: auto; border-top: 1px solid #e3e5e2; padding-top: 7px; }
+  .phase1-role-nav button { flex: 0 0 auto; }
   .phase1-session span { display: none; }
   .phase1-session { padding-left: 8px; }
   .phase1-main, .phase1-property { padding: 42px 18px 138px; }
@@ -286,8 +317,15 @@ button { color: inherit; }
   .phase1-price-card > strong { font-size: 30px; }
   .phase1-contractor-input { grid-template-columns: 1fr; gap: 10px; }
   .phase1-location-panel dl, .phase1-review-buttons { grid-template-columns: 1fr; }
+  .phase1-page-title { display: grid; }
+  .phase1-page-title > button { width: fit-content; }
+  .phase1-submitted-grid, .phase1-property-list article, .phase1-resume { grid-template-columns: 1fr; }
+  .phase1-submitted-grid section + section { padding: 20px 0 0; border-top: 1px solid #dde0dc; border-left: 0; }
+  .phase1-property-list article > div:last-child { justify-items: start; text-align: left; }
+  .phase1-resume .phase1-primary { width: 100%; }
   .phase1-queue-row { grid-template-columns: 1fr auto; gap: 7px 14px; padding: 14px 0; }
   .phase1-queue-row > div { grid-column: 1 / -1; }
+  .phase1-queue-row > span { grid-column: 1 / -1; }
 }
 
 @media (max-width: 430px) {

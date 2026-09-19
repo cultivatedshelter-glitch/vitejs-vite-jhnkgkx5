@@ -14,6 +14,9 @@ export function createPhase1HttpHandler(service) {
   return async function handle(request) {
     try {
       const url = new URL(request.url)
+      if (request.method === 'GET' && url.pathname === '/api/phase1/me') {
+        return json(await service.identity({ token: token(request) }))
+      }
       if (request.method === 'POST' && url.pathname === '/api/phase1/properties/resolve') {
         const body = await request.json()
         return json(await service.resolveProperty({ token: token(request), address: body.address }), 200)
@@ -26,6 +29,20 @@ export function createPhase1HttpHandler(service) {
       if (request.method === 'POST' && url.pathname === '/api/phase1/processing-requests') {
         const body = await request.json()
         return json(await service.submit({ token: token(request), propertyId: body.propertyId, evidenceReferences: body.evidenceReferences || [], note: body.note || '' }), 202)
+      }
+      if (request.method === 'POST' && url.pathname === '/api/phase1/submissions') {
+        const body = await request.json()
+        return json(await service.createSubmissionDraft({ token: token(request), propertyId: body.propertyId, evidenceReferences: body.evidenceReferences || [], note: body.note || '', deliveryRecipient: body.deliveryRecipient || null }), 201)
+      }
+      const submitMatch = url.pathname.match(/^\/api\/phase1\/submissions\/([^/]+)\/submit$/)
+      if (request.method === 'POST' && submitMatch) {
+        const body = await request.json()
+        return json(await service.finalizeSubmission({ token: token(request), requestId: decodeURIComponent(submitMatch[1]), deliveryRecipient: body.deliveryRecipient || null }), 202)
+      }
+      const submissionMatch = url.pathname.match(/^\/api\/phase1\/submissions\/([^/]+)$/)
+      if (request.method === 'PATCH' && submissionMatch) {
+        const body = await request.json()
+        return json(await service.updateSubmissionDraft({ token: token(request), requestId: decodeURIComponent(submissionMatch[1]), propertyId: body.propertyId, evidenceReferences: body.evidenceReferences || [], note: body.note || '', deliveryRecipient: body.deliveryRecipient || null }))
       }
       const match = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)$/)
       if (request.method === 'GET' && match) return json(await service.status({ token: token(request), requestId: decodeURIComponent(match[1]) }))
@@ -43,6 +60,17 @@ export function createPhase1HttpHandler(service) {
       }
       if (request.method === 'GET' && url.pathname === '/api/phase1/review-queue') {
         return json(await service.reviewQueue({ token: token(request) }))
+      }
+      if (request.method === 'GET' && url.pathname === '/api/phase1/dashboard') {
+        return json(await service.dashboard({ token: token(request) }))
+      }
+      if (request.method === 'GET' && url.pathname === '/api/phase1/my-properties') {
+        return json(await service.myProperties({ token: token(request) }))
+      }
+      const positionMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/review-position$/)
+      if (request.method === 'POST' && positionMatch) {
+        const body = await request.json()
+        return json(await service.saveReviewPosition({ token: token(request), requestId: decodeURIComponent(positionMatch[1]), observationId: body.observationId }))
       }
       const reviewMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/findings\/([^/]+)\/review$/)
       if (request.method === 'POST' && reviewMatch) {

@@ -12,9 +12,9 @@ const [component, css, main] = await Promise.all([
   readFile(mainUrl, 'utf8'),
 ])
 
-test('guided flow keeps six internal states behind a simple three-stage progress model', () => {
-  assert.match(component, /type Step = 'property' \| 'evidence' \| 'processing' \| 'overview' \| 'finding' \| 'gap' \| 'next'/)
-  assert.match(component, /PROGRESS_STAGES = \['Property', 'Evidence', 'Review'\]/)
+test('guided flow adds explicit review-submission and submitted handoff states', () => {
+  assert.match(component, /type Step = 'property' \| 'evidence' \| 'submission_review' \| 'submitted'/)
+  assert.match(component, /PROGRESS_STAGES = \['Property', 'Evidence', 'Review Submission', 'Submitted'\]/)
   assert.match(main, /showLegacyApp \? <App \/> : <Phase1Experience fixtureMode=\{fixtureMode\} \/>/)
   assert.match(main, /import\.meta\.env\.DEV.*fixture/)
 })
@@ -84,7 +84,7 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   const agentView = component.slice(component.indexOf('function AgentView'), component.indexOf('function GapStep'))
   assert.match(agentView, /finding\.nextStep/)
   assert.doesNotMatch(agentView, /reviewerId|parser|review queue|source_file_id|sha256/)
-  assert.match(component, /function ReviewQueue/)
+  assert.match(component, /function AdminDashboard/)
   assert.match(component, /Likely related photos/)
   assert.match(component, /Confirm photo link/)
   assert.match(component, /Source and nearby page previews/)
@@ -121,8 +121,21 @@ test('evidence stays visible until upload and request creation succeed', () => {
   assert.match(component, /file\.size \/ 1024 \/ 1024/)
   assert.match(component, /Uploading evidence…/)
   assert.match(component, /error && <p className="phase1-inline-error" role="alert">\{error\}<\/p>/)
-  assert.match(component, /state === 'queued' \|\| state === 'processing'[\s\S]*setStep\('processing'\)/)
+  assert.match(component, /await uploadPhase1Evidence/)
+  assert.match(component, /await createPhase1SubmissionDraft/)
+  assert.match(component, /updatePhase1SubmissionDraft/)
+  assert.match(component, /setStep\('submission_review'\)/)
   assert.match(component, /else \{[\s\S]*setStep\('evidence'\)[\s\S]*setEvidenceError\(message\)/)
+})
+
+test('role-based navigation and continuity surfaces remain server-authoritative', () => {
+  for (const required of ['loadPhase1Identity', 'Admin Dashboard', 'Continue where you left off', 'Resume Review', 'My Properties', 'Review Submission', 'Result recipient', 'Submit to Shelter Prep', 'Reviewed result will be sent to']) {
+    assert.match(component, new RegExp(required, 'i'))
+  }
+  assert.match(component, /identity\.isReviewer/)
+  assert.match(component, /savePhase1ReviewPosition/)
+  assert.match(component, /lastViewedObservationId/)
+  assert.match(component, /deliveryRecipientEmail/)
 })
 
 test('layout is mobile-first with stable controls, evidence-first stacking, and one primary action class', () => {

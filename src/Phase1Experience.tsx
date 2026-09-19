@@ -2,20 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { loadPhase1ProcessingRequest, loadPhase1ReviewQueue, openPhase1SourceDocument, processPhase1Evidence, resolvePhase1Property, reviewPhase1Finding, type LiveProcessingState, type Phase1ReviewAction, type Phase1ReviewQueueItem } from './phase1ProcessingClient'
+import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, openPhase1SourceDocument, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1Identity, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
 
-type Step = 'property' | 'evidence' | 'processing' | 'overview' | 'finding' | 'gap' | 'next'
+type Step = 'property' | 'evidence' | 'submission_review' | 'submitted' | 'processing' | 'overview' | 'finding' | 'gap' | 'next'
 type ProcessingState = 'idle' | LiveProcessingState
 
-const PROGRESS_STAGES = ['Property', 'Evidence', 'Review']
+const PROGRESS_STAGES = ['Property', 'Evidence', 'Review Submission', 'Submitted']
 
 function progressStage(step: Step) {
   if (step === 'property') return 0
   if (step === 'evidence') return 1
-  return 2
+  if (step === 'submission_review') return 2
+  return 3
 }
 
 function reviewRequestFromLocation() {
@@ -28,20 +29,31 @@ function audienceFromLocation(): 'reviewer' | 'agent' {
 }
 
 function isReviewQueueLocation() {
-  return /^\/review-queue\/?$/.test(window.location.pathname)
+  return /^\/(review-queue|dashboard)\/?$/.test(window.location.pathname)
 }
 
-function PhaseHeader({ step, email, onSignOut }: { step: Step; email?: string; onSignOut?: () => void }) {
+function submissionRequestFromLocation() {
+  return window.location.pathname.match(/^\/submissions\/([^/]+)(?:\/review)?\/?$/)?.[1] || null
+}
+
+function findingFromLocation() {
+  return new URLSearchParams(window.location.search).get('finding')
+}
+
+function PhaseHeader({ step, email, identity, onSignOut, onNavigate }: { step: Step; email?: string; identity?: Phase1Identity | null; onSignOut?: () => void; onNavigate?: (path: string) => void }) {
   const activeStage = progressStage(step)
   return (
     <header className="phase1-header">
       <div className="phase1-brand"><strong>SHELTER PREP</strong><span>Repair clarity. Higher value.</span></div>
       <div className="phase1-header-actions">
-        <div className="phase1-progress" aria-label={`${PROGRESS_STAGES[activeStage]} stage, ${activeStage + 1} of 3`}>
+        {identity && onNavigate && <nav className="phase1-role-nav" aria-label={identity.isReviewer ? 'Reviewer navigation' : 'Submitter navigation'}>
+          {identity.isReviewer ? <><button type="button" onClick={() => onNavigate('/dashboard')}>Dashboard</button><button type="button" onClick={() => onNavigate('/properties')}>Properties</button><button type="button" onClick={() => onNavigate('/review-queue')}>Review</button><button type="button" onClick={() => onNavigate('/properties/new')}>+ New Property</button></> : <><button type="button" onClick={() => onNavigate('/properties')}>Properties</button><button type="button" onClick={() => onNavigate('/properties/new')}>Add Property</button></>}
+        </nav>}
+        {!identity?.isReviewer && <div className="phase1-progress" aria-label={`${PROGRESS_STAGES[activeStage]} stage, ${activeStage + 1} of 4`}>
           {PROGRESS_STAGES.map((label, index) => (
             <span className={index === activeStage ? 'is-current' : index < activeStage ? 'is-complete' : ''} key={label}>{label}</span>
           ))}
-        </div>
+        </div>}
         {email && onSignOut && <div className="phase1-session"><span>{email}</span><button type="button" onClick={onSignOut}>Sign out</button></div>}
       </div>
     </header>
@@ -113,6 +125,7 @@ function PropertyStep({
 
 function EvidenceStep({
   files,
+  existingEvidenceNames,
   note,
   submitting,
   error,
@@ -121,6 +134,7 @@ function EvidenceStep({
   onContinue,
 }: {
   files: File[]
+  existingEvidenceNames: string[]
   note: string
   submitting: boolean
   error: string
@@ -132,7 +146,7 @@ function EvidenceStep({
   const mediaRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const noteRef = useRef<HTMLTextAreaElement>(null)
-  const canContinue = files.length > 0 || note.trim().length > 0
+  const canContinue = files.length > 0 || existingEvidenceNames.length > 0 || note.trim().length > 0
   return (
     <main className="phase1-main phase1-evidence">
       <p className="phase1-kicker">Evidence</p>
@@ -147,7 +161,7 @@ function EvidenceStep({
         <button className="phase1-evidence-option" type="button" onClick={() => noteRef.current?.focus()}><span className="phase1-option-icon" aria-hidden="true">?</span><strong>Type a note or question</strong><small>Describe the repair concern</small></button>
         <button className="phase1-evidence-option" type="button" onClick={() => cameraRef.current?.click()}><span className="phase1-option-icon phase1-camera-icon" aria-hidden="true" /><strong>Take a photo</strong><small>Use your camera</small></button>
       </div>
-      {files.length > 0 && <ul className="phase1-file-list" aria-label="Selected evidence" aria-live="polite">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name} <small>{(file.size / 1024 / 1024).toFixed(1)} MB</small></li>)}</ul>}
+      {(existingEvidenceNames.length > 0 || files.length > 0) && <ul className="phase1-file-list" aria-label="Selected evidence" aria-live="polite">{existingEvidenceNames.map((name) => <li key={`persisted-${name}`}>{name}<small>Uploaded</small></li>)}{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name} <small>{(file.size / 1024 / 1024).toFixed(1)} MB</small></li>)}</ul>}
       <label className="phase1-field">
         <span>Anything specific we should know? <small>Optional</small></span>
         <textarea ref={noteRef} rows={3} value={note} onChange={(event) => onNote(event.target.value)} placeholder="Add a note or repair question" />
@@ -161,6 +175,67 @@ function EvidenceStep({
   )
 }
 
+function ReviewSubmissionStep({ address, evidenceNames, note, recipientName, recipientEmail, submitting, error, onRecipientName, onRecipientEmail, onBack, onSubmit }: {
+  address: string
+  evidenceNames: string[]
+  note: string
+  recipientName: string
+  recipientEmail: string
+  submitting: boolean
+  error: string
+  onRecipientName: (value: string) => void
+  onRecipientEmail: (value: string) => void
+  onBack: () => void
+  onSubmit: () => void
+}) {
+  return <main className="phase1-main phase1-submission-review">
+    <p className="phase1-kicker">Review Submission</p>
+    <h1>Ready for Shelter Prep.</h1>
+    <p className="phase1-lede">Confirm the handoff before review begins.</p>
+    <section className="phase1-submission-card"><h2>Property</h2><p>{address}</p></section>
+    <section className="phase1-submission-card"><h2>Evidence submitted</h2><ul>{evidenceNames.map((name) => <li key={name}>{name}</li>)}</ul>{note && <><h3>Question / context</h3><p>{note}</p></>}</section>
+    <section className="phase1-submission-card"><h2>Result recipient</h2><p>The reviewed result will be sent to this person after human approval.</p><label className="phase1-field"><span>Name <small>Optional</small></span><input value={recipientName} onChange={(event) => onRecipientName(event.target.value)} /></label><label className="phase1-field"><span>Email</span><input type="email" required value={recipientEmail} onChange={(event) => onRecipientEmail(event.target.value)} /></label></section>
+    {error && <p className="phase1-inline-error" role="alert">{error}</p>}
+    <div className="phase1-actions"><button className="phase1-text-action" type="button" onClick={onBack}>Back to evidence</button><button className="phase1-primary" type="button" disabled={submitting || !recipientEmail.trim()} onClick={onSubmit}>{submitting ? 'Submitting…' : 'Submit to Shelter Prep'}</button></div>
+  </main>
+}
+
+function SubmittedSummary({ address, submission, evidenceNames, note, onNavigate, onAddEvidence }: {
+  address: string
+  submission: Phase1SubmissionMetadata | null
+  evidenceNames: string[]
+  note: string
+  onNavigate: (path: string) => void
+  onAddEvidence: () => void
+}) {
+  const submitter = submission?.submitterName || submission?.submitterEmail || 'Authenticated submitter'
+  const recipient = submission?.deliveryRecipientName
+    ? `${submission.deliveryRecipientName} · ${submission.deliveryRecipientEmail}`
+    : submission?.deliveryRecipientEmail || 'Result recipient pending'
+  return <main className="phase1-main phase1-submitted">
+    <p className="phase1-kicker">Submitted</p><h1>Your Property is under review.</h1><p className="phase1-lede">Shelter Prep has the evidence and the handoff details.</p>
+    <div className="phase1-submitted-grid">
+      <section><h2>Property</h2><p>{address}</p><h3>Submitted by</h3><p>{submitter}</p></section>
+      <section><h2>What you submitted</h2><ul>{evidenceNames.map((name) => <li key={name}>{name}</li>)}{note && <li>1 note / question</li>}</ul></section>
+      <section><h2>Reviewed result will be sent to</h2><p>{recipient}</p><span className="phase1-status">Under Review</span></section>
+    </div>
+    <section className="phase1-next-move"><p className="phase1-kicker">What Shelter Prep is doing</p><ul className="phase1-detail-list"><li>Organizing findings and evidence</li><li>Identifying likely repair paths</li><li>Researching sourced repair-cost ranges</li><li>Surfacing unknowns and next questions</li><li>Preparing the result for human review</li></ul><h2>What happens next</h2><p>You'll receive the reviewed result when it is ready.</p></section>
+    <div className="phase1-actions"><button type="button" onClick={() => onNavigate('/properties')}>My Properties</button><button type="button" onClick={onAddEvidence}>Add More Evidence</button><button className="phase1-primary" type="button" onClick={() => onNavigate('/properties')}>View Submission</button></div>
+  </main>
+}
+
+function MyProperties({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const [items, setItems] = useState<Phase1PropertyHistoryItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => { void loadPhase1MyProperties().then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'Properties could not be loaded.')).finally(() => setLoading(false)) }, [])
+  return <main className="phase1-main phase1-properties"><div className="phase1-page-title"><div><p className="phase1-kicker">Properties</p><h1>My Properties</h1><p className="phase1-lede">Submission status and the next useful action.</p></div><button type="button" onClick={() => onNavigate('/properties/new')}>+ Add Property</button></div>
+    {loading && <p>Loading Properties…</p>}{error && <p className="phase1-inline-error" role="alert">{error}</p>}
+    {!loading && !error && !items.length && <section className="phase1-empty-state"><h2>No Properties yet.</h2><p>Start with an address and whatever evidence you have.</p><button className="phase1-primary" type="button" onClick={() => onNavigate('/properties/new')}>Add Property</button></section>}
+    <div className="phase1-property-list">{items.map((item) => <article key={item.requestId}><div><span className="phase1-status">{item.status}</span><h2>{item.propertyAddress}</h2><p>Submitted {new Date(item.submittedAt).toLocaleDateString()}</p><p>Result recipient: {item.resultRecipientEmail}</p>{item.releasedArtifactVersion && <p>Released version: {item.releasedArtifactVersion}</p>}{item.delivery && <p>Delivery: {item.delivery.delivery_status === 'sent' ? `Sent ${item.delivery.sent_at ? new Date(item.delivery.sent_at).toLocaleString() : ''}` : item.delivery.delivery_status}</p>}</div><div><p><strong>Next action</strong><br />{item.nextAction}</p><button className="phase1-primary" type="button" onClick={() => onNavigate(item.status === 'Ready' ? `/properties/${item.propertyId}/review?request=${item.requestId}&audience=agent` : `/submissions/${item.requestId}`)}>{item.status === 'Ready' ? 'View Reviewed Result' : item.status === 'Needs Information' ? 'Add Requested Evidence' : 'View Submission'}</button></div></article>)}</div>
+  </main>
+}
+
 function ProcessingStep({ state, error, onContinue, onBack }: {
   state: ProcessingState
   error: string
@@ -171,6 +246,7 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
   const failed = state === 'failed'
   const statusCopy: Record<ProcessingState, string> = {
     idle: 'Uploading your evidence securely.',
+    draft: 'Your evidence is ready for submission.',
     uploaded: 'Your evidence is uploaded.',
     queued: 'Your review is ready to begin.',
     processing: 'Reviewing and organizing the evidence.',
@@ -179,7 +255,7 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
     ready: 'Your reviewed result is ready.',
     failed: error,
   }
-  const activeIndex = state === 'idle' ? 0 : ['uploaded', 'queued', 'processing', 'under_review'].includes(state) ? 1 : ['completed', 'ready'].includes(state) ? 5 : -1
+  const activeIndex = state === 'idle' ? 0 : ['draft', 'uploaded', 'queued', 'processing', 'under_review'].includes(state) ? 1 : ['completed', 'ready'].includes(state) ? 5 : -1
   const tasks = ['Uploading files', 'Reading inspection report', 'Finding and grouping issues', 'Checking relevant context', 'Building your summary']
   return (
     <main className="phase1-main phase1-processing" aria-live="polite">
@@ -252,26 +328,37 @@ function RepairPathList({ finding }: { finding: Phase1FindingViewModel }) {
   return <section className="phase1-repair-paths"><p className="phase1-kicker">Likely paths</p><div className="phase1-path-list">{finding.repairPaths.map((path) => <article className={`phase1-path${path.status === 'blocked' ? ' is-blocked' : ''}`} key={path.id}><div className="phase1-path-heading"><h2>{path.label}</h2><div><span>Estimated repair cost</span><strong>{path.priceLabel}</strong></div></div><div className="phase1-path-meta"><span>{path.geography}</span><span>{path.confidence} confidence</span></div>{path.confidenceReason && <p>{path.confidenceReason}</p>}<div className="phase1-path-terms"><div><h3>Assumptions</h3><TextList values={path.assumptions} empty="No assumptions returned." /></div><div><h3>Major exclusions</h3><TextList values={path.exclusions} empty="No exclusions returned." /></div></div>{path.sources.length > 0 ? <div className="phase1-path-sources"><h3>Pricing source</h3>{path.sources.map((source) => <div key={source.id}><strong>{source.label}</strong><span>Geography: {source.geography}</span>{source.publishedAt && <span>Published: {source.publishedAt}</span>}{source.retrievedAt && <span>Retrieved: {source.retrievedAt.slice(0, 10)}</span>}{source.scopeBasis && <span>Scope basis: {source.scopeBasis}</span>}{source.url && <a href={source.url} target="_blank" rel="noreferrer">View source</a>}</div>)}</div> : <p className="phase1-action-note"><strong>Price range blocked</strong><span>No defensible source is attached to this path.</span></p>}</article>)}</div></section>
 }
 
-function ReviewQueue() {
+function AdminDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [items, setItems] = useState<Phase1ReviewQueueItem[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
   useEffect(() => {
-    void loadPhase1ReviewQueue().then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'The review queue could not be loaded.')).finally(() => setLoading(false))
+    void loadPhase1Dashboard().then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'The admin dashboard could not be loaded.')).finally(() => setLoading(false))
   }, [])
   const groups = [
     ['needs_review', 'Needs Review'],
+    ['in_review', 'In Review'],
     ['waiting_for_evidence', 'Waiting for Evidence'],
+    ['released', 'Ready / Released'],
     ['failed', 'Failed'],
-    ['reviewed', 'Reviewed'],
     ['processing', 'Processing'],
   ] as const
-  return <main className="phase1-main phase1-review-queue"><p className="phase1-kicker">Internal review</p><h1>Review queue</h1><p className="phase1-lede">Open the next Property that needs a human decision.</p>
+  const visible = items.filter((item) => `${item.propertyAddress} ${item.submittingAgent}`.toLowerCase().includes(search.trim().toLowerCase()))
+  const resume = visible.find((item) => ['in_review', 'needs_review', 'waiting_for_evidence'].includes(item.queueStatus))
+  function reviewPath(item: Phase1ReviewQueueItem) {
+    const finding = item.lastViewedObservationId ? `&finding=${encodeURIComponent(item.lastViewedObservationId)}` : '&resume=1'
+    return `/properties/${encodeURIComponent(item.propertyId)}/review?request=${encodeURIComponent(item.requestId)}${finding}`
+  }
+  return <main className="phase1-main phase1-review-queue"><div className="phase1-page-title"><div><p className="phase1-kicker">Internal review</p><h1>Admin Dashboard</h1><p className="phase1-lede">Continue the next Property decision without reconstructing the workflow.</p></div><button type="button" onClick={() => onNavigate('/properties/new')}>+ New Property</button></div>
     {loading && <p>Loading review work…</p>}{error && <p className="phase1-inline-error" role="alert">{error}</p>}
+    {!loading && !error && resume && <section className="phase1-resume"><p className="phase1-kicker">Continue where you left off</p><div><h2>{resume.propertyAddress}</h2><p>{resume.reviewedCount} of {resume.findingCount} findings reviewed · {resume.remainingCount} remaining</p><p>Status: {resume.queueStatus === 'waiting_for_evidence' ? 'Waiting for Evidence' : 'In Review'} · Last activity {new Date(resume.lastActivityAt).toLocaleString([], { hour: 'numeric', minute: '2-digit' })}</p><p><strong>Next action</strong><br />{resume.nextAction}</p></div><button className="phase1-primary" type="button" onClick={() => onNavigate(reviewPath(resume))}>Resume Review</button></section>}
+    {!loading && !error && <label className="phase1-field phase1-search"><span>Search</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Property or submitter" /></label>}
     {!loading && !error && groups.map(([status, label]) => {
-      const rows = items.filter((item) => item.queueStatus === status)
-      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings</span><span>{item.reviewPriority.replaceAll('_', ' ')}</span><span>{new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(-Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86_400_000)), 'day')}</span><a href={`/properties/${encodeURIComponent(item.propertyId)}/review?request=${encodeURIComponent(item.requestId)}`}>Review</a></article>)}</section>
+      const rows = visible.filter((item) => item.queueStatus === status)
+      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings · {item.reviewedCount} reviewed · {item.remainingCount} remaining</span><span>{item.nextAction}{item.delivery ? ` · Delivery ${item.delivery.delivery_status}` : ''}</span><span>{new Date(item.lastActivityAt).toLocaleString()}</span><button type="button" onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}>{item.queueStatus === 'released' ? 'View Released Result' : item.queueStatus === 'in_review' ? 'Resume Review' : 'Open'}</button></article>)}</section>
     })}
+    {!loading && !error && <section className="phase1-queue-group"><h2>Recent Properties<span>{visible.length}</span></h2>{visible.slice(0, 6).map((item) => <button className="phase1-recent-property" type="button" key={`recent-${item.requestId}`} onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}><strong>{item.propertyAddress}</strong><span>{item.queueStatus.replaceAll('_', ' ')}</span></button>)}</section>}
   </main>
 }
 
@@ -514,9 +601,12 @@ function NextStep({ address, evidenceCount, artifact, finding, onContinue }: {
 }
 
 export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?: boolean }) {
-  const storedProperty = useMemo(() => fixtureMode ? null : readPhase1PropertyContext(window.sessionStorage), [fixtureMode])
+  const storedProperty = useMemo(() => fixtureMode || /^\/properties\/new\/?$/.test(window.location.pathname) ? null : readPhase1PropertyContext(window.sessionStorage), [fixtureMode])
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(fixtureMode)
+  const [identity, setIdentity] = useState<Phase1Identity | null>(null)
+  const [landingReady, setLandingReady] = useState(fixtureMode)
+  const [route, setRoute] = useState(window.location.pathname + window.location.search)
   const [step, setStep] = useState<Step>('property')
   const [address, setAddress] = useState(storedProperty?.address || '')
   const [propertyContext, setPropertyContext] = useState<Phase1PropertyContext | null>(storedProperty)
@@ -526,21 +616,47 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [note, setNote] = useState('')
   const [evidenceSubmitting, setEvidenceSubmitting] = useState(false)
   const [evidenceError, setEvidenceError] = useState('')
+  const [uploadedEvidenceNames, setUploadedEvidenceNames] = useState<string[]>([])
+  const [uploadedEvidenceReferences, setUploadedEvidenceReferences] = useState<EvidenceReference[]>([])
+  const [submission, setSubmission] = useState<Phase1SubmissionMetadata | null>(null)
+  const [recipientName, setRecipientName] = useState('')
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [submissionError, setSubmissionError] = useState('')
+  const [submissionSubmitting, setSubmissionSubmitting] = useState(false)
   const [processingState, setProcessingState] = useState<ProcessingState>('idle')
   const [processingError, setProcessingError] = useState('')
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
   const [agentSubmissionCount, setAgentSubmissionCount] = useState<number | null>(null)
   const [findingIndex, setFindingIndex] = useState(0)
-  const reviewRequestId = useMemo(() => fixtureMode ? null : reviewRequestFromLocation(), [fixtureMode])
-  const audience = useMemo(() => audienceFromLocation(), [])
+  const reviewRequestId = useMemo(() => fixtureMode ? null : reviewRequestFromLocation(), [fixtureMode, route])
+  const submissionRequestId = useMemo(() => fixtureMode ? null : submissionRequestFromLocation(), [fixtureMode, route])
+  const audience = useMemo(() => audienceFromLocation(), [route])
   const [resolvedAudience, setResolvedAudience] = useState<'reviewer' | 'agent'>(audience)
-  const reviewQueue = useMemo(() => !fixtureMode && isReviewQueueLocation(), [fixtureMode])
+  const reviewQueue = useMemo(() => !fixtureMode && isReviewQueueLocation(), [fixtureMode, route])
   const [activeRequestId, setActiveRequestId] = useState<string | null>(reviewRequestId)
   const [reviewing, setReviewing] = useState(false)
   const [reviewError, setReviewError] = useState('')
-  const reviewLoadStarted = useRef(false)
+  const reviewLoadStarted = useRef<string | null>(null)
   const evidenceCount = useMemo(() => files.length + (note.trim() ? 1 : 0), [files, note])
   const finding = artifact?.findings[findingIndex] ?? null
+
+  function navigate(path: string) {
+    window.history.pushState({}, '', path)
+    if (path === '/properties/new') {
+      setStep('property')
+      setAddress('')
+      setPropertyContext(null)
+      setFiles([])
+      setNote('')
+      setArtifact(null)
+      setSubmission(null)
+      setActiveRequestId(null)
+      setUploadedEvidenceNames([])
+      setUploadedEvidenceReferences([])
+      clearPhase1PropertyContext(window.sessionStorage)
+    }
+    setRoute(window.location.pathname + window.location.search)
+  }
 
   useEffect(() => {
     if (fixtureMode) return
@@ -561,6 +677,37 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   }, [fixtureMode])
 
   useEffect(() => {
+    const onPopState = () => setRoute(window.location.pathname + window.location.search)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    if (fixtureMode || !session) return
+    let active = true
+    setLandingReady(false)
+    void loadPhase1Identity().then(async (profile) => {
+      if (!active) return
+      setIdentity(profile)
+      setRecipientEmail((current) => current || profile.email || session.user.email || '')
+      const protectedAdminRoute = /^\/(dashboard|review-queue)\/?$/.test(window.location.pathname)
+      if (protectedAdminRoute && !profile.isReviewer) {
+        const properties = await loadPhase1MyProperties()
+        if (!active) return
+        navigate(properties.length ? '/properties' : '/properties/new')
+      } else if (window.location.pathname === '/' || window.location.pathname === '/login') {
+        if (profile.isReviewer) navigate('/dashboard')
+        else {
+          const properties = await loadPhase1MyProperties()
+          if (!active) return
+          navigate(properties.length ? '/properties' : '/properties/new')
+        }
+      }
+    }).catch(() => setIdentity(null)).finally(() => { if (active) setLandingReady(true) })
+    return () => { active = false }
+  }, [fixtureMode, session])
+
+  useEffect(() => {
     if (fixtureMode || !authReady) return
     if (!session || (propertyContext && !propertyContextBelongsToUser(propertyContext, session.user.id))) {
       setPropertyContext(null)
@@ -568,14 +715,15 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setFiles([])
       setNote('')
       setArtifact(null)
+      setIdentity(null)
       setStep('property')
       clearPhase1PropertyContext(window.sessionStorage)
     }
   }, [authReady, fixtureMode, propertyContext, session])
 
   useEffect(() => {
-    if (fixtureMode || !session || !reviewRequestId || reviewLoadStarted.current) return
-    reviewLoadStarted.current = true
+    if (fixtureMode || !session || !reviewRequestId || reviewLoadStarted.current === reviewRequestId) return
+    reviewLoadStarted.current = reviewRequestId
     setStep('processing')
     setProcessingState('processing')
     setProcessingError('')
@@ -603,15 +751,47 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setPropertyContext(context)
       writePhase1PropertyContext(window.sessionStorage, context)
       setArtifact(result)
+      setSubmission(request.submission || null)
       setActiveRequestId(request.id)
-      setFindingIndex(0)
+      const requestedFinding = findingFromLocation() || request.submission?.lastViewedObservationId
+      const requestedIndex = requestedFinding ? result.findings.findIndex((item) => item.id === requestedFinding) : -1
+      const unresolvedIndex = result.findings.findIndex((item) => ['ai_draft', 'needs_review', 'needs_human_review'].includes(item.reviewDecision.status))
+      const resume = new URLSearchParams(window.location.search).get('resume') === '1' || Boolean(requestedFinding)
+      setFindingIndex(requestedIndex >= 0 ? requestedIndex : unresolvedIndex >= 0 ? unresolvedIndex : 0)
       setProcessingState('completed')
-      setStep('overview')
+      setStep(responseAudience === 'reviewer' && resume ? 'finding' : 'overview')
     }).catch((error) => {
       setProcessingState('failed')
       setProcessingError(error instanceof Error ? error.message : 'This review request is not available.')
     })
   }, [audience, fixtureMode, reviewRequestId, session])
+
+  useEffect(() => {
+    if (fixtureMode || !session || !submissionRequestId || reviewRequestId) return
+    let active = true
+    void loadPhase1ProcessingRequest(submissionRequestId).then((request) => {
+      if (!active || !request.submission) return
+      setActiveRequestId(request.id)
+      setSubmission(request.submission)
+      setNote(request.submission.note || '')
+      setUploadedEvidenceNames(request.submission.evidence.map((item) => item.name))
+      setUploadedEvidenceReferences(request.submission.evidence.map((item) => ({ id: item.id, sourceFileId: item.sourceFileId })))
+      setRecipientName(request.submission.deliveryRecipientName || '')
+      setRecipientEmail(request.submission.deliveryRecipientEmail || session.user.email || '')
+      const propertyAddress = request.submission.propertyAddress || storedProperty?.address || 'Property submission'
+      const context = { id: request.propertyId, address: propertyAddress, userId: session.user.id }
+      setAddress(propertyAddress)
+      setPropertyContext(context)
+      writePhase1PropertyContext(window.sessionStorage, context)
+      setStep(request.processingStatus === 'draft' ? 'submission_review' : 'submitted')
+    }).catch((error) => setSubmissionError(error instanceof Error ? error.message : 'This submission is not available.'))
+    return () => { active = false }
+  }, [fixtureMode, reviewRequestId, session, storedProperty?.address, submissionRequestId])
+
+  useEffect(() => {
+    if (fixtureMode || !identity?.isReviewer || step !== 'finding' || !activeRequestId || !finding) return
+    void savePhase1ReviewPosition(activeRequestId, finding.id).catch(() => undefined)
+  }, [activeRequestId, finding, fixtureMode, identity?.isReviewer, step])
 
   function changeAddress(value: string) {
     setAddress(value)
@@ -648,34 +828,49 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     setProcessingError('')
     setEvidenceError('')
     setEvidenceSubmitting(true)
-    let processingStarted = false
     try {
       if (fixtureMode) setStep('processing')
       let result: Phase1ExperienceViewModel
       if (fixtureMode) {
         result = await loadPhase1ReasoningArtifact({ mode: 'fixture' })
       } else {
-        const response = await processPhase1Evidence({
-          propertyId: propertyContext?.id || '',
-          files,
-          note,
-          onState: (state) => {
-            setProcessingState(state)
-            if (state === 'queued' || state === 'processing') {
-              processingStarted = true
-              setStep('processing')
-            }
-          },
-        })
-        setActiveRequestId(response.id)
-        if (response.processingStatus === 'under_review') {
-          setAgentSubmissionCount(response.totalFindingCount || 0)
-          setProcessingState('under_review')
-          return
+        let requestId = activeRequestId
+        if (activeRequestId && submission?.workflowState === 'draft') {
+          let references = uploadedEvidenceReferences
+          if (files.length) {
+            const upload = await uploadPhase1Evidence({ propertyId: propertyContext?.id || '', files })
+            references = [...uploadedEvidenceReferences, ...upload.evidenceReferences]
+          }
+          await updatePhase1SubmissionDraft(activeRequestId, {
+            propertyId: propertyContext?.id || '',
+            evidenceReferences: references,
+            note,
+            deliveryRecipient: { name: recipientName, email: recipientEmail || session?.user.email || '' },
+          })
+        } else {
+          const upload = await uploadPhase1Evidence({ propertyId: propertyContext?.id || '', files })
+          setProcessingState('uploaded')
+          const draft = await createPhase1SubmissionDraft({
+            propertyId: propertyContext?.id || '',
+            evidenceReferences: upload.evidenceReferences,
+            note,
+            deliveryRecipient: { name: recipientName, email: recipientEmail || session?.user.email || '' },
+          })
+          requestId = draft.id
+          setActiveRequestId(draft.id)
         }
-        const responseAudience = audience === 'agent' ? 'agent' : response.audience || audience
-        setResolvedAudience(responseAudience)
-        result = adaptPhase1ReasoningArtifact(response.artifact, { mode: 'live', audience: responseAudience })
+        if (!requestId) throw new Error('Submission draft persistence did not return a request identifier.')
+        const persisted = await loadPhase1ProcessingRequest(requestId)
+        setSubmission(persisted.submission || null)
+        setUploadedEvidenceNames(persisted.submission?.evidence.map((item) => item.name) || [])
+        setUploadedEvidenceReferences(persisted.submission?.evidence.map((item) => ({ id: item.id, sourceFileId: item.sourceFileId })) || [])
+        setFiles([])
+        setRecipientName(persisted.submission?.deliveryRecipientName || '')
+        setRecipientEmail(persisted.submission?.deliveryRecipientEmail || session?.user.email || '')
+        window.history.replaceState({}, '', `/submissions/${encodeURIComponent(requestId)}/review`)
+        setRoute(window.location.pathname + window.location.search)
+        setStep('submission_review')
+        return
       }
       setArtifact(result)
       setFindingIndex(0)
@@ -683,7 +878,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     } catch (error) {
       setArtifact(null)
       const message = error instanceof Error ? error.message : 'Processing failed. The selected evidence was not replaced with fixture data.'
-      if (processingStarted || fixtureMode) {
+      if (fixtureMode) {
         setStep('processing')
         setProcessingState('failed')
         setProcessingError(message)
@@ -694,6 +889,25 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       }
     } finally {
       setEvidenceSubmitting(false)
+    }
+  }
+
+  async function submitReviewedSubmission() {
+    if (!activeRequestId) return
+    setSubmissionSubmitting(true)
+    setSubmissionError('')
+    try {
+      const request = await submitPhase1SubmissionDraft(activeRequestId, { name: recipientName, email: recipientEmail })
+      setProcessingState(request.processingStatus)
+      const persisted = await loadPhase1ProcessingRequest(activeRequestId)
+      setSubmission(persisted.submission || submission)
+      window.history.replaceState({}, '', `/submissions/${encodeURIComponent(activeRequestId)}`)
+      setRoute(window.location.pathname + window.location.search)
+      setStep('submitted')
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'The submission could not be started.')
+    } finally {
+      setSubmissionSubmitting(false)
     }
   }
 
@@ -727,6 +941,16 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     }
   }
 
+  function openFinding(index: number) {
+    if (!artifact) return
+    setFindingIndex(index)
+    setStep('finding')
+    if (activeRequestId && artifact.findings[index]) {
+      window.history.replaceState({}, '', `/properties/${encodeURIComponent(propertyContext?.id || 'phase1')}/review?request=${encodeURIComponent(activeRequestId)}&finding=${encodeURIComponent(artifact.findings[index].id)}`)
+      setRoute(window.location.pathname + window.location.search)
+    }
+  }
+
   async function signOut() {
     clearPhase1PropertyContext(window.sessionStorage)
     await supabase.auth.signOut()
@@ -734,17 +958,21 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
 
   if (!fixtureMode && !authReady) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Checking your session…</p></main></div>
   if (!fixtureMode && !session) return <SignInStep onSignedIn={setSession} />
-  if (reviewQueue) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={() => void signOut()} /><ReviewQueue /></div>
-  if (agentSubmissionCount !== null) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={() => void signOut()} /><AgentSubmissionStatus count={agentSubmissionCount} /></div>
-  if (resolvedAudience === 'agent' && artifact) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} /><AgentView artifact={artifact} /></div>
+  if (!fixtureMode && (!landingReady || !identity)) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Loading your workspace…</p></main></div>
+  if (reviewQueue && identity?.isReviewer) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><AdminDashboard onNavigate={navigate} /></div>
+  if (!fixtureMode && /^\/properties\/?$/.test(window.location.pathname) && !reviewRequestId) return <div className="phase1-shell"><PhaseHeader step="property" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><MyProperties onNavigate={navigate} /></div>
+  if (agentSubmissionCount !== null && reviewRequestId) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><AgentSubmissionStatus count={agentSubmissionCount} /></div>
+  if (resolvedAudience === 'agent' && artifact && reviewRequestId) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={fixtureMode ? undefined : () => void signOut()} /><AgentView artifact={artifact} /></div>
 
   return (
     <div className="phase1-shell">
-      <PhaseHeader step={step} email={fixtureMode ? undefined : session?.user.email} onSignOut={fixtureMode ? undefined : () => void signOut()} />
+      <PhaseHeader step={step} email={fixtureMode ? undefined : session?.user.email} identity={identity} onNavigate={fixtureMode ? undefined : navigate} onSignOut={fixtureMode ? undefined : () => void signOut()} />
       {step === 'property' && <PropertyStep address={address} resolving={propertyResolving} error={propertyError} onAddressChange={changeAddress} onContinue={() => void continueFromProperty()} />}
-      {step === 'evidence' && <EvidenceStep files={files} note={note} submitting={evidenceSubmitting} error={evidenceError} onFiles={(nextFiles) => { setFiles(nextFiles); setEvidenceError('') }} onNote={setNote} onContinue={() => void organizeEvidence()} />}
+      {step === 'evidence' && <EvidenceStep files={files} existingEvidenceNames={submission?.workflowState === 'draft' ? uploadedEvidenceNames : []} note={note} submitting={evidenceSubmitting} error={evidenceError} onFiles={(nextFiles) => { setFiles(nextFiles); setEvidenceError('') }} onNote={setNote} onContinue={() => void organizeEvidence()} />}
+      {step === 'submission_review' && <ReviewSubmissionStep address={submission?.propertyAddress || address} evidenceNames={uploadedEvidenceNames.length ? uploadedEvidenceNames : submission?.evidence.map((item) => item.name) || []} note={note} recipientName={recipientName} recipientEmail={recipientEmail} submitting={submissionSubmitting} error={submissionError} onRecipientName={setRecipientName} onRecipientEmail={setRecipientEmail} onBack={() => setStep('evidence')} onSubmit={() => void submitReviewedSubmission()} />}
+      {step === 'submitted' && <SubmittedSummary address={submission?.propertyAddress || address} submission={submission} evidenceNames={uploadedEvidenceNames.length ? uploadedEvidenceNames : submission?.evidence.map((item) => item.name) || []} note={note} onNavigate={navigate} onAddEvidence={() => { setFiles([]); setNote(''); setSubmission(null); setActiveRequestId(null); setUploadedEvidenceNames([]); setUploadedEvidenceReferences([]); window.history.pushState({}, '', `/properties/${encodeURIComponent(propertyContext?.id || '')}/evidence`); setRoute(window.location.pathname); setStep('evidence') }} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
-      {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={(index) => { setFindingIndex(index); setStep('finding') }} />}
+      {step === 'overview' && artifact && <OverviewStep artifact={artifact} onSelect={openFinding} />}
       {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} transactionPerspective={artifact.transactionPerspective} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onReview={(action, payload) => void reviewFinding(action, payload)} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}

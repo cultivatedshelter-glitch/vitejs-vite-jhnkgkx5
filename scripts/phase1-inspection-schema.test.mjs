@@ -6,6 +6,7 @@ const MIGRATION_PATH = 'supabase/migrations/20260829041051_phase1_inspection_int
 const STORAGE_MIGRATION_PATH = 'supabase/migrations/20260917112924_phase1_evidence_storage.sql'
 const RUNTIME_GRANTS_MIGRATION_PATH = 'supabase/migrations/20260917113200_phase1_runtime_grants.sql'
 const PROFILE_HARDENING_MIGRATION_PATH = 'supabase/migrations/20260918183427_phase1_profile_role_hardening.sql'
+const CONTINUITY_MIGRATION_PATH = 'supabase/migrations/20260919143539_phase1_operational_continuity.sql'
 
 function migrationSql() {
   return readFileSync(MIGRATION_PATH, 'utf8')
@@ -185,4 +186,19 @@ test('Phase 1 server persistence has explicit service-role grants', () => {
 
   assert.match(sql, /grant select, insert, update, delete on table[\s\S]*?inspection_pipeline_runs[\s\S]*?inspection_reports[\s\S]*?to service_role/i)
   assert.match(sql, /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated/i)
+})
+
+test('operational continuity extends the protected pipeline record without browser writes', () => {
+  const sql = readFileSync(CONTINUITY_MIGRATION_PATH, 'utf8')
+
+  for (const field of [
+    'submitter_name', 'submitter_email', 'delivery_recipient_email', 'delivery_recipient_source',
+    'submitted_at', 'workflow_state', 'next_responsible_role', 'next_action', 'last_activity_at',
+    'last_viewed_observation_id', 'released_artifact_version', 'released_at',
+  ]) assert.match(sql, new RegExp(`add column if not exists ${field}\\b`, 'i'))
+  assert.match(sql, /status in \('draft', 'queued'/i)
+  assert.match(sql, /'submission_review'/i)
+  assert.match(sql, /'released_result'/i)
+  assert.match(sql, /delivery_recipient_source in \('submitter_default', 'manually_changed'\)/i)
+  assert.doesNotMatch(sql, /grant\s+(insert|update|delete)[^;]*authenticated/i)
 })

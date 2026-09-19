@@ -22,7 +22,9 @@ function repository(root) {
   return {
     uploadedAt: null,
     lastStoredEvidence: null,
-    async authenticate(token) { return token === 'authorized-token' || token === 'other-token' ? { id: token } : null },
+    lastRequest: null,
+    async authenticate(token) { return token === 'authorized-token' || token === 'other-token' ? { id: token, email: `${token}@example.com` } : null },
+    async getActorProfile({ actor }) { return { id: actor.id, email: actor.email, fullName: 'Pilot User', role: 'viewer', active: true, isReviewer: false } },
     async resolveOrCreateProperty({ actor, address }) {
       const normalized = address.trim().toLowerCase().replace(/\s+/g, ' ')
       const existing = properties.get(`${actor.id}:${normalized}`)
@@ -32,6 +34,7 @@ function repository(root) {
       return { ...property, created: true }
     },
     async canAccessProperty(actor, property) { return actor === 'authorized-token' && property === PROPERTY_ID && [...properties.values()].some((item) => item.actorId === actor && item.id === property) },
+    async isReviewer() { return false },
     async storeEvidence({ actor, propertyId, file }) {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const id = `evidence-${++sequence}-${createHash('sha256').update(bytes).digest('hex').slice(0, 12)}`
@@ -46,10 +49,29 @@ function repository(root) {
     async resolveEvidence({ actor, propertyId, evidenceReferences }) {
       return evidenceReferences.map(({ id }) => evidence.get(id)).filter((item) => item?.actorId === actor.id && item.propertyId === propertyId)
     },
-    async createProcessingRequest({ actor, propertyId, evidenceReferences, note }) {
-      const request = { id: `request-${++sequence}`, actorId: actor.id, propertyId, evidenceReferences, note, processingStatus: 'queued', artifact: null, error: null }
+    async validateEvidenceReferences({ actor, propertyId, evidenceReferences }) {
+      return evidenceReferences.every(({ id, sourceFileId }) => {
+        const item = evidence.get(id)
+        return item?.actorId === actor.id && item.propertyId === propertyId && item.sourceFileId === sourceFileId
+      })
+    },
+    async createProcessingRequest({ actor, propertyId, evidenceReferences, note, deliveryRecipient, draft = false }) {
+      const request = { id: `request-${++sequence}`, actorId: actor.id, propertyId, property_id: propertyId, evidenceReferences, note, processingStatus: draft ? 'draft' : 'queued', status: draft ? 'draft' : 'queued', artifact: null, error: null, deliveryRecipient }
       requests.set(request.id, request)
-      return { id: request.id, propertyId, processingStatus: 'queued' }
+      this.lastRequest = request
+      return { id: request.id, propertyId, processingStatus: request.processingStatus }
+    },
+    async finalizeSubmission({ actor, requestId, deliveryRecipient }) {
+      const request = requests.get(requestId)
+      if (!request || request.actorId !== actor.id || request.status !== 'draft') return null
+      Object.assign(request, { status: 'queued', processingStatus: 'queued', deliveryRecipient })
+      return { ...request, evidenceReferences: request.evidenceReferences, note: request.note }
+    },
+    async updateSubmissionDraft({ actor, requestId, propertyId, evidenceReferences, note, deliveryRecipient }) {
+      const request = requests.get(requestId)
+      if (!request || request.actorId !== actor.id || request.propertyId !== propertyId || request.status !== 'draft') return null
+      Object.assign(request, { evidenceReferences, note, deliveryRecipient })
+      return { id: request.id, propertyId, processingStatus: 'draft' }
     },
     async markProcessing(id) { requests.get(id).processingStatus = 'processing' },
     async completeProcessing(id, artifact) { Object.assign(requests.get(id), { processingStatus: 'completed', artifact }) },
@@ -216,12 +238,57 @@ test('address resolution creates once and reuses the accessible Property workspa
   }
 })
 
+test('submission review persists recipient metadata before processing and admin routes stay role-gated', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phase1-submission-test-'))
+  try {
+    const repo = repository(root)
+    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => ({}) })
+    const handle = createPhase1HttpHandler(service)
+    await service.resolveProperty({ token: 'authorized-token', address: '10 Test Ave' })
+    const file = new File([new Uint8Array([1, 2, 3])], 'inspection.pdf', { type: 'application/pdf' })
+    const uploaded = await service.upload({ token: 'authorized-token', propertyId: PROPERTY_ID, files: [file] })
+    const draft = await requestJson(handle, 'http://test/api/phase1/submissions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer authorized-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: PROPERTY_ID, evidenceReferences: uploaded.evidenceReferences, note: 'Seller timing matters.', deliveryRecipient: { email: 'recipient@example.com' } }),
+    })
+    assert.equal(draft.status, 201)
+    assert.equal(draft.body.processingStatus, 'draft')
+    assert.equal(repo.lastRequest.deliveryRecipient.email, 'recipient@example.com')
+    assert.equal(repo.lastRequest.deliveryRecipient.source, 'manually_changed')
+
+    const updated = await requestJson(handle, `http://test/api/phase1/submissions/${draft.body.id}`, {
+      method: 'PATCH',
+      headers: { authorization: 'Bearer authorized-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: PROPERTY_ID, evidenceReferences: uploaded.evidenceReferences, note: 'Updated context.', deliveryRecipient: { email: 'authorized-token@example.com' } }),
+    })
+    assert.equal(updated.status, 200)
+    assert.equal(repo.lastRequest.note, 'Updated context.')
+    assert.equal(repo.lastRequest.deliveryRecipient.source, 'submitter_default')
+
+    const dashboard = await requestJson(handle, 'http://test/api/phase1/dashboard', { headers: { authorization: 'Bearer authorized-token' } })
+    assert.equal(dashboard.status, 403)
+    assert.equal(dashboard.body.error.code, 'authorization_failed')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('live repository does not combine Property insertion with an RLS returning-row select', async () => {
   const repository = await readFile(resolve('server/phase1SupabaseRepository.mjs'), 'utf8')
   const creation = repository.slice(repository.indexOf("const { error } = await client.from('properties').insert"), repository.indexOf('async storeEvidence'))
   assert.doesNotMatch(creation, /\.insert\([\s\S]*?\)\.select\(/)
   assert.match(creation, /\.eq\('created_by', actor\.id\)/)
   assert.match(creation, /Created Property could not be resolved uniquely/)
+})
+
+test('editing a submission draft refreshes its processing identity and primary evidence', async () => {
+  const repository = await readFile(resolve('server/phase1SupabaseRepository.mjs'), 'utf8')
+  const update = repository.slice(repository.indexOf('async updateSubmissionDraft'), repository.indexOf('async markProcessing'))
+  assert.match(update, /inspection_report_id: primary\.id/)
+  assert.match(update, /source_file_id: primary\.sourceFileId/)
+  assert.match(update, /input_hash: inputHash/)
+  assert.match(update, /JSON\.stringify\(\{ propertyId, evidenceReferences, note \}\)/)
 })
 
 test('review processing cannot run without resolved property context', async () => {
@@ -296,7 +363,9 @@ test('live frontend flow does not use an artifact URL or silently fall back to f
   const client = await readFile(resolve('src/phase1ProcessingClient.ts'), 'utf8')
   assert.doesNotMatch(experience, /VITE_PHASE1_REASONING_ARTIFACT_URL/)
   assert.match(experience, /if \(fixtureMode\)[\s\S]*await loadPhase1ReasoningArtifact/)
-  assert.match(experience, /processPhase1Evidence/)
+  assert.match(experience, /uploadPhase1Evidence/)
+  assert.match(experience, /createPhase1SubmissionDraft/)
+  assert.match(experience, /submitPhase1SubmissionDraft/)
   assert.match(experience, /resolvePhase1Property\(address\)/)
   assert.match(experience, /propertyId: propertyContext\?\.id \|\| ''/)
   assert.doesNotMatch(experience, /URLSearchParams\(window\.location\.search\).*property/)
