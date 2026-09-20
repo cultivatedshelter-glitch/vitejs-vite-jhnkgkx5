@@ -469,26 +469,36 @@ test('failed atomic finding persistence does not continue review completion', as
   assert.equal(releaseCalls, 0)
 })
 
-test('completed human review releases once and delivery failure cannot erase approval', async () => {
+test('review completion requires explicit preview, release, and idempotent delivery commands', async () => {
   const deliveries = []
   let releaseCalls = 0
-  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }] }
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1' }], reviewState: { 'observation-1': { event: { review_action: 'approve' } } } }
   const repo = {
     async authenticate() { return { id: 'reviewer-1' } },
-    async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
+    async isReviewer() { return true },
+    async getProcessingRequest() { return { id: 'request-1', propertyId: 'property-1', processingStatus: 'completed', artifactVersion: artifact.schemaVersion, artifact, submission: { deliveryRecipientEmail: 'agent@example.com', releasedAt: releaseCalls ? '2030-01-01T00:00:00Z' : null } } },
     async reviewFinding() { return { findingId: 'finding-1', status: 'human_verified', eventId: 'event-1' } },
-    async releaseIfReviewComplete() { releaseCalls += 1; return { ready: true, released: releaseCalls === 1 } },
+    async releaseReviewedReport() { releaseCalls += 1; return { ready: true, released: releaseCalls === 1, releasedAt: '2030-01-01T00:00:00Z' } },
   }
-  const notifications = { async notifyReviewedResult(value) { deliveries.push(value); throw new Error('provider unavailable') } }
-  const errors = []
-  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact, notifications, logger: { error: (...values) => errors.push(values) } })
-  const first = await service.review({ token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' })
-  const duplicate = await service.review({ token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' })
-  assert.equal(first.release.released, true)
-  assert.equal(duplicate.release.released, false)
+  const notifications = { async notifyReviewedResult(value) { deliveries.push(value); return { status: 'sent', duplicate: deliveries.length > 1 } } }
+  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact, notifications })
+  const decision = await service.review({ token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'approve' })
+  assert.equal(decision.completion.remaining, 0)
+  assert.equal(releaseCalls, 0)
+  assert.equal(deliveries.length, 0)
+  const preview = await service.previewReviewedReport({ token: 'reviewer-token', requestId: 'request-1' })
+  assert.equal(preview.summary.approved, 1)
+  assert.equal(releaseCalls, 0)
+  await assert.rejects(
+    service.sendReviewedResult({ token: 'reviewer-token', requestId: 'request-1' }),
+    (error) => error.code === 'report_not_released' && error.status === 409,
+  )
+  assert.equal(deliveries.length, 0)
+  const release = await service.releaseReviewedReport({ token: 'reviewer-token', requestId: 'request-1' })
+  assert.equal(release.released, true)
+  assert.equal(releaseCalls, 1)
+  await service.sendReviewedResult({ token: 'reviewer-token', requestId: 'request-1' })
   assert.equal(deliveries.length, 1)
-  assert.equal(errors.length, 1)
-  assert.equal(first.status, 'human_verified')
 })
 
 test('normal agents cannot invoke review mutations', async () => {

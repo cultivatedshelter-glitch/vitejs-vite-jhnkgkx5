@@ -10,11 +10,20 @@ export class ProcessingError extends Error {
 
 export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
   const REVIEW_ACTIONS = new Set(['approve', 'edit', 'needs_more_info', 'reject'])
+  const TERMINAL_REVIEW_ACTIONS = new Set(['approve', 'needs_more_info', 'reject'])
   const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'repair_paths', 'next_step', 'rationale', 'likely_trade', 'price', 'evidence_relationship', 'confirmed_evidence', 'field_knowledge'])
   async function requireActor(token) {
     if (!token) throw new ProcessingError('authorization_failed', 'Sign in is required to process property evidence.', 401)
     const actor = await repository.authenticate(token)
     if (!actor) throw new ProcessingError('authorization_failed', 'The session is not authorized.', 401)
+    return actor
+  }
+
+  async function requireReviewer(token) {
+    const actor = await requireActor(token)
+    if (repository.isReviewer && !await repository.isReviewer(actor.id)) {
+      throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
+    }
     return actor
   }
 
@@ -24,6 +33,17 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
       throw new ProcessingError('delivery_recipient_invalid', 'Enter a valid email address for the reviewed result.')
     }
     return { name: String(value?.name || '').trim() || null, email, source: email === String(fallbackEmail || '').trim().toLowerCase() ? 'submitter_default' : 'manually_changed' }
+  }
+
+  function reviewSummary(artifact) {
+    const observations = Array.isArray(artifact?.atomicObservations) ? artifact.atomicObservations : []
+    const states = artifact?.reviewState && typeof artifact.reviewState === 'object' ? artifact.reviewState : {}
+    const actions = observations.map((observation) => states[observation.id]?.event?.review_action || null)
+    const approved = actions.filter((action) => action === 'approve').length
+    const needsInfo = actions.filter((action) => action === 'needs_more_info').length
+    const rejected = actions.filter((action) => action === 'reject').length
+    const reviewed = actions.filter((action) => TERMINAL_REVIEW_ACTIONS.has(action)).length
+    return { total: observations.length, reviewed, approved, needsInfo, rejected, remaining: Math.max(observations.length - reviewed, 0) }
   }
 
   async function queueProcessing({ request, actor, propertyId, evidenceReferences, note }) {
@@ -240,21 +260,38 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     }
     const result = await repository.reviewFinding({ actor, requestId, observationId, action, newValue, reason: String(reason).trim() })
     if (!result) throw new ProcessingError('finding_not_found', 'This finding is not available for review.', 404)
-    const release = repository.releaseIfReviewComplete
-      ? await repository.releaseIfReviewComplete({ actor, requestId })
-      : { ready: false, released: false }
-    if (release.released && notifications) {
-      try {
-        await notifications.notifyReviewedResult({ requestId, artifact: request.artifact })
-      } catch (notificationError) {
-        logger.error('Phase 1 reviewed-result delivery could not be recorded.', {
-          requestId,
-          error: notificationError instanceof Error ? notificationError.message : 'Notification failed.',
-        })
-      }
-    }
-    return { ...result, release }
+    const refreshed = await repository.getProcessingRequest({ actor, requestId })
+    return { ...result, completion: reviewSummary(refreshed?.artifact) }
   }
 
-  return { identity, resolveProperty, upload, createSubmissionDraft, updateSubmissionDraft, finalizeSubmission, submit, status, sourceDocument, reviewQueue, dashboard, myProperties, saveReviewPosition, review }
+  async function previewReviewedReport({ token, requestId }) {
+    const actor = await requireReviewer(token)
+    const request = await repository.getProcessingRequest({ actor, requestId })
+    if (!request?.artifact) throw new ProcessingError('review_not_available', 'This reviewed request is not available.', 404)
+    const summary = reviewSummary(request.artifact)
+    if (summary.remaining > 0) throw new ProcessingError('review_incomplete', `${summary.remaining} findings still require a terminal review decision.`, 409)
+    return { requestId, propertyId: request.propertyId, artifact: request.artifact, submission: request.submission, summary }
+  }
+
+  async function releaseReviewedReport({ token, requestId }) {
+    const actor = await requireReviewer(token)
+    const preview = await previewReviewedReport({ token, requestId })
+    const release = await repository.releaseReviewedReport({ actor, requestId })
+    if (!release?.ready) throw new ProcessingError('review_incomplete', 'The reviewed report is not eligible for release.', 409)
+    return { ...release, summary: preview.summary, submission: preview.submission }
+  }
+
+  async function sendReviewedResult({ token, requestId }) {
+    const actor = await requireReviewer(token)
+    const request = await repository.getProcessingRequest({ actor, requestId })
+    if (!request?.submission?.releasedAt) {
+      throw new ProcessingError('report_not_released', 'Release the reviewed report before sending it.', 409)
+    }
+    if (!notifications) throw new ProcessingError('delivery_unavailable', 'Reviewed-result delivery is not configured.', 503)
+    const delivery = await notifications.notifyReviewedResult({ requestId, artifact: request.artifact })
+    const refreshed = await repository.getProcessingRequest({ actor, requestId })
+    return { delivery, submission: refreshed?.submission || request.submission }
+  }
+
+  return { identity, resolveProperty, upload, createSubmissionDraft, updateSubmissionDraft, finalizeSubmission, submit, status, sourceDocument, reviewQueue, dashboard, myProperties, saveReviewPosition, review, previewReviewedReport, releaseReviewedReport, sendReviewedResult }
 }

@@ -146,7 +146,7 @@ test('Round 1 artifact derives dynamic counts, categories, blocked pricing, and 
   assert.deepEqual(result.findings[0].relatedFindings, ['Loose handrail.'])
 })
 
-test('human correction overlays preserve the draft and agent output includes only reviewed delivery-eligible findings', () => {
+test('human correction overlays preserve the draft and agent output waits for a terminal decision', () => {
   const reviewed = structuredClone(liveArtifact)
   reviewed.reviewState = {
     'observation-1': {
@@ -196,13 +196,16 @@ test('human correction overlays preserve the draft and agent output includes onl
 
   const agent = adaptPhase1ReasoningArtifact(reviewed, { mode: 'live', audience: 'agent' })
   assert.equal(agent.totalFindingCount, 2)
-  assert.equal(agent.findings.length, 1)
-  assert.equal(agent.findings[0].id, 'observation-1')
+  assert.equal(agent.findings.length, 0)
+  const approvedAgent = adaptPhase1ReasoningArtifact(approvedAfterEdit, { mode: 'live', audience: 'agent' })
+  assert.equal(approvedAgent.findings.length, 1)
+  assert.equal(approvedAgent.findings[0].id, 'observation-1')
 
   const released = structuredClone(liveArtifact)
   released.atomicObservations = [released.atomicObservations[0]]
   released.atomicObservations[0].finding_card.review_status = 'human_reviewed'
   released.atomicObservations[0].finding_card.released_to_agent = true
+  released.atomicObservations[0].finding_card.release_disposition = 'approved'
   released.atomicObservations[0].finding_card.released_price_correction = {
     low: 1200,
     high: 2400,

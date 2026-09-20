@@ -44,7 +44,7 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     'Known',
     'Unknown',
     'Next task',
-    'Why this next step',
+    'Why this is the next task',
     'Missing information',
     'Environmental context',
     'Contractor input',
@@ -53,10 +53,10 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     'What would change the decision',
     'Pricing source',
     'Range history',
-    'Related findings',
-    'Approve',
-    'Edit finding',
-    'Needs More Information',
+    'More Details',
+    'Approve & Next',
+    'Save Edit',
+    'Needs Info',
     'Reject',
   ]) {
     assert.match(component, new RegExp(required, 'i'))
@@ -74,11 +74,10 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   assert.match(component, /function AgentView/)
   assert.match(component, /audienceFromLocation/)
   assert.match(component, /reviewPhase1Finding/)
-  assert.match(component, /Adjust price/)
+  assert.match(component, /Adjust Price/)
   assert.match(component, /Reviewer \/ Professional Judgment/)
   assert.match(component, /supporting_source_ids/)
-  assert.match(component, /repair_paths:/)
-  assert.match(component, /Evidence relationship/)
+  assert.doesNotMatch(component, /Edit finding/)
   assert.match(component, /Reviewer field knowledge/)
   assert.match(component, /field_knowledge: fieldKnowledge\.trim\(\)/)
   assert.match(component, /Under review/)
@@ -86,7 +85,7 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   const findingView = component.slice(component.indexOf('function FindingStep'), component.indexOf('function AgentView'))
   assert.ok(findingView.indexOf('Primary evidence') < findingView.indexOf('Shelter Prep interpretation'))
   assert.doesNotMatch(findingView, /sourceFileId|source_file_id|sha256|checksum/)
-  const agentView = component.slice(component.indexOf('function AgentView'), component.indexOf('function GapStep'))
+  const agentView = component.slice(component.indexOf('function ReleasedResultContent'), component.indexOf('function GapStep'))
   assert.match(agentView, /finding\.nextStep/)
   assert.doesNotMatch(agentView, /reviewerId|parser|review queue|source_file_id|sha256/)
   assert.match(component, /function AdminDashboard/)
@@ -101,7 +100,7 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   assert.match(component, /Finding \{findingIndex \+ 1\} of \{findingCount\}/)
   assert.match(component, />Previous</)
   assert.match(component, />Next</)
-  assert.match(component, /Approve &amp; Next/)
+  assert.match(component, /Approve & Next/)
   assert.match(component, /Quick review/)
   assert.match(component, /Careful review/)
   assert.match(component, /function SourceDrawer/)
@@ -113,17 +112,28 @@ test('agent drafts are withheld at the server boundary and reviewer queue stays 
   assert.match(repository, /request\.status === 'completed' \? agentArtifact\(artifact/)
   assert.match(repository, /request\.status === 'needs_review'[\s\S]*'under_review'/)
   assert.match(repository, /delete copy\.source\?\.provenance/)
-  assert.match(repository, /card\.released_to_agent = true/)
+  assert.match(repository, /card\.release_disposition/)
   const agentProjection = repository.slice(repository.indexOf('function agentArtifact'), repository.indexOf('export function normalizePropertyAddress'))
   assert.doesNotMatch(agentProjection, /reviewState[,;]/)
   assert.match(service, /repository\.isReviewer/)
   assert.match(service, /Reviewer access is required/)
 })
 
-test('secondary evidence, sources, context, and history use collapsed disclosure controls', () => {
-  const details = component.match(/<details>/g) ?? []
-  assert.ok(details.length >= 5)
-  assert.doesNotMatch(component, /<details\s+open/)
+test('secondary evidence and machinery stay behind compact disclosure controls', () => {
+  const details = component.match(/<details(?:\s|>)/g) ?? []
+  assert.ok(details.length >= 4)
+  assert.match(component, /<summary>More Details<\/summary>/)
+})
+
+test('review completion is explicit and separated from preview, release, and send', () => {
+  for (const label of ['Review complete', 'Generate Reviewed Report', 'Preview reviewed report', 'Back to Review', 'Release Report', 'Report released', 'Send Reviewed Result']) {
+    assert.match(component, new RegExp(label, 'i'))
+  }
+  assert.match(component, /isTerminalReview/)
+  assert.match(component, /reviewDecision\.action === 'approve'/)
+  assert.match(component, /previewPhase1ReviewedReport/)
+  assert.match(component, /releasePhase1ReviewedReport/)
+  assert.match(component, /sendPhase1ReviewedResult/)
 })
 
 test('processing reflects artifact request state without simulated timers', () => {

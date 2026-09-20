@@ -86,6 +86,18 @@ export function createPhase1HttpHandler(service) {
           expectedReviewEventId: body.expectedReviewEventId || null,
         }))
       }
+      const previewMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/reviewed-report\/preview$/)
+      if (request.method === 'POST' && previewMatch) {
+        return json(await service.previewReviewedReport({ token: token(request), requestId: decodeURIComponent(previewMatch[1]) }))
+      }
+      const releaseMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/reviewed-report\/release$/)
+      if (request.method === 'POST' && releaseMatch) {
+        return json(await service.releaseReviewedReport({ token: token(request), requestId: decodeURIComponent(releaseMatch[1]) }))
+      }
+      const sendMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/reviewed-report\/send$/)
+      if (request.method === 'POST' && sendMatch) {
+        return json(await service.sendReviewedResult({ token: token(request), requestId: decodeURIComponent(sendMatch[1]) }))
+      }
       return json({ error: { code: 'not_found', message: 'Endpoint not found.' } }, 404)
     } catch (error) {
       const status = error instanceof ProcessingError ? error.status : 500

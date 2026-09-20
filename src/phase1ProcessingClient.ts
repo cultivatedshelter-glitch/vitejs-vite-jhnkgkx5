@@ -33,6 +33,16 @@ export type Phase1SubmissionMetadata = {
   lastViewedObservationId: string | null
   releasedArtifactVersion: string | null
   releasedAt: string | null
+  delivery: Phase1DeliveryRecord | null
+}
+
+export type Phase1ReviewSummary = { total: number; reviewed: number; approved: number; needsInfo: number; rejected: number; remaining: number }
+export type Phase1ReviewedReportPreview = {
+  requestId: string
+  propertyId: string
+  artifact: unknown
+  submission: Phase1SubmissionMetadata
+  summary: Phase1ReviewSummary
 }
 
 export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
@@ -301,13 +311,37 @@ export async function reviewPhase1Finding({
   fieldsApproved?: string[]
   expectedReviewEventId?: string | null
 }) {
-  return jsonRequest<{ findingId: string; status: string; eventId: string; release?: { ready: boolean; released: boolean } }>(
+  return jsonRequest<{ findingId: string; status: string; eventId: string; completion?: Phase1ReviewSummary }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/findings/${encodeURIComponent(observationId)}/review`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action, corrections, reason, fieldsApproved, expectedReviewEventId }),
     },
+    { verifySession: true },
+  )
+}
+
+export async function previewPhase1ReviewedReport(requestId: string) {
+  return jsonRequest<Phase1ReviewedReportPreview>(
+    `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/reviewed-report/preview`,
+    { method: 'POST' },
+    { verifySession: true },
+  )
+}
+
+export async function releasePhase1ReviewedReport(requestId: string) {
+  return jsonRequest<{ ready: boolean; released: boolean; releasedAt: string | null; summary: Phase1ReviewSummary; submission: Phase1SubmissionMetadata }>(
+    `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/reviewed-report/release`,
+    { method: 'POST' },
+    { verifySession: true },
+  )
+}
+
+export async function sendPhase1ReviewedResult(requestId: string) {
+  return jsonRequest<{ delivery: { status: string; duplicate?: boolean }; submission: Phase1SubmissionMetadata }>(
+    `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/reviewed-report/send`,
+    { method: 'POST' },
     { verifySession: true },
   )
 }

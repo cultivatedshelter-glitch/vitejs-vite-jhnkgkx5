@@ -132,6 +132,7 @@ export type Phase1FindingViewModel = {
   reviewPriority: 'quick_review' | 'careful_review' | 'waiting_for_evidence'
   reviewReasons: string[]
   reviewDecision: Phase1ReviewDecision
+  releaseDisposition: 'approved' | 'needs_more_information' | 'rejected' | null
   fieldKnowledge: string
   likelyTrade: string
   affectedLocation: Phase1AffectedLocation
@@ -222,6 +223,19 @@ function humanize(value: string): string {
   return value
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function tradeLabel(value: string, category: string): string {
+  const candidate = humanize(value).trim()
+  if (candidate && !['Human Reviewer', 'Reviewer', 'Unknown Owner'].includes(candidate)) return candidate
+  const normalized = category.toLowerCase()
+  if (normalized.includes('plumb')) return 'Plumbing'
+  if (normalized.includes('electric')) return 'Electrical'
+  if (normalized.includes('hvac') || normalized.includes('heating')) return 'HVAC'
+  if (normalized.includes('roof')) return 'Roofing'
+  if (normalized.includes('siding') || normalized.includes('exterior') || normalized.includes('envelope')) return 'Exterior / Siding'
+  if (normalized.includes('carpentry') || normalized.includes('window') || normalized.includes('door')) return 'Carpentry'
+  return 'Unknown'
 }
 
 function formatMoney(value: number): string {
@@ -552,10 +566,11 @@ function normalizeFinding(
       sources: pathSources,
     }
   })
+  const category = asString(organization.building_system) || asString(asRecord(card.source_refs).source_section) || 'Inspection findings'
   return {
     id,
     title,
-    category: asString(organization.building_system) || asString(asRecord(card.source_refs).source_section) || 'Inspection findings',
+    category,
     observation: asString(epistemic.source_observation) || asString(source.inspector_statement) || known[0] || title,
     interpretation: asString(corrections.interpretation) || asString(epistemic.shelter_prep_interpretation) || 'Shelter Prep interpretation was not returned.',
     observedAt: asString(source.when_observed) || null,
@@ -582,8 +597,13 @@ function normalizeFinding(
       corrections,
       deliveryEligible: reviewNewValue.delivery_eligible === true || card.released_to_agent === true,
     },
+    releaseDisposition: (['approved', 'needs_more_information', 'rejected'].includes(asString(card.release_disposition))
+      ? asString(card.release_disposition)
+      : asString(reviewEvent.review_action) === 'approve' ? 'approved'
+        : asString(reviewEvent.review_action) === 'needs_more_info' ? 'needs_more_information'
+          : asString(reviewEvent.review_action) === 'reject' ? 'rejected' : null) as Phase1FindingViewModel['releaseDisposition'],
     fieldKnowledge: asString(corrections.field_knowledge),
-    likelyTrade: asString(corrections.likely_trade) || asString(card.next_step_owner) || 'Human reviewer',
+    likelyTrade: tradeLabel(asString(corrections.likely_trade) || asString(card.next_step_owner), category),
     affectedLocation: {
       orientation: asString(correctedLocation.orientation) || asString(affectedLocation.orientation) || 'Unknown',
       orientationStatus: (hasCorrectedLocation && asString(correctedLocation.orientation)
@@ -693,7 +713,7 @@ export function adaptPhase1ReasoningArtifact(
   const allFindings = entries.map((entry, index) => normalizeFinding(input, entry, index, related))
   const audience = options.audience ?? 'reviewer'
   const findings = audience === 'agent'
-    ? allFindings.filter((finding) => finding.reviewDecision.deliveryEligible && ['human_reviewed', 'human_verified'].includes(finding.reviewStatus))
+    ? allFindings.filter((finding) => finding.releaseDisposition !== null)
     : allFindings
   const categories = findings.map((finding) => finding.category).filter((value, index, all) => all.indexOf(value) === index)
   const rawOverview = asRecord(input.decisionOverview)
