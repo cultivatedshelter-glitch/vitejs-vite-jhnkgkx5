@@ -501,13 +501,18 @@ export function createPhase1SupabaseRepository() {
       }
     },
 
-    async claimNotification({ eventType, requestId, propertyId, workRequestId, recipient, provider }) {
-      const selectExisting = () => admin.from('phase1_notifications').select('*')
-        .eq('event_type', eventType)
-        .eq('processing_request_id', requestId)
-        .eq('recipient', recipient)
-        .eq('channel', 'email')
-        .maybeSingle()
+    async claimNotification({ eventType, requestId, reportId = null, reportVersion = null, propertyId, workRequestId, recipient, provider }) {
+      const selectExisting = () => {
+        let query = admin.from('phase1_notifications').select('*')
+          .eq('event_type', eventType)
+          .eq('recipient', recipient)
+          .eq('channel', 'email')
+        query = eventType === 'reviewed_result_ready' && reportId
+          ? query.eq('report_id', reportId)
+          : query.eq('processing_request_id', requestId)
+        if (eventType === 'reviewed_result_ready' && !reportId) query = query.is('report_id', null)
+        return query.maybeSingle()
+      }
       const { data: existing, error: existingError } = await selectExisting()
       if (existingError) throw new Error(`Notification lookup failed: ${existingError.message}`)
       if (existing?.delivery_status === 'sent' || existing?.delivery_status === 'sending') {
@@ -528,6 +533,8 @@ export function createPhase1SupabaseRepository() {
       const { data, error } = await admin.from('phase1_notifications').insert({
         event_type: eventType,
         processing_request_id: requestId,
+        report_id: reportId,
+        report_version: reportVersion,
         work_request_id: workRequestId,
         property_id: propertyId,
         recipient,
@@ -560,6 +567,11 @@ export function createPhase1SupabaseRepository() {
         failure_reason: String(reason).slice(0, 2000),
       }).eq('id', id)
       if (error) throw new Error(`Notification failure persistence failed: ${error.message}`)
+    },
+
+    async updateReviewedReportDelivery(reportId, values) {
+      const { error } = await admin.from('phase1_reviewed_reports').update({ ...values, updated_at: new Date().toISOString() }).eq('id', reportId)
+      if (error) throw new Error(`Reviewed report delivery update failed: ${error.message}`)
     },
 
     async getProcessingRequest({ actor, requestId }) {
@@ -699,6 +711,12 @@ export function createPhase1SupabaseRepository() {
         : { data: [], error: null }
       if (propertyError) throw new Error(`Review queue Property lookup failed: ${propertyError.message}`)
       const propertyById = new Map((properties || []).map((item) => [item.id, item]))
+      const { data: queueReports, error: queueReportsError } = propertyIds.length
+        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', propertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
+        : { data: [], error: null }
+      if (queueReportsError) throw new Error(`Review queue report history failed: ${queueReportsError.message}`)
+      const latestQueueReport = new Map()
+      for (const report of queueReports || []) if (!latestQueueReport.has(report.property_id)) latestQueueReport.set(report.property_id, report)
       const requesterIds = [...new Set((requests || []).map((item) => item.requested_by).filter(Boolean))]
       const emailById = new Map()
       await Promise.all(requesterIds.map(async (id) => {
@@ -762,6 +780,8 @@ export function createPhase1SupabaseRepository() {
           releasedAt: request.released_at || null,
           delivery: deliveryByRequest.get(request.id) || null,
           error: request.error_message || null,
+          latestReportId: latestQueueReport.get(request.property_id)?.id || null,
+          latestReportVersion: latestQueueReport.get(request.property_id)?.report_version || null,
         })
       }
       return items
@@ -781,6 +801,12 @@ export function createPhase1SupabaseRepository() {
         : { data: [], error: null }
       if (propertyError) throw new Error(`Property history address lookup failed: ${propertyError.message}`)
       const propertyById = new Map((properties || []).map((item) => [item.id, item]))
+      const { data: reviewedReports, error: reviewedReportsError } = propertyIds.length
+        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', propertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
+        : { data: [], error: null }
+      if (reviewedReportsError) throw new Error(`Reviewed report history lookup failed: ${reviewedReportsError.message}`)
+      const latestReportByProperty = new Map()
+      for (const report of reviewedReports || []) if (!latestReportByProperty.has(report.property_id)) latestReportByProperty.set(report.property_id, report)
       const requestIds = (requests || []).map((item) => item.id)
       const { data: deliveries, error: deliveryError } = requestIds.length
         ? await admin.from('phase1_notifications').select('processing_request_id,recipient,delivery_status,sent_at,provider_message_id,failure_reason,attempt_count').eq('event_type', 'reviewed_result_ready').in('processing_request_id', requestIds)
@@ -812,6 +838,8 @@ export function createPhase1SupabaseRepository() {
           releasedArtifactVersion: request.released_artifact_version || null,
           releasedAt: request.released_at || null,
           delivery: deliveryByRequest.get(request.id) || null,
+          latestReportId: latestReportByProperty.get(request.property_id)?.id || null,
+          latestReportVersion: latestReportByProperty.get(request.property_id)?.report_version || null,
         }
       })
     },
@@ -898,59 +926,83 @@ export function createPhase1SupabaseRepository() {
       }
     },
 
-    async releaseReviewedReport({ actor, requestId }) {
+    async reserveReviewedReport({ actor, requestId, recipient, artifactSchemaVersion }) {
       if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
-      const { data: request, error: requestError } = await admin.from('inspection_pipeline_runs')
-        .select('id,property_id,work_request_id,input_hash,status,released_at')
-        .eq('id', requestId)
-        .single()
-      if (requestError) throw new Error(`Release request lookup failed: ${requestError.message}`)
-      const { data: modelRun, error: modelError } = await admin.from('model_runs')
-        .select('id,prompt_version')
-        .eq('property_id', request.property_id)
-        .eq('input_hash', request.input_hash)
-        .eq('stage', 'inspection_interpretation')
-        .single()
-      if (modelError) throw new Error(`Release model lookup failed: ${modelError.message}`)
-      const { data: findings, error: findingsError } = await admin.from('inspection_findings')
-        .select('review_status,review_event_id')
-        .eq('model_run_id', modelRun.id)
-      if (findingsError) throw new Error(`Release findings lookup failed: ${findingsError.message}`)
-      const eventIds = (findings || []).map((item) => item.review_event_id).filter(Boolean)
-      const { data: events, error: eventsError } = eventIds.length
-        ? await admin.from('review_events').select('id,review_action').in('id', eventIds)
-        : { data: [], error: null }
-      if (eventsError) throw new Error(`Release review-event lookup failed: ${eventsError.message}`)
-      const actionByEvent = new Map((events || []).map((event) => [event.id, event.review_action]))
-      const total = (findings || []).length
-      const approved = (findings || []).filter((item) => actionByEvent.get(item.review_event_id) === 'approve').length
-      const needsInfo = (findings || []).filter((item) => actionByEvent.get(item.review_event_id) === 'needs_more_info').length
-      const rejected = (findings || []).filter((item) => actionByEvent.get(item.review_event_id) === 'reject').length
-      const pending = Math.max(total - approved - needsInfo - rejected, 0)
-      const ready = total > 0 && pending === 0
-      if (!ready || request.status === 'completed') return { ready, released: false, total, approved, needsInfo, rejected, pending, releasedAt: request.released_at || null }
-      const now = new Date().toISOString()
-      const { data: updated, error: updateError } = await admin.from('inspection_pipeline_runs')
-        .update({ status: 'completed', current_stage: 'released_result', workflow_state: 'released', next_responsible_role: 'submitter', next_action: 'View reviewed result', released_artifact_version: modelRun.prompt_version, released_at: now, last_activity_at: now, completed_at: now })
-        .eq('id', requestId)
-        .eq('status', 'needs_review')
-        .select('id')
-        .maybeSingle()
-      if (updateError) throw new Error(`Release update failed: ${updateError.message}`)
-      if (!updated) return { ready: true, released: false, total, approved, pending }
-      const { error: eventError } = await admin.from('workflow_events').insert({
-        property_id: request.property_id,
-        work_request_id: request.work_request_id,
-        actor_id: actor.id,
-        actor_type: 'admin',
-        event_type: 'phase1_reviewed_result_released',
-        event_title: 'Reviewed Phase 1 result released to submitting agent',
-        object_type: 'inspection_pipeline_run',
-        object_id: request.id,
-        metadata: { total_findings: total, approved_findings: approved, needs_information_findings: needsInfo, rejected_findings: rejected, artifact_version: modelRun.prompt_version },
+      const { data, error } = await admin.rpc('phase1_reserve_reviewed_report', {
+        target_request_id: requestId, target_reviewer_id: actor.id,
+        target_recipient: recipient, target_artifact_schema_version: artifactSchemaVersion,
       })
-      if (eventError) throw new Error(`Release event persistence failed: ${eventError.message}`)
-      return { ready: true, released: true, total, approved, needsInfo, rejected, pending, releasedAt: now }
+      if (error) throw new Error(`Reviewed report reservation failed: ${error.message}`)
+      return data
+    },
+
+    async completeReviewedReport({ report, document, findingVersions, pricingVersions, pdf }) {
+      const path = `${report.property_id}/${report.id}/shelter-prep-reviewed-report-v${report.report_version}.pdf`
+      const checksum = createHash('sha256').update(pdf).digest('hex')
+      const { error: uploadError } = await admin.storage.from('phase1-reviewed-reports').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+      if (uploadError) {
+        await admin.from('phase1_reviewed_reports').update({ report_status: 'storage_failed', generation_failure: uploadError.message }).eq('id', report.id)
+        throw new Error(`Reviewed report storage failed: ${uploadError.message}`)
+      }
+      const { data, error } = await admin.from('phase1_reviewed_reports').update({
+        reviewed_artifact: document,
+        reviewed_finding_versions: findingVersions,
+        reviewed_pricing_versions: pricingVersions,
+        local_professional_research: document.localProfessionals,
+        pdf_bucket: 'phase1-reviewed-reports', pdf_object_path: path,
+        pdf_sha256: checksum, pdf_size_bytes: pdf.byteLength,
+        report_status: 'draft', generated_at: document.generatedAt, updated_at: document.generatedAt,
+      }).eq('id', report.id).eq('report_status', 'generating').select('*').single()
+      if (error) {
+        await admin.storage.from('phase1-reviewed-reports').remove([path])
+        throw new Error(`Reviewed report persistence failed: ${error.message}`)
+      }
+      return data
+    },
+
+    async failReviewedReport(reportId, reason) {
+      await admin.from('phase1_reviewed_reports').update({ report_status: 'generation_failed', generation_failure: String(reason).slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', reportId).eq('report_status', 'generating')
+    },
+
+    async getReviewedReport({ actor, reportId }) {
+      const { data, error } = await admin.from('phase1_reviewed_reports').select('*').eq('id', reportId).maybeSingle()
+      if (error) throw new Error(`Reviewed report lookup failed: ${error.message}`)
+      if (!data) return null
+      const reviewer = await isReviewerId(actor.id)
+      const { data: request } = data.processing_request_id
+        ? await admin.from('inspection_pipeline_runs').select('requested_by').eq('id', data.processing_request_id).maybeSingle()
+        : { data: null }
+      const submitter = request?.requested_by === actor.id
+      if (!reviewer && (!submitter || !['released', 'superseded'].includes(data.report_status))) return null
+      const { data: reviewerProfile } = data.reviewer_id ? await admin.from('profiles').select('full_name').eq('id', data.reviewer_id).maybeSingle() : { data: null }
+      return { ...data, reviewer_name: reviewerProfile?.full_name || 'Shelter Prep reviewer' }
+    },
+
+    async listPropertyReports({ actor, propertyId }) {
+      if (!await this.canAccessProperty(actor.id, propertyId) && !await isReviewerId(actor.id)) return []
+      let query = admin.from('phase1_reviewed_reports').select('id,property_id,processing_request_id,report_version,artifact_schema_version,report_status,recipient,reviewer_id,generated_at,released_at,delivery_status,sent_at,created_at').eq('property_id', propertyId).order('report_version', { ascending: false })
+      if (!await isReviewerId(actor.id)) query = query.in('report_status', ['released', 'superseded'])
+      const { data, error } = await query
+      if (error) throw new Error(`Property report history failed: ${error.message}`)
+      const reviewerIds = [...new Set((data || []).map((item) => item.reviewer_id).filter(Boolean))]
+      const { data: reviewers } = reviewerIds.length ? await admin.from('profiles').select('id,full_name').in('id', reviewerIds) : { data: [] }
+      const names = new Map((reviewers || []).map((item) => [item.id, item.full_name]))
+      return (data || []).map((item) => ({ ...item, reviewer_name: names.get(item.reviewer_id) || 'Shelter Prep reviewer' }))
+    },
+
+    async createReviewedReportAccess({ actor, reportId }) {
+      const report = await this.getReviewedReport({ actor, reportId })
+      if (!report?.pdf_object_path) return null
+      const { data, error } = await admin.storage.from(report.pdf_bucket).createSignedUrl(report.pdf_object_path, 300, { download: `shelter-prep-reviewed-report-v${report.report_version}.pdf` })
+      if (error) throw new Error(`Reviewed report access failed: ${error.message}`)
+      return { url: data.signedUrl, expiresIn: 300 }
+    },
+
+    async releaseReviewedReportVersion({ actor, reportId }) {
+      if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
+      const { data, error } = await admin.rpc('phase1_release_reviewed_report', { target_report_id: reportId, target_reviewer_id: actor.id })
+      if (error) throw new Error(`Reviewed report release failed: ${error.message}`)
+      return data
     },
   }
 }

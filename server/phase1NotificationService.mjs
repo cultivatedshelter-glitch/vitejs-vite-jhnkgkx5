@@ -44,13 +44,15 @@ export function createPhase1NotificationService({ repository, provider, recipien
   if (!recipient) throw new Error('SHELTER_PREP_REVIEW_EMAIL is required for Phase 1 review notifications.')
   const baseUrl = cleanBaseUrl(publicBaseUrl)
 
-  async function notify({ eventType, requestId, artifact = null, recipientOverride = null }) {
+  async function notify({ eventType, requestId, reportId = null, reportVersion = null, artifact = null, recipientOverride = null }) {
     const context = await repository.getNotificationContext(requestId)
     const deliveryRecipient = recipientOverride || recipient
     if (!deliveryRecipient) throw new Error('No notification recipient is available for this request.')
     const claim = await repository.claimNotification({
       eventType,
       requestId,
+      reportId,
+      reportVersion,
       propertyId: context.propertyId,
       workRequestId: context.workRequestId,
       recipient: deliveryRecipient,
@@ -58,8 +60,10 @@ export function createPhase1NotificationService({ repository, provider, recipien
     })
     if (!claim.shouldSend) return { status: claim.notification.delivery_status, duplicate: true }
 
-    const reviewUrl = eventType === 'reviewed_result_ready'
-      ? `${baseUrl}/properties/${encodeURIComponent(context.propertyId)}/review?request=${encodeURIComponent(requestId)}&audience=agent`
+    const reviewUrl = eventType === 'reviewed_result_ready' && reportId
+      ? `${baseUrl}/properties/${encodeURIComponent(context.propertyId)}/reports/${encodeURIComponent(reportId)}`
+      : eventType === 'reviewed_result_ready'
+        ? `${baseUrl}/properties/${encodeURIComponent(context.propertyId)}/review?request=${encodeURIComponent(requestId)}&audience=agent`
       : `${baseUrl}/properties/${encodeURIComponent(context.propertyId)}/review?request=${encodeURIComponent(requestId)}`
     const content = emailContent({ eventType, context, artifact, reviewUrl })
     try {
@@ -86,11 +90,11 @@ export function createPhase1NotificationService({ repository, provider, recipien
   return {
     notifyNeedsReview: ({ requestId, artifact }) => notify({ eventType: 'needs_review', requestId, artifact }),
     notifyProcessingFailed: ({ requestId }) => notify({ eventType: 'processing_failed', requestId }),
-    notifyReviewedResult: async ({ requestId, artifact }) => {
+    notifyReviewedResult: async ({ requestId, reportId = null, reportVersion = null, artifact }) => {
       const context = await repository.getNotificationContext(requestId)
       const deliveryRecipient = context.deliveryRecipient || context.submittingEmail
       if (!deliveryRecipient) throw new Error('The submission has no deliverable result recipient.')
-      return notify({ eventType: 'reviewed_result_ready', requestId, artifact, recipientOverride: deliveryRecipient })
+      return notify({ eventType: 'reviewed_result_ready', requestId, reportId, reportVersion, artifact, recipientOverride: deliveryRecipient })
     },
   }
 }

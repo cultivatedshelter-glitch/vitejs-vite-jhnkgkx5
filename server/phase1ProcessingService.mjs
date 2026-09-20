@@ -1,4 +1,7 @@
 import { validatePhase1Artifact } from './phase1ArtifactValidator.mjs'
+import { buildReviewedReportDocument, reviewedFindingVersions, reviewedPricingVersions } from './phase1ReviewedReport.mjs'
+import { generateReviewedReportPdf } from './phase1ReviewedReportPdf.mjs'
+import { createLocalProfessionalResearch } from './phase1LocalProfessionals.mjs'
 
 export class ProcessingError extends Error {
   constructor(code, message, status = 400) {
@@ -8,7 +11,7 @@ export class ProcessingError extends Error {
   }
 }
 
-export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
+export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, pdfGenerator = generateReviewedReportPdf, localProfessionalResearch = createLocalProfessionalResearch(), logger = console }) {
   const REVIEW_ACTIONS = new Set(['approve', 'edit', 'needs_more_info', 'reject'])
   const TERMINAL_REVIEW_ACTIONS = new Set(['approve', 'needs_more_info', 'reject'])
   const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'repair_paths', 'next_step', 'rationale', 'likely_trade', 'price', 'evidence_relationship', 'confirmed_evidence', 'field_knowledge'])
@@ -270,19 +273,46 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     if (!request?.artifact) throw new ProcessingError('review_not_available', 'This reviewed request is not available.', 404)
     const summary = reviewSummary(request.artifact)
     if (summary.remaining > 0) throw new ProcessingError('review_incomplete', `${summary.remaining} findings still require a terminal review decision.`, 409)
-    return { requestId, propertyId: request.propertyId, artifact: request.artifact, submission: request.submission, summary }
+    if (!repository.reserveReviewedReport) return { requestId, propertyId: request.propertyId, artifact: request.artifact, submission: request.submission, summary }
+    const profile = await repository.getActorProfile({ actor })
+    const report = await repository.reserveReviewedReport({ actor, requestId, recipient: request.submission.deliveryRecipientEmail, artifactSchemaVersion: request.artifactVersion || 'unknown' })
+    try {
+      const localProfessionals = await localProfessionalResearch({ artifact: request.artifact, propertyAddress: request.submission.propertyAddress })
+      const document = buildReviewedReportDocument({ report, request, reviewer: profile, localProfessionals })
+      const pdf = await pdfGenerator(document)
+      const stored = await repository.completeReviewedReport({ report, document, findingVersions: reviewedFindingVersions(document), pricingVersions: reviewedPricingVersions(document), pdf })
+      return { reportId: stored.id, reportVersion: stored.report_version, reportStatus: stored.report_status, requestId, propertyId: request.propertyId, artifact: document.artifact, report: document, submission: request.submission, summary }
+    } catch (error) {
+      await repository.failReviewedReport?.(report.id, error instanceof Error ? error.message : 'Report generation failed.')
+      throw new ProcessingError('report_generation_failed', error instanceof Error ? error.message : 'The reviewed report could not be generated.', 500)
+    }
   }
 
-  async function releaseReviewedReport({ token, requestId }) {
+  async function releaseReviewedReport({ token, requestId, reportId = null }) {
     const actor = await requireReviewer(token)
+    if (reportId && repository.releaseReviewedReportVersion) {
+      const released = await repository.releaseReviewedReportVersion({ actor, reportId })
+      return { ready: true, released: true, reportId: released.id, reportVersion: released.report_version, releasedAt: released.released_at }
+    }
     const preview = await previewReviewedReport({ token, requestId })
     const release = await repository.releaseReviewedReport({ actor, requestId })
     if (!release?.ready) throw new ProcessingError('review_incomplete', 'The reviewed report is not eligible for release.', 409)
     return { ...release, summary: preview.summary, submission: preview.submission }
   }
 
-  async function sendReviewedResult({ token, requestId }) {
+  async function sendReviewedResult({ token, requestId, reportId = null }) {
     const actor = await requireReviewer(token)
+    if (reportId && repository.getReviewedReport) {
+      const report = await repository.getReviewedReport({ actor, reportId })
+      if (!report || report.report_status !== 'released') throw new ProcessingError('report_not_released', 'Release this reviewed report version before sending it.', 409)
+      if (!notifications) throw new ProcessingError('delivery_unavailable', 'Reviewed-result delivery is not configured.', 503)
+      await repository.updateReviewedReportDelivery(reportId, { delivery_status: 'sending' })
+      const delivery = await notifications.notifyReviewedResult({ requestId: report.processing_request_id, reportId, reportVersion: report.report_version, artifact: report.reviewed_artifact?.artifact })
+      await repository.updateReviewedReportDelivery(reportId, delivery.status === 'sent'
+        ? { delivery_status: 'sent', sent_at: new Date().toISOString(), provider_message_id: delivery.providerMessageId || null }
+        : { delivery_status: 'failed' })
+      return { delivery, reportId }
+    }
     const request = await repository.getProcessingRequest({ actor, requestId })
     if (!request?.submission?.releasedAt) {
       throw new ProcessingError('report_not_released', 'Release the reviewed report before sending it.', 409)
@@ -293,5 +323,24 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return { delivery, submission: refreshed?.submission || request.submission }
   }
 
-  return { identity, resolveProperty, upload, createSubmissionDraft, updateSubmissionDraft, finalizeSubmission, submit, status, sourceDocument, reviewQueue, dashboard, myProperties, saveReviewPosition, review, previewReviewedReport, releaseReviewedReport, sendReviewedResult }
+  async function propertyReports({ token, propertyId }) {
+    const actor = await requireActor(token)
+    return { items: await repository.listPropertyReports({ actor, propertyId }) }
+  }
+
+  async function reviewedReport({ token, reportId }) {
+    const actor = await requireActor(token)
+    const report = await repository.getReviewedReport({ actor, reportId })
+    if (!report) throw new ProcessingError('report_not_available', 'This reviewed report is not available.', 404)
+    return report
+  }
+
+  async function reviewedReportAccess({ token, reportId }) {
+    const actor = await requireActor(token)
+    const access = await repository.createReviewedReportAccess({ actor, reportId })
+    if (!access) throw new ProcessingError('report_not_available', 'This reviewed report PDF is not available.', 404)
+    return access
+  }
+
+  return { identity, resolveProperty, upload, createSubmissionDraft, updateSubmissionDraft, finalizeSubmission, submit, status, sourceDocument, reviewQueue, dashboard, myProperties, saveReviewPosition, review, previewReviewedReport, releaseReviewedReport, sendReviewedResult, propertyReports, reviewedReport, reviewedReportAccess }
 }

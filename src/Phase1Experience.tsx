@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel, Phase1LinkedSource } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1Identity, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
+import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
@@ -38,6 +38,14 @@ function submissionRequestFromLocation() {
 
 function findingFromLocation() {
   return new URLSearchParams(window.location.search).get('finding')
+}
+
+function reviewedReportFromLocation() {
+  return window.location.pathname.match(/^\/properties\/[^/]+\/reports\/([^/]+)\/?$/)?.[1] || null
+}
+
+function propertyReportsFromLocation() {
+  return window.location.pathname.match(/^\/properties\/([^/]+)\/reports\/?$/)?.[1] || null
 }
 
 function isTerminalReview(finding: Phase1FindingViewModel) {
@@ -236,6 +244,13 @@ function SubmittedSummary({ address, submission, evidenceNames, note, onNavigate
   </main>
 }
 
+function PropertyReports({ propertyId, onNavigate }: { propertyId: string; onNavigate: (path: string) => void }) {
+  const [items, setItems] = useState<Awaited<ReturnType<typeof loadPhase1PropertyReports>>>([])
+  const [error, setError] = useState('')
+  useEffect(() => { void loadPhase1PropertyReports(propertyId).then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'Report history could not be loaded.')) }, [propertyId])
+  return <main className="phase1-main phase1-properties"><p className="phase1-kicker">Property</p><h1>Reports / Reviewed Results</h1>{error && <p className="phase1-inline-error" role="alert">{error}</p>}{!error && !items.length && <p>No durable reviewed reports are available.</p>}<div className="phase1-property-list">{items.map((item) => <article key={item.id}><div><span className="phase1-status">{item.report_status}</span><h2>Reviewed Report · Version {item.report_version}</h2><p>Generated {new Date(item.generated_at || item.created_at).toLocaleString()}</p><p>Released {item.released_at ? new Date(item.released_at).toLocaleString() : 'Not released'}</p><p>Reviewer: {item.reviewer_name}</p><p>Recipient: {item.recipient}</p><p>Delivery: {item.delivery_status}{item.sent_at ? ` · ${new Date(item.sent_at).toLocaleString()}` : ''}</p></div><div className="phase1-actions"><button type="button" onClick={() => onNavigate(`/properties/${propertyId}/reports/${item.id}`)}>View</button><button type="button" onClick={() => void openPhase1ReviewedReportPdf(item.id)}>Download PDF</button></div></article>)}</div></main>
+}
+
 function MyProperties({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [items, setItems] = useState<Phase1PropertyHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -244,7 +259,7 @@ function MyProperties({ onNavigate }: { onNavigate: (path: string) => void }) {
   return <main className="phase1-main phase1-properties"><div className="phase1-page-title"><div><p className="phase1-kicker">Properties</p><h1>My Properties</h1><p className="phase1-lede">Submission status and the next useful action.</p></div><button type="button" onClick={() => onNavigate('/properties/new')}>+ Add Property</button></div>
     {loading && <p>Loading Properties…</p>}{error && <p className="phase1-inline-error" role="alert">{error}</p>}
     {!loading && !error && !items.length && <section className="phase1-empty-state"><h2>No Properties yet.</h2><p>Start with an address and whatever evidence you have.</p><button className="phase1-primary" type="button" onClick={() => onNavigate('/properties/new')}>Add Property</button></section>}
-    <div className="phase1-property-list">{items.map((item) => <article key={item.requestId}><div><span className="phase1-status">{item.status}</span><h2>{item.propertyAddress}</h2><p>Submitted {new Date(item.submittedAt).toLocaleDateString()}</p><p>Result recipient: {item.resultRecipientEmail}</p>{item.releasedArtifactVersion && <p>Released version: {item.releasedArtifactVersion}</p>}{item.delivery && <p>Delivery: {item.delivery.delivery_status === 'sent' ? `Sent ${item.delivery.sent_at ? new Date(item.delivery.sent_at).toLocaleString() : ''}` : item.delivery.delivery_status}</p>}</div><div><p><strong>Next action</strong><br />{item.nextAction}</p><button className="phase1-primary" type="button" onClick={() => onNavigate(item.status === 'Ready' ? `/properties/${item.propertyId}/review?request=${item.requestId}&audience=agent` : `/submissions/${item.requestId}`)}>{item.status === 'Ready' ? 'View Reviewed Result' : item.status === 'Needs Information' ? 'Add Requested Evidence' : 'View Submission'}</button></div></article>)}</div>
+    <div className="phase1-property-list">{items.map((item) => <article key={item.requestId}><div><span className="phase1-status">{item.status}</span><h2>{item.propertyAddress}</h2><p>Submitted {new Date(item.submittedAt).toLocaleDateString()}</p><p>Result recipient: {item.resultRecipientEmail}</p>{item.latestReportVersion && <p>Reviewed report: Version {item.latestReportVersion}</p>}{item.delivery && <p>Delivery: {item.delivery.delivery_status === 'sent' ? `Sent ${item.delivery.sent_at ? new Date(item.delivery.sent_at).toLocaleString() : ''}` : item.delivery.delivery_status}</p>}</div><div><p><strong>Next action</strong><br />{item.nextAction}</p>{item.latestReportId && <button type="button" onClick={() => onNavigate(`/properties/${item.propertyId}/reports`)}>Report History</button>}<button className="phase1-primary" type="button" onClick={() => onNavigate(item.status === 'Ready' && item.latestReportId ? `/properties/${item.propertyId}/reports/${item.latestReportId}` : item.status === 'Ready' ? `/properties/${item.propertyId}/review?request=${item.requestId}&audience=agent` : `/submissions/${item.requestId}`)}>{item.status === 'Ready' ? `View Reviewed Result${item.latestReportVersion ? ` v${item.latestReportVersion}` : ''}` : item.status === 'Needs Information' ? 'Add Requested Evidence' : 'View Submission'}</button></div></article>)}</div>
   </main>
 }
 
@@ -409,7 +424,7 @@ function AdminDashboard({ onNavigate }: { onNavigate: (path: string) => void }) 
     {!loading && !error && <label className="phase1-field phase1-search"><span>Search</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Property or submitter" /></label>}
     {!loading && !error && groups.map(([status, label]) => {
       const rows = visible.filter((item) => item.queueStatus === status)
-      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings · {item.reviewedCount} reviewed · {item.remainingCount} remaining</span><span>{item.nextAction}{item.delivery ? ` · Delivery ${item.delivery.delivery_status}` : ''}</span><span>{new Date(item.lastActivityAt).toLocaleString()}</span><button type="button" onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}>{item.queueStatus === 'released' ? 'View Released Result' : item.queueStatus === 'in_review' ? 'Resume Review' : 'Open'}</button></article>)}</section>
+      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings · {item.reviewedCount} reviewed · {item.remainingCount} remaining</span><span>{item.nextAction}{item.delivery ? ` · Delivery ${item.delivery.delivery_status}` : ''}</span><span>{new Date(item.lastActivityAt).toLocaleString()}</span><button type="button" onClick={() => onNavigate(item.queueStatus === 'released' && item.latestReportId ? `/properties/${item.propertyId}/reports/${item.latestReportId}` : reviewPath(item))}>{item.queueStatus === 'released' ? `View Released Result${item.latestReportVersion ? ` v${item.latestReportVersion}` : ''}` : item.queueStatus === 'in_review' ? 'Resume Review' : 'Open'}</button></article>)}</section>
     })}
     {!loading && !error && <section className="phase1-queue-group"><h2>Recent Properties<span>{visible.length}</span></h2>{visible.slice(0, 6).map((item) => <button className="phase1-recent-property" type="button" key={`recent-${item.requestId}`} onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}><strong>{item.propertyAddress}</strong><span>{item.queueStatus.replaceAll('_', ' ')}</span></button>)}</section>}
   </main>
@@ -638,6 +653,11 @@ function ReleasedResultContent({ artifact }: { artifact: Phase1ExperienceViewMod
   </>
 }
 
+function LocalProfessionals({ groups }: { groups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }> }) {
+  if (!groups.length) return null
+  return <section className="phase1-decision-overview"><div className="phase1-section-heading"><h2>Local pros to consider</h2></div><p>Selected from public business information based on trade, location, rating, review volume, and recency. Shelter Prep has not independently verified availability, pricing, licensing, or workmanship unless specifically noted.</p>{groups.map((group) => <div key={group.trade}><h3>{group.trade}</h3>{group.professionals.map((professional) => <p key={professional.providerId}><strong>{professional.name}</strong><br />{professional.rating !== null ? `${professional.rating} / 5` : 'Rating not returned'}{professional.reviewCount !== null ? ` · ${professional.reviewCount} reviews` : ''}<br />{professional.address || 'Service area not returned'}<br />Source: {professional.source}{professional.sourceUrl && <> · <a href={professional.sourceUrl} target="_blank" rel="noreferrer">View Business</a></>}</p>)}</div>)}</section>
+}
+
 function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
   if (!artifact.findings.length) return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Under review</p><h1>{artifact.totalFindingCount} repair items identified</h1><p className="phase1-lede">Shelter Prep is reviewing the findings before release.</p></main>
   return <main className="phase1-main phase1-agent-view">
@@ -648,11 +668,29 @@ function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
   </main>
 }
 
-function ReviewedReportPreview({ artifact, summary, recipient, busy, error, onBack, onRelease }: { artifact: Phase1ExperienceViewModel; summary: Phase1ReviewSummary; recipient: string; busy: boolean; error: string; onBack: () => void; onRelease: () => void }) {
+function DurableReportView({ reportId }: { reportId: string }) {
+  const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
+  const [version, setVersion] = useState<number | null>(null)
+  const [error, setError] = useState('')
+  const [professionalGroups, setProfessionalGroups] = useState<Array<{ trade: string; professionals: Phase1LocalProfessional[] }>>([])
+  useEffect(() => {
+    void loadPhase1ReviewedReport(reportId).then((report) => {
+      setArtifact(adaptPhase1ReasoningArtifact(report.reviewed_artifact.artifact, { mode: 'live', audience: 'agent' }))
+      setVersion(report.report_version)
+      setProfessionalGroups(report.reviewed_artifact.localProfessionals?.groups || [])
+    }).catch((reason) => setError(reason instanceof Error ? reason.message : 'The reviewed report is unavailable.'))
+  }, [reportId])
+  if (error) return <main className="phase1-main"><p className="phase1-inline-error" role="alert">{error}</p></main>
+  if (!artifact) return <main className="phase1-main"><p className="phase1-lede">Loading reviewed report…</p></main>
+  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Human Reviewed · Version {version}</p><h1>{artifact.propertyAddress}</h1><button type="button" onClick={() => void openPhase1ReviewedReportPdf(reportId)}>View PDF</button><ReleasedResultContent artifact={artifact} /><LocalProfessionals groups={professionalGroups} /></main>
+}
+
+function ReviewedReportPreview({ artifact, summary, recipient, professionalGroups, busy, error, onBack, onViewPdf, onRelease }: { artifact: Phase1ExperienceViewModel; summary: Phase1ReviewSummary; recipient: string; professionalGroups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; busy: boolean; error: string; onBack: () => void; onViewPdf: () => void; onRelease: () => void }) {
   return <main className="phase1-main phase1-report-preview"><p className="phase1-kicker">Preview reviewed report</p><h1>{artifact.propertyAddress}</h1><p className="phase1-lede">This is what {recipient || 'the stored recipient'} will receive. Generating this preview has not sent anything.</p>
     <div className="phase1-review-summary"><div><span>Approved</span><strong>{summary.approved}</strong></div><div><span>Needs info</span><strong>{summary.needsInfo}</strong></div><div><span>Rejected</span><strong>{summary.rejected}</strong></div></div>
     <ReleasedResultContent artifact={artifact} />
-    {error && <p className="phase1-inline-error" role="alert">{error}</p>}<div className="phase1-actions"><button type="button" className="phase1-text-action" onClick={onBack}>Back to Review</button><button type="button" className="phase1-primary" disabled={busy} onClick={onRelease}>{busy ? 'Releasing…' : 'Release Report'}</button></div>
+    <LocalProfessionals groups={professionalGroups} />
+    {error && <p className="phase1-inline-error" role="alert">{error}</p>}<div className="phase1-actions"><button type="button" className="phase1-text-action" onClick={onBack}>Back to Review</button><button type="button" onClick={onViewPdf}>View PDF</button><button type="button" className="phase1-primary" disabled={busy} onClick={onRelease}>{busy ? 'Releasing…' : 'Release Report'}</button></div>
   </main>
 }
 
@@ -746,6 +784,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [agentSubmissionCount, setAgentSubmissionCount] = useState<number | null>(null)
   const [findingIndex, setFindingIndex] = useState(0)
   const reviewRequestId = useMemo(() => fixtureMode ? null : reviewRequestFromLocation(), [fixtureMode, route])
+  const reviewedReportIdFromRoute = useMemo(() => fixtureMode ? null : reviewedReportFromLocation(), [fixtureMode, route])
+  const propertyReportsIdFromRoute = useMemo(() => fixtureMode ? null : propertyReportsFromLocation(), [fixtureMode, route])
   const submissionRequestId = useMemo(() => fixtureMode ? null : submissionRequestFromLocation(), [fixtureMode, route])
   const audience = useMemo(() => audienceFromLocation(), [route])
   const [resolvedAudience, setResolvedAudience] = useState<'reviewer' | 'agent'>(audience)
@@ -756,6 +796,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [reportSummary, setReportSummary] = useState<Phase1ReviewSummary | null>(null)
   const [reportBusy, setReportBusy] = useState(false)
   const [reportError, setReportError] = useState('')
+  const [reportProfessionalGroups, setReportProfessionalGroups] = useState<Array<{ trade: string; professionals: Phase1LocalProfessional[] }>>([])
+  const [reviewedReportId, setReviewedReportId] = useState<string | null>(null)
   const reviewLoadStarted = useRef<string | null>(null)
   const evidenceCount = useMemo(() => files.length + (note.trim() ? 1 : 0), [files, note])
   const finding = artifact?.findings[findingIndex] ?? null
@@ -1114,6 +1156,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setArtifact(reviewedArtifact)
       setSubmission(preview.submission)
       setReportSummary(preview.summary)
+      setReportProfessionalGroups(preview.report?.localProfessionals.groups || [])
+      setReviewedReportId(preview.reportId || null)
       setStep('report_preview')
     } catch (error) {
       setReportError(error instanceof Error ? error.message : 'The reviewed report could not be generated.')
@@ -1127,7 +1171,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     setReportBusy(true)
     setReportError('')
     try {
-      await releasePhase1ReviewedReport(activeRequestId)
+      if (!reviewedReportId) throw new Error('Generate the durable reviewed report before release.')
+      await releasePhase1ReviewedReport(activeRequestId, reviewedReportId)
       const refreshed = await loadPhase1ProcessingRequest(activeRequestId)
       setSubmission(refreshed.submission || submission)
       setStep('report_released')
@@ -1143,7 +1188,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
     setReportBusy(true)
     setReportError('')
     try {
-      await sendPhase1ReviewedResult(activeRequestId)
+      if (!reviewedReportId) throw new Error('The released report identity is unavailable.')
+      await sendPhase1ReviewedResult(activeRequestId, reviewedReportId)
       const refreshed = await loadPhase1ProcessingRequest(activeRequestId)
       setSubmission(refreshed.submission || submission)
     } catch (error) {
@@ -1161,6 +1207,8 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   if (!fixtureMode && !authReady) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Checking your session…</p></main></div>
   if (!fixtureMode && !session) return <SignInStep onSignedIn={setSession} />
   if (!fixtureMode && (!landingReady || !identity)) return <div className="phase1-shell"><main className="phase1-main phase1-sign-in"><p className="phase1-lede">Loading your workspace…</p></main></div>
+  if (reviewedReportIdFromRoute) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><DurableReportView reportId={reviewedReportIdFromRoute} /></div>
+  if (propertyReportsIdFromRoute) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><PropertyReports propertyId={propertyReportsIdFromRoute} onNavigate={navigate} /></div>
   if (reviewQueue && identity?.isReviewer) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><AdminDashboard onNavigate={navigate} /></div>
   if (!fixtureMode && /^\/properties\/?$/.test(window.location.pathname) && !reviewRequestId) return <div className="phase1-shell"><PhaseHeader step="property" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><MyProperties onNavigate={navigate} /></div>
   if (agentSubmissionCount !== null && reviewRequestId) return <div className="phase1-shell"><PhaseHeader step="overview" email={session?.user.email} identity={identity} onNavigate={navigate} onSignOut={() => void signOut()} /><AgentSubmissionStatus count={agentSubmissionCount} /></div>
@@ -1176,7 +1224,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
       {step === 'overview' && artifact && <OverviewStep artifact={artifact} reportBusy={reportBusy} reportError={reportError} onSelect={openFinding} onGenerateReport={() => void generateReviewedReport()} />}
       {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} findingIndex={findingIndex} findingCount={artifact.findings.length} reviewedCount={summarizeReview(artifact).reviewed} remainingCount={summarizeReview(artifact).remaining} propertyAddress={artifact.propertyAddress} transactionPerspective={artifact.transactionPerspective} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onOpenProperty={() => setStep('overview')} onPrevious={() => openFinding(Math.max(0, findingIndex - 1))} onNext={() => openFinding(Math.min(artifact.findings.length - 1, findingIndex + 1))} onReview={(action, payload) => void reviewFinding(action, payload)} />}
-      {step === 'report_preview' && artifact && reportSummary && <ReviewedReportPreview artifact={artifact} summary={reportSummary} recipient={submission?.deliveryRecipientEmail || ''} busy={reportBusy} error={reportError} onBack={() => setStep('overview')} onRelease={() => void releaseReviewedReport()} />}
+      {step === 'report_preview' && artifact && reportSummary && <ReviewedReportPreview artifact={artifact} summary={reportSummary} recipient={submission?.deliveryRecipientEmail || ''} professionalGroups={reportProfessionalGroups} busy={reportBusy} error={reportError} onBack={() => setStep('overview')} onViewPdf={() => reviewedReportId && void openPhase1ReviewedReportPdf(reviewedReportId)} onRelease={() => void releaseReviewedReport()} />}
       {step === 'report_released' && artifact && <ReportReleased address={artifact.propertyAddress} submission={submission} busy={reportBusy} error={reportError} onSend={() => void sendReviewedResult()} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}

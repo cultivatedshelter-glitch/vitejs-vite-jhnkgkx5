@@ -38,12 +38,19 @@ export type Phase1SubmissionMetadata = {
 
 export type Phase1ReviewSummary = { total: number; reviewed: number; approved: number; needsInfo: number; rejected: number; remaining: number }
 export type Phase1ReviewedReportPreview = {
+  reportId?: string
+  reportVersion?: number
+  reportStatus?: string
+  report?: Phase1DurableReportDocument
   requestId: string
   propertyId: string
   artifact: unknown
   submission: Phase1SubmissionMetadata
   summary: Phase1ReviewSummary
 }
+
+export type Phase1LocalProfessional = { providerId: string; name: string; address: string | null; rating: number | null; reviewCount: number | null; latestReviewAt?: string | null; source: string; sourceUrl: string | null; retrievedAt: string; qualificationStatus: string }
+export type Phase1DurableReportDocument = { localProfessionals: { groups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; lookups: Array<Record<string, unknown>> } }
 
 export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
 export type Phase1ReviewQueueItem = {
@@ -66,6 +73,8 @@ export type Phase1ReviewQueueItem = {
   releasedAt: string | null
   delivery: Phase1DeliveryRecord | null
   error: string | null
+  latestReportId?: string | null
+  latestReportVersion?: number | null
 }
 
 export type Phase1DeliveryRecord = {
@@ -91,6 +100,8 @@ export type Phase1PropertyHistoryItem = {
   releasedArtifactVersion: string | null
   releasedAt: string | null
   delivery: Phase1DeliveryRecord | null
+  latestReportId?: string | null
+  latestReportVersion?: number | null
 }
 
 async function authContext(forceRefresh = false, verifySession = false): Promise<{ token: string; userId: string }> {
@@ -330,18 +341,32 @@ export async function previewPhase1ReviewedReport(requestId: string) {
   )
 }
 
-export async function releasePhase1ReviewedReport(requestId: string) {
+export async function releasePhase1ReviewedReport(requestId: string, reportId?: string | null) {
   return jsonRequest<{ ready: boolean; released: boolean; releasedAt: string | null; summary: Phase1ReviewSummary; submission: Phase1SubmissionMetadata }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/reviewed-report/release`,
-    { method: 'POST' },
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reportId }) },
     { verifySession: true },
   )
 }
 
-export async function sendPhase1ReviewedResult(requestId: string) {
+export async function sendPhase1ReviewedResult(requestId: string, reportId?: string | null) {
   return jsonRequest<{ delivery: { status: string; duplicate?: boolean }; submission: Phase1SubmissionMetadata }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/reviewed-report/send`,
-    { method: 'POST' },
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reportId }) },
     { verifySession: true },
   )
+}
+
+export async function openPhase1ReviewedReportPdf(reportId: string) {
+  const access = await jsonRequest<{ url: string; expiresIn: number }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}/access`, { method: 'POST' }, { verifySession: true })
+  window.open(access.url, '_blank', 'noopener,noreferrer')
+}
+
+export async function loadPhase1PropertyReports(propertyId: string) {
+  const response = await jsonRequest<{ items: Array<{ id: string; property_id: string; processing_request_id: string | null; report_version: number; report_status: string; recipient: string; reviewer_name: string; generated_at: string | null; released_at: string | null; delivery_status: string; sent_at: string | null; created_at: string }> }>(`/api/phase1/properties/${encodeURIComponent(propertyId)}/reports`, { method: 'GET' })
+  return response.items
+}
+
+export async function loadPhase1ReviewedReport(reportId: string) {
+  return jsonRequest<{ id: string; property_id: string; report_version: number; report_status: string; reviewed_artifact: { artifact: unknown; propertyAddress: string; generatedAt: string; localProfessionals: Phase1DurableReportDocument['localProfessionals'] }; released_at: string | null }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
 }

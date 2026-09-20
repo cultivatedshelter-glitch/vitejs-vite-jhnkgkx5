@@ -92,12 +92,20 @@ export function createPhase1HttpHandler(service) {
       }
       const releaseMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/reviewed-report\/release$/)
       if (request.method === 'POST' && releaseMatch) {
-        return json(await service.releaseReviewedReport({ token: token(request), requestId: decodeURIComponent(releaseMatch[1]) }))
+        const body = await request.json().catch(() => ({}))
+        return json(await service.releaseReviewedReport({ token: token(request), requestId: decodeURIComponent(releaseMatch[1]), reportId: body.reportId || null }))
       }
       const sendMatch = url.pathname.match(/^\/api\/phase1\/processing-requests\/([^/]+)\/reviewed-report\/send$/)
       if (request.method === 'POST' && sendMatch) {
-        return json(await service.sendReviewedResult({ token: token(request), requestId: decodeURIComponent(sendMatch[1]) }))
+        const body = await request.json().catch(() => ({}))
+        return json(await service.sendReviewedResult({ token: token(request), requestId: decodeURIComponent(sendMatch[1]), reportId: body.reportId || null }))
       }
+      const propertyReportsMatch = url.pathname.match(/^\/api\/phase1\/properties\/([^/]+)\/reports$/)
+      if (request.method === 'GET' && propertyReportsMatch) return json(await service.propertyReports({ token: token(request), propertyId: decodeURIComponent(propertyReportsMatch[1]) }))
+      const reportMatch = url.pathname.match(/^\/api\/phase1\/reviewed-reports\/([^/]+)$/)
+      if (request.method === 'GET' && reportMatch) return json(await service.reviewedReport({ token: token(request), reportId: decodeURIComponent(reportMatch[1]) }))
+      const reportAccessMatch = url.pathname.match(/^\/api\/phase1\/reviewed-reports\/([^/]+)\/access$/)
+      if (request.method === 'POST' && reportAccessMatch) return json(await service.reviewedReportAccess({ token: token(request), reportId: decodeURIComponent(reportAccessMatch[1]) }))
       return json({ error: { code: 'not_found', message: 'Endpoint not found.' } }, 404)
     } catch (error) {
       const status = error instanceof ProcessingError ? error.status : 500
