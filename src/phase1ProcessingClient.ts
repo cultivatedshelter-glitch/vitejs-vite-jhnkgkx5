@@ -291,6 +291,7 @@ export async function reviewPhase1Finding({
   corrections = {},
   reason = '',
   fieldsApproved = [],
+  expectedReviewEventId = null,
 }: {
   requestId: string
   observationId: string
@@ -298,13 +299,14 @@ export async function reviewPhase1Finding({
   corrections?: Record<string, unknown>
   reason?: string
   fieldsApproved?: string[]
+  expectedReviewEventId?: string | null
 }) {
   return jsonRequest<{ findingId: string; status: string; eventId: string; release?: { ready: boolean; released: boolean } }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/findings/${encodeURIComponent(observationId)}/review`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, corrections, reason, fieldsApproved }),
+      body: JSON.stringify({ action, corrections, reason, fieldsApproved, expectedReviewEventId }),
     },
     { verifySession: true },
   )

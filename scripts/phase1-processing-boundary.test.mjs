@@ -398,7 +398,7 @@ test('retained property context survives refresh and is rejected for a changed a
 
 test('review actions are server-authoritative, preserve source layers, and validate price provenance', async () => {
   const calls = []
-  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a' }] } }] }
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a', price_source_refs: ['source-a'] }] } }] }
   const repo = {
     async authenticate(token) { return token === 'authorized-token' ? { id: 'reviewer-1' } : null },
     async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
@@ -407,14 +407,16 @@ test('review actions are server-authoritative, preserve source layers, and valid
   const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact })
   const result = await service.review({
     token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
-    corrections: { title: 'Corrected title', price: { low: 1200, high: 2400, source_reference: 'Licensed contractor proposal dated 2026-09-18', geography: 'Portland metro', path_id: 'path-a' } },
+    corrections: { title: 'Corrected title', price: { low: 1200, high: 2400, confidence_status: 'moderate_confidence', source_type: 'external_sources', supporting_source_ids: ['source-a'], assumptions: ['Accessible routine scope'], exclusions: ['Concealed damage'], geography: 'Portland metro', path_id: 'path-a' } },
     reason: 'Corrected against the attached proposal.',
   })
   assert.equal(result.status, 'human_reviewed')
   assert.equal(calls[0].newValue.source_layer_preserved, true)
   assert.equal(calls[0].newValue.ai_draft_preserved, true)
   assert.equal(calls[0].newValue.delivery_eligible, true)
-  assert.deepEqual(artifact, { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a' }] } }] })
+  assert.equal(calls[0].newValue.processing_request_id, 'request-1')
+  assert.equal(calls[0].newValue.expected_review_event_id, null)
+  assert.deepEqual(artifact, { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [{ id: 'path-a', price_source_refs: ['source-a'] }] } }] })
   await assert.rejects(
     service.review({
       token: 'authorized-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
@@ -445,6 +447,26 @@ test('review actions are server-authoritative, preserve source layers, and valid
   assert.deepEqual(calls[1].newValue.fields_approved, ['title', 'next_step'])
   assert.equal(calls[2].newValue.delivery_eligible, false)
   assert.equal(calls[3].newValue.delivery_eligible, false)
+})
+
+test('failed atomic finding persistence does not continue review completion', async () => {
+  let releaseCalls = 0
+  const artifact = { schemaVersion: 'phase1-test', atomicObservations: [{ id: 'observation-1', finding_card: { repair_paths: [] } }] }
+  const repo = {
+    async authenticate() { return { id: 'reviewer-1' } },
+    async getProcessingRequest() { return { id: 'request-1', artifactVersion: artifact.schemaVersion, artifact } },
+    async reviewFinding() { throw new Error('Corrected finding could not be persisted') },
+    async releaseIfReviewComplete() { releaseCalls += 1; return { ready: false, released: false } },
+  }
+  const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact })
+  await assert.rejects(
+    service.review({
+      token: 'reviewer-token', requestId: 'request-1', observationId: 'observation-1', action: 'edit',
+      corrections: { title: 'Corrected title' }, reason: 'Source review corrected the issue.', expectedReviewEventId: 'event-before-edit',
+    }),
+    /Corrected finding could not be persisted/,
+  )
+  assert.equal(releaseCalls, 0)
 })
 
 test('completed human review releases once and delivery failure cannot erase approval', async () => {

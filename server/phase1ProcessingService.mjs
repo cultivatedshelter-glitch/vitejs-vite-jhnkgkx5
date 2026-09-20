@@ -10,7 +10,7 @@ export class ProcessingError extends Error {
 
 export function createPhase1ProcessingService({ repository, reasoningRunner, notifications = null, logger = console }) {
   const REVIEW_ACTIONS = new Set(['approve', 'edit', 'needs_more_info', 'reject'])
-  const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'next_step', 'rationale', 'likely_trade', 'price', 'evidence_relationship', 'confirmed_evidence'])
+  const EDITABLE_FIELDS = new Set(['title', 'interpretation', 'known', 'unknown', 'affected_location', 'repair_paths', 'next_step', 'rationale', 'likely_trade', 'price', 'evidence_relationship', 'confirmed_evidence', 'field_knowledge'])
   async function requireActor(token) {
     if (!token) throw new ProcessingError('authorization_failed', 'Sign in is required to process property evidence.', 401)
     const actor = await repository.authenticate(token)
@@ -174,7 +174,7 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     return result
   }
 
-  async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [] }) {
+  async function review({ token, requestId, observationId, action, corrections = {}, reason = '', fieldsApproved = [], expectedReviewEventId = null }) {
     const actor = await requireActor(token)
     if (repository.isReviewer && !await repository.isReviewer(actor.id)) {
       throw new ProcessingError('authorization_failed', 'Reviewer access is required.', 403)
@@ -188,17 +188,40 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     if (!request) throw new ProcessingError('authorization_failed', 'This processing request is not available.', 404)
     if (corrections.price !== undefined) {
       const price = corrections.price
+      const sourceType = String(price?.source_type || '')
+      const supportingSourceIds = Array.isArray(price?.supporting_source_ids) ? price.supporting_source_ids.filter(Boolean) : []
       if (!price || typeof price !== 'object'
         || !Number.isFinite(price.low) || !Number.isFinite(price.high)
         || price.low < 0 || price.high < price.low
-        || !String(price.source_reference || '').trim()
+        || !['broad_preliminary', 'moderate_confidence', 'field_supported'].includes(String(price.confidence_status || ''))
+        || !['external_sources', 'reviewer_professional_judgment'].includes(sourceType)
+        || (sourceType === 'external_sources' && !supportingSourceIds.length)
+        || supportingSourceIds.length > 3
+        || !Array.isArray(price.assumptions) || !Array.isArray(price.exclusions)
         || !String(price.geography || '').trim()) {
-        throw new ProcessingError('invalid_price_correction', 'A price correction requires a valid low/high range, source reference, and source geography.')
+        throw new ProcessingError('invalid_price_correction', 'A price correction requires a valid range, confidence, geography, assumptions, exclusions, and either selected sources or explicit reviewer judgment.')
       }
       const observation = request?.artifact?.atomicObservations?.find((item) => item.id === observationId)
       const availablePathIds = (observation?.finding_card?.repair_paths || []).map((path) => path.id)
       if (availablePathIds.length && !availablePathIds.includes(String(price.path_id || ''))) {
         throw new ProcessingError('invalid_price_correction', 'Choose the repair path that this price correction applies to.')
+      }
+      const selectedPath = (observation?.finding_card?.repair_paths || []).find((path) => path.id === price.path_id)
+      const availableSourceIds = selectedPath?.price_source_refs || []
+      if (sourceType === 'external_sources' && supportingSourceIds.some((sourceId) => !availableSourceIds.includes(sourceId))) {
+        throw new ProcessingError('invalid_price_correction', 'Choose supporting sources attached to this repair path.')
+      }
+    }
+    if (corrections.repair_paths !== undefined) {
+      const paths = corrections.repair_paths
+      if (!Array.isArray(paths) || paths.some((path) => !path || typeof path !== 'object' || !String(path.id || '').trim() || !String(path.label || '').trim())) {
+        throw new ProcessingError('invalid_repair_path_correction', 'Repair-path corrections require a path identifier and label.')
+      }
+      const observation = request?.artifact?.atomicObservations?.find((item) => item.id === observationId)
+      const availablePathIds = new Set((observation?.finding_card?.repair_paths || []).map((path) => path.id))
+      const submittedPathIds = paths.map((path) => path.id)
+      if (new Set(submittedPathIds).size !== submittedPathIds.length || submittedPathIds.some((pathId) => !availablePathIds.has(pathId))) {
+        throw new ProcessingError('invalid_repair_path_correction', 'Repair-path corrections must identify an available path exactly once.')
       }
     }
     if (['edit', 'needs_more_info', 'reject'].includes(action) && !String(reason).trim()) {
@@ -207,6 +230,8 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const newValue = {
       artifact_version: request.artifactVersion,
       observation_id: observationId,
+      processing_request_id: requestId,
+      expected_review_event_id: expectedReviewEventId,
       corrections,
       fields_approved: action === 'approve' ? fieldsApproved : [],
       delivery_eligible: action === 'approve' || action === 'edit',

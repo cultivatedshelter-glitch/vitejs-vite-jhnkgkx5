@@ -153,6 +153,7 @@ test('human correction overlays preserve the draft and agent output includes onl
       findingId: 'finding-1',
       status: 'human_reviewed',
       event: {
+        id: 'event-edit-1',
         review_action: 'edit',
         reviewer_id: 'reviewer-1',
         created_at: '2026-09-18T12:00:00Z',
@@ -166,7 +167,8 @@ test('human correction overlays preserve the draft and agent output includes onl
             known: ['Flashing damage is visible in the report.'],
             unknown: ['Whether water entered the assembly.'],
             affected_location: { location_text: 'West roof edge' },
-            price: { low: 1200, high: 2400, source_reference: 'Contractor proposal 2026-09-18' },
+            field_knowledge: 'Reviewer confirmed the flashing is mechanically damaged.',
+            price: { low: 1200, high: 2400, source_type: 'reviewer_professional_judgment', geography: 'Portland metro' },
           },
         },
       },
@@ -176,7 +178,21 @@ test('human correction overlays preserve the draft and agent output includes onl
   assert.equal(reviewer.findings[0].title, 'Reviewed flashing damage')
   assert.deepEqual(reviewer.findings[0].known, ['Flashing damage is visible in the report.'])
   assert.equal(reviewer.findings[0].affectedLocation.sourceBasis, 'human_entered')
+  assert.equal(reviewer.findings[0].fieldKnowledge, 'Reviewer confirmed the flashing is mechanically damaged.')
   assert.equal(reviewer.findings[0].price.label, '$1,200–$2,400')
+  assert.equal(reviewer.findings[0].reviewDecision.eventId, 'event-edit-1')
+
+  const approvedAfterEdit = structuredClone(reviewed)
+  approvedAfterEdit.reviewState['observation-1'].status = 'human_verified'
+  approvedAfterEdit.reviewState['observation-1'].event = {
+    ...approvedAfterEdit.reviewState['observation-1'].event,
+    id: 'event-approve-2',
+    review_action: 'approve',
+  }
+  const approvedReviewer = adaptPhase1ReasoningArtifact(approvedAfterEdit, { mode: 'live', audience: 'reviewer' })
+  assert.equal(approvedReviewer.findings[0].title, 'Reviewed flashing damage')
+  assert.deepEqual(approvedReviewer.findings[0].known, ['Flashing damage is visible in the report.'])
+  assert.equal(approvedReviewer.findings[0].reviewDecision.eventId, 'event-approve-2')
 
   const agent = adaptPhase1ReasoningArtifact(reviewed, { mode: 'live', audience: 'agent' })
   assert.equal(agent.totalFindingCount, 2)
@@ -190,19 +206,46 @@ test('human correction overlays preserve the draft and agent output includes onl
   released.atomicObservations[0].finding_card.released_price_correction = {
     low: 1200,
     high: 2400,
-    source_reference: 'Reviewed local proposal',
+    source_type: 'reviewer_professional_judgment',
+    confidence_status: 'field_supported',
+    assumptions: ['Accessible routine scope'],
+    exclusions: ['Concealed damage'],
+    version: 2,
+    original_range: { low: 200, high: 500 },
     geography: 'Portland metro',
     path_id: 'repair-flashing',
   }
+  released.atomicObservations[0].finding_card.released_price_corrections = [
+    released.atomicObservations[0].finding_card.released_price_correction,
+    {
+      low: 700,
+      high: 1100,
+      source_type: 'reviewer_professional_judgment',
+      confidence_status: 'broad_preliminary',
+      assumptions: ['Routine access'],
+      exclusions: ['Decking replacement'],
+      version: 1,
+      original_range: { low: 500, high: 900 },
+      geography: 'Portland metro',
+      path_id: 'replace-flashing',
+    },
+  ]
   released.atomicObservations[0].finding_card.repair_paths = [{
     id: 'repair-flashing', label: 'Repair the flashing', price_low: 200, price_high: 500,
+    price_unit: 'project', price_geography: { label: 'United States' }, price_source_refs: [],
+  }, {
+    id: 'replace-flashing', label: 'Replace the flashing', price_low: 500, price_high: 900,
     price_unit: 'project', price_geography: { label: 'United States' }, price_source_refs: [],
   }]
   const releasedAgent = adaptPhase1ReasoningArtifact(released, { mode: 'live', audience: 'agent' })
   assert.equal(releasedAgent.findings.length, 1)
   assert.equal(releasedAgent.findings[0].repairPaths[0].priceLabel, '$1,200–$2,400')
   assert.equal(releasedAgent.findings[0].repairPaths[0].geography, 'Portland metro')
-  assert.equal(releasedAgent.findings[0].repairPaths[0].sources[0].label, 'Reviewed local proposal')
+  assert.equal(releasedAgent.findings[0].repairPaths[0].sources[0].label, 'Reviewer / Professional Judgment')
+  assert.equal(releasedAgent.findings[0].repairPaths[0].originalPriceLabel, '$200–$500')
+  assert.equal(releasedAgent.findings[0].repairPaths[0].reviewedPriceVersion, 2)
+  assert.equal(releasedAgent.findings[0].repairPaths[1].priceLabel, '$700–$1,100')
+  assert.equal(releasedAgent.findings[0].repairPaths[1].reviewedPriceVersion, 1)
 })
 
 test('missing optional fields fail gracefully without inventing money or provenance', () => {

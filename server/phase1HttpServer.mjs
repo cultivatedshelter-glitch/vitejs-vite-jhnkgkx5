@@ -83,6 +83,7 @@ export function createPhase1HttpHandler(service) {
           corrections: body.corrections || {},
           reason: body.reason || '',
           fieldsApproved: body.fieldsApproved || [],
+          expectedReviewEventId: body.expectedReviewEventId || null,
         }))
       }
       return json({ error: { code: 'not_found', message: 'Endpoint not found.' } }, 404)

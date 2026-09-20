@@ -10,18 +10,25 @@ export type Phase1LinkedSource = {
   publishedAt: string | null
   retrievedAt: string | null
   scopeBasis: string
+  priceLabel: string | null
 }
 
 export type Phase1RepairPath = {
   id: string
   label: string
   status: 'priced' | 'blocked'
+  low: number | null
+  high: number | null
+  unit: string
   priceLabel: string
   geography: string
   assumptions: string[]
   exclusions: string[]
   confidence: string
   confidenceReason: string
+  rangeStatus: 'Broad Preliminary' | 'Moderate Confidence' | 'Field-Supported'
+  originalPriceLabel: string | null
+  reviewedPriceVersion: number | null
   sources: Phase1LinkedSource[]
 }
 
@@ -97,6 +104,7 @@ export type Phase1SourceEvidence = {
 
 export type Phase1ReviewDecision = {
   findingId: string | null
+  eventId: string | null
   status: string
   action: string | null
   reason: string | null
@@ -124,6 +132,7 @@ export type Phase1FindingViewModel = {
   reviewPriority: 'quick_review' | 'careful_review' | 'waiting_for_evidence'
   reviewReasons: string[]
   reviewDecision: Phase1ReviewDecision
+  fieldKnowledge: string
   likelyTrade: string
   affectedLocation: Phase1AffectedLocation
   sourceEvidence: Phase1SourceEvidence
@@ -264,6 +273,7 @@ function normalizeSource(value: unknown): Phase1LinkedSource | null {
     publishedAt: asString(source.published_at) || null,
     retrievedAt: asString(source.retrieved_at) || null,
     scopeBasis: asString(source.scope_basis),
+    priceLabel: rangeLabel(asNumber(source.price_low), asNumber(source.price_high)),
   }
 }
 
@@ -442,16 +452,21 @@ function normalizeFinding(
   const correctedPrice = Object.keys(asRecord(corrections.price)).length
     ? asRecord(corrections.price)
     : asRecord(card.released_price_correction)
+  const correctedPrices = asArray(corrections.price_adjustments).filter(isRecord)
+  const releasedPrices = asArray(card.released_price_corrections).filter(isRecord)
   const correctedPriceLow = asNumber(correctedPrice.low)
   const correctedPriceHigh = asNumber(correctedPrice.high)
   const correctedPriceSource = asString(correctedPrice.source_reference)
-  const hasCorrectedPrice = correctedPriceLow !== null && correctedPriceHigh !== null && Boolean(correctedPriceSource)
+  const correctedPriceSourceType = asString(correctedPrice.source_type)
+  const correctedPriceSourceIds = asStringArray(correctedPrice.supporting_source_ids)
+  const hasCorrectedPrice = correctedPriceLow !== null && correctedPriceHigh !== null
+    && (correctedPriceSourceIds.length > 0 || correctedPriceSourceType === 'reviewer_professional_judgment' || Boolean(correctedPriceSource))
   const correctedPricePathId = asString(correctedPrice.path_id)
   const priceLow = hasCorrectedPrice ? correctedPriceLow : asNumber(card.price_low)
   const priceHigh = hasCorrectedPrice ? correctedPriceHigh : asNumber(card.price_high)
   const priced = priceLow !== null && priceHigh !== null && (hasCorrectedPrice || asString(card.pricing_contract_status) !== 'BLOCKED_MISSING_SOURCED_RANGE')
   const geography = asRecord(card.price_geography)
-  const priceSourceIds = hasCorrectedPrice ? [correctedPriceSource] : asStringArray(card.price_source_refs)
+  const priceSourceIds = hasCorrectedPrice ? correctedPriceSourceIds : asStringArray(card.price_source_refs)
   const weather = normalizeWeather(card)
   const contractor = asRecord(card.contractor_quote)
   const contractorAmount = asNumber(contractor.amount)
@@ -469,6 +484,7 @@ function normalizeFinding(
       reference: '',
       url: null,
       kind: 'unresolved_source_reference',
+      geography: 'Geography unavailable', publishedAt: null, retrievedAt: null, scopeBasis: '', priceLabel: null,
     })
 
   const rawRelated = asStringArray(card.related_findings)
@@ -481,34 +497,58 @@ function normalizeFinding(
   const hasCorrectedLocation = Boolean(asString(correctedLocation.location_text))
   const repairPaths = asArray(card.repair_paths).filter(isRecord).map((item, pathIndex) => {
     const pathId = asString(item.id) || `${id}-path-${pathIndex + 1}`
-    const correctionApplies = hasCorrectedPrice && correctedPricePathId === pathId
-    const low = correctionApplies ? correctedPriceLow : asNumber(item.price_low)
-    const high = correctionApplies ? correctedPriceHigh : asNumber(item.price_high)
+    const pathCorrection = correctedPrices.find((price) => asString(price.path_id) === pathId)
+      || releasedPrices.find((price) => asString(price.path_id) === pathId)
+      || (hasCorrectedPrice && correctedPricePathId === pathId ? correctedPrice : {})
+    const pathCorrectionLow = asNumber(pathCorrection.low)
+    const pathCorrectionHigh = asNumber(pathCorrection.high)
+    const correctionApplies = pathCorrectionLow !== null && pathCorrectionHigh !== null
+    const low = correctionApplies ? pathCorrectionLow : asNumber(item.price_low)
+    const high = correctionApplies ? pathCorrectionHigh : asNumber(item.price_high)
     const unit = asString(item.price_unit)
-    const sourceIds = correctionApplies ? [correctedPriceSource] : asStringArray(item.price_source_refs)
-    const pathSources = correctionApplies ? [{
-      id: correctedPriceSource,
-      label: correctedPriceSource,
-      reference: correctedPriceSource,
-      url: /^https?:\/\//i.test(correctedPriceSource) ? correctedPriceSource : null,
-      kind: 'human_reviewed_price_source',
-      geography: asString(correctedPrice.geography),
+    const pathSourceIds = asStringArray(pathCorrection.supporting_source_ids)
+    const pathSourceType = asString(pathCorrection.source_type)
+    const sourceIds = correctionApplies ? pathSourceIds : asStringArray(item.price_source_refs)
+    const professionalJudgmentSource: Phase1LinkedSource = {
+      id: `reviewer-judgment-${pathId}`,
+      label: 'Reviewer / Professional Judgment',
+      reference: 'Attributed reviewer judgment',
+      url: null,
+      kind: 'reviewer_professional_judgment',
+      geography: asString(pathCorrection.geography),
       publishedAt: null,
-      retrievedAt: asString(reviewEvent.created_at) || null,
-      scopeBasis: `Human-reviewed correction for ${asString(item.label) || `potential path ${pathIndex + 1}`}.`,
-    }] : sourceIds.map((sourceId) => catalog.get(sourceId)).filter((source): source is Phase1LinkedSource => Boolean(source))
+      retrievedAt: asString(pathCorrection.reviewed_at) || asString(reviewEvent.created_at) || null,
+      scopeBasis: `Human-reviewed adjustment for ${asString(item.label) || `potential path ${pathIndex + 1}`}.`,
+      priceLabel: rangeLabel(pathCorrectionLow, pathCorrectionHigh),
+    }
+    const pathSources = correctionApplies
+      ? (pathSourceType === 'reviewer_professional_judgment'
+          ? [professionalJudgmentSource]
+          : sourceIds.map((sourceId) => catalog.get(sourceId)).filter((source): source is Phase1LinkedSource => Boolean(source)))
+      : sourceIds.map((sourceId) => catalog.get(sourceId)).filter((source): source is Phase1LinkedSource => Boolean(source))
+    const correctedPaths = asArray(corrections.repair_paths).filter(isRecord)
+    const correctedPath = correctedPaths.find((path) => asString(path.id) === pathId)
+    const originalRange = asRecord(pathCorrection.original_range)
     return {
       id: pathId,
-      label: asString(item.label) || `Potential path ${pathIndex + 1}`,
+      label: asString(correctedPath?.label) || asString(item.label) || `Potential path ${pathIndex + 1}`,
       status: low !== null && high !== null && pathSources.length ? 'priced' as const : 'blocked' as const,
+      low,
+      high,
+      unit,
       priceLabel: low !== null && high !== null
         ? `${rangeLabel(low, high)}${unit === 'square_foot' ? ' per sq ft' : unit && unit !== 'project' ? ` per ${humanize(unit).toLowerCase()}` : ''}`
         : 'No defensible sourced range attached',
-      geography: correctionApplies ? asString(correctedPrice.geography) : asString(asRecord(item.price_geography).label) || 'Geography unavailable',
-      assumptions: asStringArray(item.assumptions),
-      exclusions: asStringArray(item.major_exclusions),
-      confidence: correctionApplies ? 'Human reviewed' : humanize(asString(item.confidence) || 'low'),
+      geography: correctionApplies ? asString(pathCorrection.geography) : asString(asRecord(item.price_geography).label) || 'Geography unavailable',
+      assumptions: correctionApplies ? asStringArray(pathCorrection.assumptions) : asStringArray(item.assumptions),
+      exclusions: correctionApplies ? asStringArray(pathCorrection.exclusions) : asStringArray(item.major_exclusions),
+      confidence: correctionApplies ? humanize(asString(pathCorrection.confidence_status)) : humanize(asString(item.confidence) || 'low'),
       confidenceReason: correctionApplies ? 'A human reviewer replaced the draft range using the cited source.' : asString(item.confidence_reason),
+      rangeStatus: correctionApplies
+        ? (asString(pathCorrection.confidence_status) === 'field_supported' ? 'Field-Supported' : asString(pathCorrection.confidence_status) === 'moderate_confidence' ? 'Moderate Confidence' : 'Broad Preliminary')
+        : (asString(item.range_status) === 'moderate_confidence' ? 'Moderate Confidence' : 'Broad Preliminary'),
+      originalPriceLabel: correctionApplies ? rangeLabel(asNumber(originalRange.low), asNumber(originalRange.high)) : null,
+      reviewedPriceVersion: correctionApplies ? asNumber(pathCorrection.version) : null,
       sources: pathSources,
     }
   })
@@ -533,6 +573,7 @@ function normalizeFinding(
     reviewReasons: asStringArray(reviewWorkflow.reasons),
     reviewDecision: {
       findingId: asString(reviewState.findingId) || null,
+      eventId: asString(reviewEvent.id) || null,
       status: rawReviewStatus,
       action: asString(reviewEvent.review_action) || null,
       reason: asString(reviewEvent.reason) || null,
@@ -541,6 +582,7 @@ function normalizeFinding(
       corrections,
       deliveryEligible: reviewNewValue.delivery_eligible === true || card.released_to_agent === true,
     },
+    fieldKnowledge: asString(corrections.field_knowledge),
     likelyTrade: asString(corrections.likely_trade) || asString(card.next_step_owner) || 'Human reviewer',
     affectedLocation: {
       orientation: asString(correctedLocation.orientation) || asString(affectedLocation.orientation) || 'Unknown',
@@ -604,7 +646,17 @@ function normalizeFinding(
       basis: hasCorrectedPrice ? `Human correction supported by ${correctedPriceSource}.` : asString(card.price_range_explanation) || 'No sourced repair range was returned.',
       sourceIds: priceSourceIds,
     },
-    rangeHistory: normalizeHistory(card),
+    rangeHistory: [
+      ...normalizeHistory(card),
+      ...(hasCorrectedPrice ? [{
+        id: `reviewed-price-${id}-${asNumber(correctedPrice.version) ?? 1}`,
+        movement: 'Human reviewed adjustment',
+        priorLabel: rangeLabel(asNumber(asRecord(correctedPrice.original_range).low), asNumber(asRecord(correctedPrice.original_range).high)),
+        currentLabel: rangeLabel(correctedPriceLow, correctedPriceHigh) ?? 'Range unavailable',
+        explanation: asString(reviewEvent.reason) || 'Reviewer reason was not returned.',
+        sourceIds: correctedPriceSourceIds,
+      }] : []),
+    ],
     contractorQuote: contractorAmount === null ? null : {
       amount: contractorAmount,
       label: formatMoney(contractorAmount),

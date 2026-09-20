@@ -73,6 +73,86 @@ SOURCES = {
     ]
 }
 
+SOURCES.update({
+    item["id"]: item
+    for item in [
+        source("fixr-sidewalk-repair", "Fixr sidewalk repair cost guide", "https://www.fixr.com/costs/repair-sidewalk", "2025-01-01", 8, 11, "Concrete walkway repair.", "square_foot"),
+        source("angi-foundation-crack", "Angi foundation inspection cost guide", "https://www.angi.com/articles/foundation-inspection-cost.htm", "2026-04-06", 250, 800, "Common foundation crack repair."),
+        source("angi-window-seal", "Angi window repair cost guide", "https://www.angi.com/articles/how-much-do-window-repairs-cost.htm", "2026-03-17", 75, 200, "Foggy-window seal or sash repair."),
+        source("fixr-window-seal", "Fixr window repair cost guide", "https://www.fixr.com/costs/window-repair", "2025-01-01", 75, 250, "Window thermal-seal repair."),
+        source("angi-deck-limited", "Angi deck repair cost guide", "https://www.angi.com/articles/how-much-does-it-cost-repair-deck.htm", "2026-08-03", 200, 500, "Localized non-structural mold or rot repair."),
+        source("fixr-deck-patching", "Fixr deck repair cost guide", "https://www.fixr.com/costs/deck-repair", "2025-01-01", 150, 500, "Localized deck patching."),
+        source("angi-deck-broader", "Angi deck repair cost guide", "https://www.angi.com/articles/how-much-does-it-cost-repair-deck.htm", "2026-08-03", 500, 4000, "Deck board replacement; extent and material drive the range."),
+        source("fixr-deck-broader", "Fixr deck repair cost guide", "https://www.fixr.com/costs/deck-repair", "2025-01-01", 1000, 3000, "Deck refurbishment involving multiple components."),
+        source("angi-roof-repair", "Angi roof repair cost guide", "https://www.angi.com/articles/how-much-do-roof-repairs-cost.htm", "2026-08-03", 395, 1967, "Typical roof repair; repair type and extent drive the range."),
+        source("angi-roof-flashing", "Angi roof repair cost guide", "https://www.angi.com/articles/how-much-do-roof-repairs-cost.htm", "2026-08-03", 200, 500, "Localized roof flashing repair."),
+        source("angi-roof-cleaning", "Angi roof cleaning cost guide", "https://www.angi.com/articles/what-does-roof-cleaning-cost.htm", "2026-07-09", 296, 626, "Professional residential roof cleaning."),
+        source("angi-gutter-cleaning", "Angi gutter cleaning cost guide", "https://www.angi.com/articles/how-much-does-gutter-cleaning-cost.htm", "2026-08-05", 119, 234, "Professional single-story residential gutter cleaning."),
+        source("angi-gutter-repair", "Angi gutter repair cost guide", "https://www.angi.com/articles/cost-of-gutter-repair.htm", "2026-07-08", 120, 900, "Professional gutter repair; damage and material drive the range."),
+        source("angi-outlet-repair", "Angi electrical outlet repair cost guide", "https://www.angi.com/articles/electrical-outlet-repair-cost.htm", "2026-09-14", 60, 250, "Standard electrical outlet repair."),
+        source("angi-outlet-replacement", "Angi outlet replacement cost guide", "https://www.angi.com/articles/cost-replace-27-electrical-outlets.htm", "2026-05-03", 150, 350, "Professional replacement of one existing outlet."),
+        source("angi-gfci", "Angi GFCI outlet installation cost guide", "https://www.angi.com/articles/how-much-should-it-cost-electrician-replace-combination-gfci-switch-and-receptacle.htm", "2026-04-06", 100, 300, "Replacement or upgrade of an existing outlet with GFCI protection."),
+        source("angi-hvac-inspection", "Angi furnace inspection cost guide", "https://www.angi.com/articles/furnace-inspection-cost.htm", "2026-07-01", 80, 200, "Basic through advanced furnace inspection or tune-up."),
+        source("angi-hvac-repair", "Angi HVAC repair cost guide", "https://www.angi.com/articles/how-much-hvac-repair-cost.htm", "2026-09-01", 130, 500, "Typical furnace repair after diagnosis."),
+        source("angi-furnace-cleaning", "Angi HVAC maintenance cost guide", "https://www.angi.com/articles/ac-service-cost.htm", "2026-07-01", 70, 400, "Professional furnace cleaning."),
+        source("angi-toilet-repair", "Angi toilet repair cost guide", "https://www.angi.com/articles/how-much-should-toilet-repairs-cost.htm", "2026-07-20", 150, 391, "Typical professional toilet repair."),
+        source("angi-toilet-replacement", "Angi toilet installation cost guide", "https://www.angi.com/articles/how-much-does-toilet-installation-cost.htm", "2026-05-30", 224, 533, "Professional toilet installation; concealed floor repair is excluded."),
+        source("fixr-shower-repair", "Fixr shower repair cost guide", "https://www.fixr.com/costs/fix-leaky-shower-faucet", "2025-01-01", 50, 200, "Routine shower hardware, faucet, handle, tile, or grout repair."),
+        source("angi-shower-door", "Angi shower door installation cost guide", "https://www.angi.com/articles/how-much-does-it-cost-install-glass-shower-door.htm", "2026-08-31", 530, 1391, "Professional shower door installation."),
+        source("angi-faucet", "Angi bathroom faucet replacement cost guide", "https://www.angi.com/articles/how-much-cost-replace-bathroom-faucet.htm", "2026-09-19", 170, 360, "Professional bathroom faucet replacement."),
+        source("angi-bath-caulk", "Angi caulking cost guide", "https://www.angi.com/articles/cost-to-caulk.htm", "2026-05-01", 65, 300, "Professional bathtub or shower caulking."),
+        source("angi-smoke-alarm", "Angi smoke detector installation cost guide", "https://www.angi.com/articles/smoke-detector-installation-cost.htm", "2026-08-30", 70, 150, "One smoke detector with professional installation."),
+        source("fixr-smoke-alarm", "Fixr smoke detector installation cost guide", "https://www.fixr.com/costs/smoke-detector-installation", "2025-01-31", 70, 150, "One smoke detector with professional installation."),
+    ]
+})
+
+
+ALTERNATE_SOURCE_IDS = {
+    "homeguide-sidewalk-repair": ["fixr-sidewalk-repair"],
+    "homeguide-foundation-crack": ["angi-foundation-crack"],
+    "homeguide-window-seal": ["angi-window-seal", "fixr-window-seal"],
+    "homeguide-deck-simple": ["angi-deck-limited", "fixr-deck-patching"],
+    "homeguide-deck-average": ["angi-deck-broader", "fixr-deck-broader"],
+    "homeguide-roof-minor": ["angi-roof-repair"],
+    "homeguide-roof-flashing": ["angi-roof-flashing"],
+    "homeguide-roof-cleaning": ["angi-roof-cleaning"],
+    "homeguide-gutter-cleaning": ["angi-gutter-cleaning"],
+    "homeguide-gutter-repair": ["angi-gutter-repair"],
+    "homeguide-electrical-small": ["angi-outlet-repair"],
+    "homeguide-outlet-replacement": ["angi-outlet-repair", "angi-outlet-replacement"],
+    "homeguide-gfci-replacement": ["angi-gfci"],
+    "homeguide-hvac-inspect": ["angi-hvac-inspection"],
+    "homeguide-hvac-repair": ["angi-hvac-repair"],
+    "homeguide-furnace-clean": ["angi-furnace-cleaning"],
+    "homeguide-toilet-repair": ["angi-toilet-repair"],
+    "homeguide-toilet-replacement": ["angi-toilet-replacement"],
+    "homeguide-shower-repair": ["fixr-shower-repair"],
+    "homeguide-shower-door": ["angi-shower-door"],
+    "homeguide-faucet": ["angi-faucet"],
+    "homeguide-bath-caulk": ["angi-bath-caulk"],
+    "homeguide-smoke-alarm": ["angi-smoke-alarm", "fixr-smoke-alarm"],
+}
+
+
+def comparison_sources(primary_source_id: str | None) -> list[dict[str, Any]]:
+    if not primary_source_id or primary_source_id not in SOURCES:
+        return []
+    ids = [primary_source_id, *ALTERNATE_SOURCE_IDS.get(primary_source_id, [])]
+    primary_unit = SOURCES[primary_source_id]["price_unit"]
+    return [SOURCES[source_id] for source_id in ids if SOURCES[source_id]["price_unit"] == primary_unit][:3]
+
+
+def synthesized_range(price_sources: list[dict[str, Any]]) -> tuple[float, float, str]:
+    overlap_low = max(source_record["price_low"] for source_record in price_sources)
+    overlap_high = min(source_record["price_high"] for source_record in price_sources)
+    if len(price_sources) > 1 and overlap_low <= overlap_high:
+        return overlap_low, overlap_high, "moderate_confidence"
+    return (
+        min(source_record["price_low"] for source_record in price_sources),
+        max(source_record["price_high"] for source_record in price_sources),
+        "broad_preliminary",
+    )
+
 
 def path(path_id: str, label: str, source_id: str | None, assumptions: list[str], exclusions: list[str]) -> dict[str, Any]:
     return {"id": path_id, "label": label, "source_id": source_id, "assumptions": assumptions, "major_exclusions": exclusions}
@@ -126,36 +206,45 @@ def apply_decision_support(record: dict[str, Any], retrieved_at: str) -> list[di
     rendered_paths = []
     used_sources = []
     for configured in configured_paths[:3]:
-        price_source = SOURCES.get(configured["source_id"])
-        if price_source:
-            used_sources.append(price_source)
+        price_sources = comparison_sources(configured["source_id"])
+        price_source = price_sources[0] if price_sources else None
+        if price_sources:
+            used_sources.extend(price_sources)
+            price_low, price_high, range_status = synthesized_range(price_sources)
+        else:
+            price_low, price_high, range_status = None, None, "blocked"
         rendered_paths.append({
             "id": configured["id"],
             "label": configured["label"],
             "status": "sourced_planning_range" if price_source else "blocked_missing_sourced_range",
-            "price_low": price_source.get("price_low") if price_source else None,
-            "price_high": price_source.get("price_high") if price_source else None,
+            "price_low": price_low,
+            "price_high": price_high,
             "price_unit": price_source.get("price_unit") if price_source else None,
             "price_geography": dict(NATIONAL) if price_source else {},
-            "price_source_refs": [price_source["id"]] if price_source else [],
+            "price_source_refs": [source_record["id"] for source_record in price_sources],
             "scope_basis": price_source.get("scope_basis") if price_source else "No defensible source is attached for this path.",
             "assumptions": configured["assumptions"],
             "major_exclusions": configured["major_exclusions"],
-            "confidence": "low",
-            "confidence_reason": "Inspection evidence does not yet establish final field scope, quantities, access, or hidden conditions.",
+            "confidence": "moderate" if range_status == "moderate_confidence" else "low",
+            "range_status": range_status,
+            "confidence_reason": (
+                "Independent sources overlap for this stated scope; field conditions, quantities, and access remain unverified."
+                if range_status == "moderate_confidence"
+                else "The source set is limited or does not overlap; field scope, quantities, access, and hidden conditions remain unverified."
+            ),
             "retrieved_at": retrieved_at if price_source else None,
             "review_status": "needs_human_review",
             "range_history": ([{
                 "revision_id": f"{record['id']}-{configured['id']}-initial",
                 "prior_low": None,
                 "prior_high": None,
-                "new_low": price_source["price_low"],
-                "new_high": price_source["price_high"],
+                "new_low": price_low,
+                "new_high": price_high,
                 "movement": "initial",
-                "evidence_causing_change": ["inspection finding", price_source["scope_basis"]],
+                "evidence_causing_change": ["inspection finding", *[source_record["scope_basis"] for source_record in price_sources]],
                 "assumptions": configured["assumptions"],
                 "unresolved_unknowns": decision_factors,
-                "source_refs": [price_source["id"]],
+                "source_refs": [source_record["id"] for source_record in price_sources],
                 "geography": dict(NATIONAL),
                 "author": {"type": "system", "id": "phase1-decision-support"},
                 "timestamp": retrieved_at,

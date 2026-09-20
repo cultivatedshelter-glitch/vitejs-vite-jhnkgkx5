@@ -140,6 +140,19 @@ button { color: inherit; }
 .phase1-review-group > h3 span { color: #7a837d; }
 
 .phase1-finding-detail { width: min(100%, 1100px); }
+.phase1-review-progress { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; align-items: center; margin: -18px 0 24px; padding-bottom: 14px; border-bottom: 1px solid #dfe1dd; }
+.phase1-review-progress .phase1-back { margin: 0; justify-self: start; }
+.phase1-review-context { display: grid; justify-items: start; }
+.phase1-property-link { max-width: 300px; padding: 0; overflow: hidden; border: 0; background: transparent; color: #66716a; font: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.phase1-property-link:hover { color: #24563e; text-decoration: underline; }
+.phase1-review-progress p { display: grid; gap: 3px; margin: 0; text-align: center; }
+.phase1-review-progress p span { color: #6d766f; font-size: 12px; }
+.phase1-review-progress > div { display: flex; justify-self: end; gap: 7px; }
+.phase1-review-progress > div button, .phase1-review-mode button { min-height: 38px; padding: 0 12px; border: 1px solid #cbd3cd; border-radius: 5px; background: #fff; color: #315a43; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.phase1-review-progress button:disabled { opacity: .42; cursor: default; }
+.phase1-review-mode { display: flex; width: fit-content; margin: 0 0 24px; padding: 3px; border: 1px solid #cfd6d1; border-radius: 7px; background: #eef1ee; }
+.phase1-review-mode button { border: 0; background: transparent; }
+.phase1-review-mode button.is-active { background: #fff; color: #1f442f; box-shadow: 0 1px 3px rgba(32, 50, 39, .12); }
 .phase1-back { min-height: 44px; margin: -18px 0 26px; padding: 0; border: 0; background: transparent; color: #43624f; font-size: 14px; font-weight: 700; cursor: pointer; }
 .phase1-back span { margin-right: 7px; }
 .phase1-finding-header { max-width: 790px; margin-bottom: 34px; }
@@ -148,6 +161,7 @@ button { color: inherit; }
 .phase1-detail-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(310px, 0.8fr); grid-template-areas: "main aside"; gap: 48px; align-items: start; }
 .phase1-detail-main { grid-area: main; min-width: 0; }
 .phase1-detail-aside { grid-area: aside; display: grid; gap: 18px; }
+.phase1-review-flow { width: min(100%, 790px); }
 .phase1-decision-overview { margin: 0 0 42px; padding: 24px 0 28px; border-top: 1px solid #dfe1dd; border-bottom: 1px solid #dfe1dd; }
 .phase1-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 22px; }
 .phase1-overview-grid h3, .phase1-path h3 { margin: 0 0 9px; color: #536159; font-size: 12px; text-transform: uppercase; }
@@ -166,6 +180,9 @@ button { color: inherit; }
 .phase1-repair-paths, .phase1-decision-change { padding: 28px 0; border-bottom: 1px solid #dfe1dd; }
 .phase1-path-list { display: grid; gap: 14px; }
 .phase1-path { padding: 20px; border: 1px solid #cbd8ce; border-radius: 8px; background: #f0f4f0; }
+.phase1-path > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: baseline; color: #27382d; cursor: pointer; list-style-position: outside; }
+.phase1-path > summary span:first-child { font-family: Georgia, "Times New Roman", serif; font-size: 19px; }
+.phase1-path > summary span:last-child { color: #234e38; font-size: 16px; font-weight: 700; text-align: right; }
 .phase1-path.is-blocked { border-color: #ded4ba; background: #f6f1e5; }
 .phase1-path-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; }
 .phase1-path-heading h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 500; }
@@ -180,6 +197,8 @@ button { color: inherit; }
 .phase1-path-sources { margin-top: 18px; padding-top: 15px; border-top: 1px solid rgba(71, 96, 80, 0.18); }
 .phase1-path-sources > div { display: grid; gap: 4px; padding: 9px 0; color: #657068; font-size: 12px; }
 .phase1-path-sources a { width: fit-content; margin-top: 3px; color: #24563e; font-weight: 700; }
+.phase1-path-sources button, .phase1-adjust-price { width: fit-content; min-height: 36px; margin-top: 5px; padding: 0 11px; border: 1px solid #aebbb2; border-radius: 5px; background: #fff; color: #28533c; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.phase1-adjust-price { margin-top: 16px; }
 .phase1-action-note { display: grid; gap: 4px; margin: 16px 0 0; color: #6e6045; font-size: 13px; }
 .phase1-range-history { padding: 18px 0; border-bottom: 1px solid #dfe1dd; }
 .phase1-range-history summary { color: #315a43; font-size: 13px; font-weight: 700; cursor: pointer; }
@@ -217,6 +236,7 @@ button { color: inherit; }
 .phase1-disclosures details { border-bottom: 1px solid #dfe1dd; }
 .phase1-disclosures summary { min-height: 54px; padding: 17px 0; color: #315a43; font-size: 14px; font-weight: 700; cursor: pointer; }
 .phase1-disclosures p { margin: 0 0 18px; color: #566159; line-height: 1.6; }
+.phase1-quick-details h3 { margin: 16px 0 8px; color: #536159; font-size: 12px; text-transform: uppercase; }
 .phase1-source-list { display: grid; gap: 14px; margin: 0 0 18px; padding: 0; list-style: none; }
 .phase1-source-list li { display: grid; gap: 3px; overflow-wrap: anywhere; }
 .phase1-source-list a { color: #24563e; font-weight: 700; }
@@ -238,6 +258,7 @@ button { color: inherit; }
 .phase1-action-note { align-items: center; }
 .phase1-review-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .phase1-review-buttons button { min-height: 44px; border: 1px solid #cdd5cf; border-radius: 6px; background: #fff; color: #294f39; font: inherit; font-weight: 700; cursor: pointer; }
+.phase1-review-buttons button:disabled { opacity: .45; cursor: default; }
 .phase1-review-buttons .phase1-review-approve { background: #315d43; color: #fff; }
 .phase1-correction-fields { display: grid; gap: 13px; margin-top: 18px; }
 .phase1-correction-fields label, .phase1-review-note { display: grid; gap: 6px; color: #4f5d54; font-size: 13px; font-weight: 700; }
@@ -247,13 +268,29 @@ button { color: inherit; }
 .phase1-price-correction label:first-of-type, .phase1-price-correction label:nth-last-child(-n + 2) { grid-column: 1 / -1; }
 .phase1-review-note { margin-top: 16px; }
 .phase1-submit-review { position: static; width: 100%; margin-top: 16px; }
+.phase1-review-controls { position: sticky; z-index: 4; bottom: 12px; margin-top: 26px; padding: 18px; border: 1px solid #cbd4cd; border-radius: 8px; background: rgba(250, 251, 248, .98); box-shadow: 0 8px 26px rgba(28, 47, 34, .13); }
+.phase1-source-selection { display: grid; grid-column: 1 / -1; gap: 8px; padding: 12px; border: 1px solid #d8ddd9; border-radius: 5px; background: #f7f8f6; }
+.phase1-source-selection > label { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 8px; font-weight: 500; }
+.phase1-source-selection input { width: 18px; height: 18px; }
 .phase1-recorded-review { padding: 10px 12px; background: #edf3ee; font-size: 13px; }
+.phase1-source-drawer-backdrop { position: fixed; z-index: 40; inset: 0; display: flex; justify-content: flex-end; background: rgba(24, 32, 27, .34); }
+.phase1-source-drawer { width: min(430px, 92vw); height: 100%; box-sizing: border-box; padding: 34px 28px; overflow-y: auto; background: #fbfcf9; box-shadow: -10px 0 35px rgba(24, 32, 27, .18); }
+.phase1-source-drawer h2 { margin: 0 0 24px; font-family: Georgia, "Times New Roman", serif; font-size: 27px; font-weight: 500; }
+.phase1-source-drawer dl { display: grid; gap: 0; margin: 0 0 28px; }
+.phase1-source-drawer dl div { padding: 13px 0; border-bottom: 1px solid #dfe2de; }
+.phase1-source-drawer dt { color: #6a746d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.phase1-source-drawer dd { margin: 5px 0 0; overflow-wrap: anywhere; color: #28382e; line-height: 1.5; }
+.phase1-drawer-close { display: grid; width: 42px; height: 42px; margin-left: auto; place-items: center; border: 1px solid #cbd3cd; border-radius: 50%; background: #fff; color: #284a36; font-size: 25px; cursor: pointer; }
+.phase1-source-open { display: flex; box-sizing: border-box; justify-content: center; text-decoration: none; }
 .phase1-candidate-evidence { display: grid; gap: 10px; margin-top: 18px; }
 .phase1-candidate-evidence h3 { margin: 0; font-size: 15px; }
 .phase1-candidate-evidence article, .phase1-page-preview { padding: 14px; border: 1px solid #d8ddd9; border-radius: 6px; background: #fff; }
 .phase1-candidate-evidence p, .phase1-page-preview p { margin: 7px 0 10px; font-size: 13px; line-height: 1.55; }
 .phase1-candidate-evidence button, .phase1-page-preview button, .phase1-source-button { min-height: 38px; padding: 0 12px; border: 1px solid #aebbb2; border-radius: 5px; background: #fff; color: #28533c; font-weight: 700; cursor: pointer; }
 .phase1-source-button { margin-top: 14px; }
+.phase1-page-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.phase1-page-actions button { min-height: 40px; padding: 0 12px; border: 1px solid #aebbb2; border-radius: 5px; background: #fff; color: #28533c; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.phase1-page-actions button:disabled { opacity: .42; cursor: default; }
 .phase1-review-queue { width: min(100%, 1050px); }
 .phase1-resume { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: center; margin: 30px 0; padding: 24px; border: 1px solid #aebfb3; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(32, 50, 39, 0.05); }
 .phase1-resume .phase1-kicker { grid-column: 1 / -1; margin-bottom: -8px; }
@@ -306,6 +343,9 @@ button { color: inherit; }
   .phase1-finding-thumb { width: 42px; height: 42px; }
   .phase1-finding-copy > span { white-space: normal; }
   .phase1-finding-detail { padding-top: 30px; }
+  .phase1-review-progress { grid-template-columns: 1fr auto; margin-top: -8px; }
+  .phase1-review-context { grid-column: 1 / -1; }
+  .phase1-review-progress p { text-align: left; }
   .phase1-back { margin: -8px 0 20px; }
   .phase1-finding-header { margin-bottom: 24px; }
   .phase1-detail-layout { grid-template-columns: 1fr; grid-template-areas: "main" "aside"; gap: 30px; }
@@ -326,6 +366,13 @@ button { color: inherit; }
   .phase1-queue-row { grid-template-columns: 1fr auto; gap: 7px 14px; padding: 14px 0; }
   .phase1-queue-row > div { grid-column: 1 / -1; }
   .phase1-queue-row > span { grid-column: 1 / -1; }
+  .phase1-review-controls { bottom: 8px; padding: 14px; }
+  .phase1-path > summary { grid-template-columns: 1fr; gap: 6px; }
+  .phase1-path > summary span:last-child { text-align: left; }
+  .phase1-price-correction { grid-template-columns: 1fr; }
+  .phase1-price-correction > * { grid-column: 1 / -1; }
+  .phase1-source-drawer-backdrop { align-items: flex-end; }
+  .phase1-source-drawer { width: 100%; height: min(82vh, 720px); border-radius: 8px 8px 0 0; }
 }
 
 @media (max-width: 430px) {

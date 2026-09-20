@@ -78,10 +78,15 @@ function agentArtifact(artifact, findings, eventsById) {
     if (Array.isArray(corrections.known)) card.what_we_know = corrections.known
     if (Array.isArray(corrections.unknown)) card.what_we_dont_know = corrections.unknown
     if (corrections.affected_location) card.affected_location = { ...(card.affected_location || {}), ...corrections.affected_location }
+    if (Array.isArray(corrections.repair_paths)) {
+      const labelsById = new Map(corrections.repair_paths.map((path) => [path.id, path.label]))
+      card.repair_paths = (card.repair_paths || []).map((path) => labelsById.has(path.id) ? { ...path, label: labelsById.get(path.id) } : path)
+    }
     if (corrections.next_step) card.recommended_next_step = corrections.next_step
     if (corrections.rationale) card.why_next_step = corrections.rationale
     if (corrections.likely_trade) card.next_step_owner = corrections.likely_trade
     if (corrections.price) card.released_price_correction = corrections.price
+    if (Array.isArray(corrections.price_adjustments)) card.released_price_corrections = corrections.price_adjustments
     if (corrections.evidence_relationship) card.reviewed_evidence_relationship = corrections.evidence_relationship
     if (corrections.confirmed_evidence) card.confirmed_evidence = corrections.confirmed_evidence
     card.review_status = finding.review_status
@@ -571,7 +576,7 @@ export function createPhase1SupabaseRepository() {
         artifact = modelRun?.output ? structuredClone(modelRun.output) : null
         if (artifact && modelRun?.id) {
           const { data: findings, error: findingsError } = await client.from('inspection_findings')
-            .select('id,source_item_number,review_status,review_event_id')
+            .select('id,source_item_number,review_status,review_event_id,reviewed_value,reviewed_by,reviewed_at')
             .eq('model_run_id', modelRun.id)
           if (findingsError) throw new Error(findingsError.message)
           totalFindingCount = (findings || []).length
@@ -585,12 +590,22 @@ export function createPhase1SupabaseRepository() {
             events = result.data || []
           }
           const eventsById = new Map(events.map((event) => [event.id, event]))
+          for (const finding of findings || []) {
+            const storedEvent = eventsById.get(finding.review_event_id)
+            if (storedEvent && finding.reviewed_value && Object.keys(finding.reviewed_value).length) {
+              eventsById.set(storedEvent.id, {
+                ...storedEvent,
+                new_value: { ...(storedEvent.new_value || {}), corrections: finding.reviewed_value },
+              })
+            }
+          }
           artifact.reviewState = Object.fromEntries((findings || []).map((finding) => {
             const observation = (artifact.atomicObservations || []).find((item) => item.source?.source_item_number === finding.source_item_number)
+            const storedEvent = eventsById.get(finding.review_event_id) || null
             return [observation?.id || finding.source_item_number, {
               findingId: finding.id,
               status: finding.review_status,
-              event: eventsById.get(finding.review_event_id) || null,
+              event: storedEvent,
             }]
           }))
           if (!reviewer) artifact = request.status === 'completed' ? agentArtifact(artifact, findings || [], eventsById) : null
@@ -852,31 +867,27 @@ export function createPhase1SupabaseRepository() {
       })
       if (reviewError) throw new Error(`Review action failed: ${reviewError.message}`)
       const { data: reviewed, error: reviewedError } = await client.from('inspection_findings')
-        .select('id,review_status,review_event_id')
+        .select('id,review_status,review_event_id,reviewed_value,reviewed_by,reviewed_at')
         .eq('id', finding.id)
         .single()
       if (reviewedError) throw new Error(reviewedError.message)
-      const { data: allFindings, error: countError } = await admin.from('inspection_findings')
-        .select('review_status,review_event_id')
-        .eq('model_run_id', modelRun.id)
-      if (countError) throw new Error(`Review progress lookup failed: ${countError.message}`)
-      const remaining = (allFindings || []).filter((item) => ['ai_draft', 'needs_review'].includes(item.review_status)).length
-      const eventIds = (allFindings || []).map((item) => item.review_event_id).filter(Boolean)
-      const { data: reviewEvents, error: eventsError } = eventIds.length
-        ? await admin.from('review_events').select('id,review_action').in('id', eventIds)
-        : { data: [], error: null }
-      if (eventsError) throw new Error(`Review progress event lookup failed: ${eventsError.message}`)
-      const now = new Date().toISOString()
-      const waitingForEvidence = (reviewEvents || []).some((event) => event.review_action === 'needs_more_info')
-      const { error: continuityError } = await admin.from('inspection_pipeline_runs').update({
-        workflow_state: waitingForEvidence ? 'needs_information' : 'under_review',
-        next_responsible_role: waitingForEvidence ? 'submitter' : 'reviewer',
-        next_action: waitingForEvidence ? 'Add requested evidence' : (remaining ? `Review ${remaining} remaining findings` : 'Release reviewed result'),
-        last_viewed_observation_id: observationId,
-        last_activity_at: now,
-      }).eq('id', requestId)
-      if (continuityError) throw new Error(`Review continuity update failed: ${continuityError.message}`)
-      return { findingId: reviewed.id, status: reviewed.review_status, eventId }
+      const { data: persistedEvent, error: eventError } = await client.from('review_events')
+        .select('id,new_value,previous_value,reason,created_at')
+        .eq('id', eventId)
+        .single()
+      if (eventError) throw new Error(`Review audit verification failed: ${eventError.message}`)
+      if (reviewed.review_event_id !== eventId || persistedEvent.id !== eventId) {
+        throw new Error('Review correction and audit event are inconsistent.')
+      }
+      return {
+        findingId: reviewed.id,
+        status: reviewed.review_status,
+        eventId,
+        canonicalValue: reviewed.reviewed_value,
+        reviewedBy: reviewed.reviewed_by,
+        reviewedAt: reviewed.reviewed_at,
+        changedFields: persistedEvent.new_value?.changed_fields || {},
+      }
     },
 
     async releaseIfReviewComplete({ actor, requestId }) {

@@ -7,6 +7,7 @@ const STORAGE_MIGRATION_PATH = 'supabase/migrations/20260917112924_phase1_eviden
 const RUNTIME_GRANTS_MIGRATION_PATH = 'supabase/migrations/20260917113200_phase1_runtime_grants.sql'
 const PROFILE_HARDENING_MIGRATION_PATH = 'supabase/migrations/20260918183427_phase1_profile_role_hardening.sql'
 const CONTINUITY_MIGRATION_PATH = 'supabase/migrations/20260919143539_phase1_operational_continuity.sql'
+const ATOMIC_CORRECTIONS_MIGRATION_PATH = 'supabase/migrations/20260919162309_phase1_atomic_finding_corrections.sql'
 
 function migrationSql() {
   return readFileSync(MIGRATION_PATH, 'utf8')
@@ -122,6 +123,36 @@ test('review transitions are server-authoritative and audit producing', () => {
     assert.match(body, /needs_review/i)
     assert.match(body, /rejected/i)
   }
+})
+
+test('finding corrections and their audit event persist in one locked transaction', () => {
+  const sql = readFileSync(ATOMIC_CORRECTIONS_MIGRATION_PATH, 'utf8')
+  const body = functionBody(sql, 'private', 'phase1_review_inspection_finding_impl')
+
+  assert.match(sql, /add column if not exists reviewed_value jsonb not null/i)
+  assert.match(sql, /add column if not exists reviewed_by uuid/i)
+  assert.match(sql, /add column if not exists reviewed_at timestamptz/i)
+  assert.match(body, /for update/i)
+  assert.match(body, /expected_review_event_id/i)
+  assert.match(body, /is distinct from v_expected_event_id/i)
+  assert.match(body, /reviewer reason is required/i)
+  assert.match(body, /jsonb_object_keys\(v_corrections\)/i)
+  assert.match(body, /field_knowledge/i)
+  assert.match(body, /repair_paths/i)
+  assert.match(body, /supporting_source_ids/i)
+  assert.match(body, /reviewer_professional_judgment/i)
+  assert.match(body, /'version', v_price_version/i)
+  assert.match(body, /'original_range'/i)
+  assert.match(body, /price_adjustments/i)
+  assert.match(body, /Repair-path corrections are invalid/i)
+  assert.match(body, /jsonb_object_agg[\s\S]*?'previous'[\s\S]*?'new'/i)
+  assert.match(body, /insert into public\.review_events/i)
+  assert.match(body, /reviewed_value = v_canonical_value/i)
+  assert.match(body, /update public\.inspection_pipeline_runs/i)
+  assert.match(body, /insert into public\.workflow_events/i)
+  assert.ok(body.indexOf('insert into public.review_events') < body.indexOf('reviewed_value = v_canonical_value'))
+  assert.match(sql, /^begin;[\s\S]*commit;/im)
+  assert.match(sql, /revoke execute[\s\S]*from public, anon/i)
 })
 
 test('authenticated clients cannot self-assign or reactivate trusted reviewer roles', () => {

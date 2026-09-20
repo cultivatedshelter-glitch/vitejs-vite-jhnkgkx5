@@ -2616,6 +2616,20 @@ Sewer and private systems are not inspected.""",
         synthetic_cache,
         {"cache_reused": True, "source_hash_matched": True, "local_pdf_pages_scanned": 0},
     )
+    source_by_id = {source["id"]: source for source in artifact["external_sources"]}
+    priced_paths = [
+        repair_path
+        for record in artifact["atomicObservations"]
+        for repair_path in record["finding_card"]["repair_paths"]
+        if repair_path["price_low"] is not None
+    ]
+    assert priced_paths
+    assert all(1 <= len(path["price_source_refs"]) <= 3 for path in priced_paths)
+    assert any(len(path["price_source_refs"]) == 3 for path in priced_paths)
+    assert all(
+        len({source_by_id[source_id]["price_unit"] for source_id in path["price_source_refs"]}) == 1
+        for path in priced_paths
+    )
     assert artifact["pipeline"]["pdf_pages_scanned_this_run"] == 0
     assert artifact["propertyReportReconstruction"]["property"]["address_line1"] == "10 Test Ave"
     assert len(artifact["atomicObservations"]) == len(synthetic_cache["normalizedFindings"])

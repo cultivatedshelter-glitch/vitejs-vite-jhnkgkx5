@@ -43,7 +43,7 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     'Shelter Prep interpretation',
     'Known',
     'Unknown',
-    'Shelter Prep recommends',
+    'Next task',
     'Why this next step',
     'Missing information',
     'Environmental context',
@@ -55,7 +55,7 @@ test('finding UI renders adapter fields without embedding fixture findings', () 
     'Range history',
     'Related findings',
     'Approve',
-    'Edit / Correct',
+    'Edit finding',
     'Needs More Information',
     'Reject',
   ]) {
@@ -74,8 +74,13 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   assert.match(component, /function AgentView/)
   assert.match(component, /audienceFromLocation/)
   assert.match(component, /reviewPhase1Finding/)
-  assert.match(component, /Source-supported path price correction/)
+  assert.match(component, /Adjust price/)
+  assert.match(component, /Reviewer \/ Professional Judgment/)
+  assert.match(component, /supporting_source_ids/)
+  assert.match(component, /repair_paths:/)
   assert.match(component, /Evidence relationship/)
+  assert.match(component, /Reviewer field knowledge/)
+  assert.match(component, /field_knowledge: fieldKnowledge\.trim\(\)/)
   assert.match(component, /Under review/)
   assert.match(component, /Reviewed by Shelter Prep/)
   const findingView = component.slice(component.indexOf('function FindingStep'), component.indexOf('function AgentView'))
@@ -87,8 +92,19 @@ test('reviewer and agent views keep evidence, correction, and release states dis
   assert.match(component, /function AdminDashboard/)
   assert.match(component, /Likely related photos/)
   assert.match(component, /Confirm photo link/)
-  assert.match(component, /Source and nearby page previews/)
-  assert.match(component, /View full report/)
+  for (const sourceAction of ['View Source Page', 'Previous Page', 'Next Page', 'Nearby Pages', 'Open Full Report']) assert.match(component, new RegExp(sourceAction))
+  assert.match(component, /expectedReviewEventId: finding\.reviewDecision\.eventId/)
+  assert.match(component, /persistedFinding\.reviewDecision\.eventId !== result\.eventId/)
+  assert.match(component, /Changes were not saved/)
+  assert.match(component, /nextIndex/)
+  assert.match(component, /setFindingIndex\(nextIndex\)/)
+  assert.match(component, /Finding \{findingIndex \+ 1\} of \{findingCount\}/)
+  assert.match(component, />Previous</)
+  assert.match(component, />Next</)
+  assert.match(component, /Approve &amp; Next/)
+  assert.match(component, /Quick review/)
+  assert.match(component, /Careful review/)
+  assert.match(component, /function SourceDrawer/)
 })
 
 test('agent drafts are withheld at the server boundary and reviewer queue stays role-gated', async () => {
@@ -143,8 +159,10 @@ test('layout is mobile-first with stable controls, evidence-first stacking, and 
   assert.match(css, /\.phase1-primary[\s\S]*?min-height: 52px/)
   assert.match(css, /\.phase1-actions[\s\S]*?position: fixed/)
   assert.match(css, /\.phase1-evidence-grid[\s\S]*?grid-template-columns: 1fr 1fr/)
-  assert.match(css, /grid-template-areas: "main" "aside"/)
-  assert.match(component, /Estimated repair cost/)
+  assert.match(css, /\.phase1-review-flow[\s\S]*?width: min\(100%, 790px\)/)
+  assert.match(css, /\.phase1-review-controls[\s\S]*?position: sticky/)
+  assert.match(css, /\.phase1-source-drawer-backdrop[\s\S]*?position: fixed/)
+  assert.match(component, /path\.priceLabel/)
   assert.match(component, /Pricing source/)
   assert.doesNotMatch(css, /gradient\(/)
 })
