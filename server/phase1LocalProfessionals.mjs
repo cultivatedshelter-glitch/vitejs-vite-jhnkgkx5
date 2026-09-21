@@ -4,7 +4,7 @@ function tradeGroups(artifact, reviewedOnly = false) {
   const values = new Set()
   for (const item of artifact?.atomicObservations || []) {
     if (reviewedOnly && artifact?.reviewState?.[item.id]?.event?.review_action !== 'approve') continue
-    const corrections = item && artifact.reviewState[item.id]?.event?.new_value?.corrections
+    const corrections = artifact?.reviewState?.[item.id]?.event?.new_value?.corrections
     const trade = String(corrections?.likely_trade || item.finding_card?.next_step_owner || '').trim()
     if (trade && !/human|review|owner|agent/i.test(trade)) values.add(trade)
   }

@@ -49,6 +49,16 @@ test('local professional research is optional and never fabricates listings with
   assert.equal(result.lookups[0].status, 'skipped_not_configured')
 })
 
+test('local professional research accepts a fresh unreviewed artifact', async () => {
+  const research = createLocalProfessionalResearch({ apiKey: '' })
+  const result = await research({
+    artifact: { atomicObservations: [{ id: 'finding-draft', finding_card: { next_step_owner: 'Licensed electrician' } }] },
+    propertyAddress: '100 Main St',
+  })
+  assert.deepEqual(result.groups, [])
+  assert.deepEqual(result.lookups, [{ trade: 'Licensed electrician', status: 'skipped_not_configured', provider: 'Google Places' }])
+})
+
 test('local professional research deduplicates and caps sourced businesses per trade', async () => {
   const research = createLocalProfessionalResearch({ apiKey: 'server-only', fetchImpl: async () => new Response(JSON.stringify({ places: [
     { id: 'a', displayName: { text: 'A Plumbing' }, businessStatus: 'OPERATIONAL', rating: 4.8, userRatingCount: 100, googleMapsUri: 'https://maps.example/a' },
