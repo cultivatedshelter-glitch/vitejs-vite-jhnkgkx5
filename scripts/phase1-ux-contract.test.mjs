@@ -136,6 +136,15 @@ test('review completion is explicit and separated from preview, release, and sen
   assert.match(component, /sendPhase1ReviewedResult/)
 })
 
+test('durable draft reports can be released from property history through the canonical endpoint', () => {
+  assert.match(component, /function DurableReportView/)
+  assert.match(component, /setRequestId\(report\.processing_request_id\)/)
+  assert.match(component, /setStatus\(report\.report_status\)/)
+  assert.match(component, /await releasePhase1ReviewedReport\(requestId, reportId\)/)
+  assert.match(component, /status === 'draft'[\s\S]*Release Report/)
+  assert.match(component, /status === 'released'[\s\S]*Released/)
+})
+
 test('processing reflects artifact request state without simulated timers', () => {
   for (const task of ['Uploading files', 'Reading inspection report', 'Finding and grouping issues', 'Checking relevant context', 'Building your summary']) assert.match(component, new RegExp(task, 'i'))
   assert.match(component, /We couldn't finish the review/)

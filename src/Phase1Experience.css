@@ -363,6 +363,8 @@ button { color: inherit; }
 .phase1-agent-finding.is-rejected, .phase1-agent-finding.is-reject { border-left: 3px solid #9c6961; padding-left: 18px; }
 .phase1-report-preview, .phase1-report-released { width: min(100%, 900px); }
 .phase1-report-findings { display: grid; gap: 10px; }
+.phase1-report-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 20px 0 28px; }
+.phase1-report-actions button { width: auto; min-height: 42px; margin: 0; }
 .phase1-release-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 32px; padding: 22px 0; border-top: 1px solid #dfe1dd; border-bottom: 1px solid #dfe1dd; }
 .phase1-release-status p { margin: 0; color: #59645c; line-height: 1.6; }
 .phase1-gap h1 { max-width: 720px; }

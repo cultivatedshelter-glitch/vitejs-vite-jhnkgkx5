@@ -368,5 +368,5 @@ export async function loadPhase1PropertyReports(propertyId: string) {
 }
 
 export async function loadPhase1ReviewedReport(reportId: string) {
-  return jsonRequest<{ id: string; property_id: string; report_version: number; report_status: string; reviewed_artifact: { artifact: unknown; propertyAddress: string; generatedAt: string; localProfessionals: Phase1DurableReportDocument['localProfessionals'] }; released_at: string | null }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
+  return jsonRequest<{ id: string; property_id: string; processing_request_id: string | null; report_version: number; report_status: string; reviewed_artifact: { artifact: unknown; propertyAddress: string; generatedAt: string; localProfessionals: Phase1DurableReportDocument['localProfessionals'] }; released_at: string | null }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
 }

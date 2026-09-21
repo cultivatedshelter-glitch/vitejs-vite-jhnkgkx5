@@ -668,18 +668,36 @@ function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
 function DurableReportView({ reportId }: { reportId: string }) {
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
   const [version, setVersion] = useState<number | null>(null)
+  const [requestId, setRequestId] = useState<string | null>(null)
+  const [status, setStatus] = useState('')
+  const [releasing, setReleasing] = useState(false)
   const [error, setError] = useState('')
   const [professionalGroups, setProfessionalGroups] = useState<Array<{ trade: string; professionals: Phase1LocalProfessional[] }>>([])
   useEffect(() => {
     void loadPhase1ReviewedReport(reportId).then((report) => {
       setArtifact(adaptPhase1ReasoningArtifact(report.reviewed_artifact.artifact, { mode: 'live', audience: 'agent' }))
       setVersion(report.report_version)
+      setRequestId(report.processing_request_id)
+      setStatus(report.report_status)
       setProfessionalGroups(report.reviewed_artifact.localProfessionals?.groups || [])
     }).catch((reason) => setError(reason instanceof Error ? reason.message : 'The reviewed report is unavailable.'))
   }, [reportId])
   if (error) return <main className="phase1-main"><p className="phase1-inline-error" role="alert">{error}</p></main>
   if (!artifact) return <main className="phase1-main"><p className="phase1-lede">Loading reviewed report…</p></main>
-  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Human Reviewed · Version {version}</p><h1>{artifact.propertyAddress}</h1><button type="button" onClick={() => void openPhase1ReviewedReportPdf(reportId)}>View PDF</button><ReleasedResultContent artifact={artifact} /><LocalProfessionals groups={professionalGroups} /></main>
+  async function release() {
+    if (!requestId) return
+    setReleasing(true)
+    setError('')
+    try {
+      await releasePhase1ReviewedReport(requestId, reportId)
+      setStatus('released')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The reviewed report could not be released.')
+    } finally {
+      setReleasing(false)
+    }
+  }
+  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Human Reviewed · Version {version}</p><h1>{artifact.propertyAddress}</h1><div className="phase1-report-actions"><button type="button" onClick={() => void openPhase1ReviewedReportPdf(reportId)}>View PDF</button>{status === 'draft' && requestId && <button className="phase1-primary" type="button" disabled={releasing} onClick={() => void release()}>{releasing ? 'Releasing…' : 'Release Report'}</button>}{status === 'released' && <span className="phase1-status">Released</span>}</div>{error && <p className="phase1-inline-error" role="alert">{error}</p>}<ReleasedResultContent artifact={artifact} /><LocalProfessionals groups={professionalGroups} /></main>
 }
 
 function ReviewedReportPreview({ artifact, summary, recipient, professionalGroups, busy, error, onBack, onViewPdf, onRelease }: { artifact: Phase1ExperienceViewModel; summary: Phase1ReviewSummary; recipient: string; professionalGroups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; busy: boolean; error: string; onBack: () => void; onViewPdf: () => void; onRelease: () => void }) {
