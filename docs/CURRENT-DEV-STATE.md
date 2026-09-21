@@ -2,6 +2,18 @@
 
 Date: 2026-09-21
 
+## Human Review Completion vs Recipient Readiness
+
+- Human decision completion and recipient-report readiness are now separate server-authoritative states. A request can remain `31 / 31 reviewed` while recipient generation is blocked by stale, internal, paraphrase-only, unsourced, or missing finding content.
+- The processing-request response now includes a per-finding recipient-readiness result derived from the effective reviewed values. Saved human correction overlays take precedence over the preserved AI draft, and reviewed-report generation uses the same readiness validator.
+- The reviewer overview shows `Human review complete` independently from `Recipient report ready`. When readiness fails it reports the true affected-finding count, disables `Generate Reviewed Report`, and provides `Fix finding`, which opens the first affected canonical observation directly.
+- The Whole-report decision picture is rebuilt from the current normalized reviewed findings. Artifact-level Round 1 summaries and phrases including `No additional field evidence is required for initial triage`, `Identify the specific unresolved fact`, `Round 1`, and `uncertainty-reduction item` are not shown in that customer-facing summary.
+- Production request `63906e49-559e-4873-95a8-08f1043b99cc` reproduced the inconsistency. It uses the older `phase1-round1g-source-integration-contract.v1` artifact: all 31 findings have terminal human decisions, but all 31 fail the current recipient-content contract; `TRIP HAZARD` is the first failure. The older released request `49f28990-2999-4cb3-8e84-1d02bdac69e6` has the same stale pre-investigation artifact shape. Neither stored artifact nor any human decision was rewritten.
+- Corrected production request `cd235456-12fe-4ef1-bc41-ca8891f5fae7` uses `shelter-prep-phase1-finding-investigation.v1` and returns recipient-ready with zero content issues.
+- Production browser verification confirmed the stale request displays `31 / 31 reviewed`, `31 findings need content correction before report generation`, a disabled Generate action, no listed internal summary phrase, and a `Fix finding` action routed to `atomic-observation-2-3-1` (`TRIP HAZARD`). The corrected request returned HTTP 200 with recipient readiness true and issue count zero. No report was generated, released, or sent during verification.
+- Commit `0ddf71a` was pushed to `shelter-prep-phase1-dev`. Production serves bundle `index-BMv1RjMj.js`, and `https://shelterprep.com/healthz` returns Railway HTTP 200 with the configured notification status.
+- Final verification passes: `npm test` 101/101, `npm run build`, the Round 1 Python self-test, focused readiness/UI tests 48/48, and `git diff --check`. The build emits only the existing stale `caniuse-lite` advisory.
+
 ## Reviewed Report Decision Brief
 
 - Reviewed-report generation now snapshots a canonical `phase1-reviewed-decision-brief.v1` presentation model alongside the unchanged full reviewed artifact. The decision brief changes presentation only; research, pricing, review decisions, provenance, report versioning, storage, delivery, authorization, and RLS contracts remain unchanged.
