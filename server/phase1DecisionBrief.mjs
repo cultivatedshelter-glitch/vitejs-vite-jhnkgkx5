@@ -6,6 +6,10 @@ const TRANSCRIPTION_FIXES = [
   [/\boor\b/gi, 'floor'],
   [/\booring\b/gi, 'flooring'],
   [/\bashing\b/gi, 'flashing'],
+  [/\bashings\b/gi, 'flashings'],
+  [/\beects\b/gi, 'effects'],
+  [/\bnished\b/gi, 'finished'],
+  [/\brst\b/gi, 'first'],
   [/\bModications\b/g, 'Modifications'],
   [/\bmodications\b/g, 'modifications'],
   [/\btted\b/gi, 'fitted'],
@@ -183,8 +187,20 @@ function correctLegacySourceRelevance(finding, catalog) {
   }
 
   if (/exposed fasteners/.test(title) && finding.paths.some((path) => path.id === 'repair-flashing')) {
+    const view = 'Exposed roof fasteners can be leakage points, but the correct treatment depends on the roof system, fastener purpose, surrounding covering, and deck condition.'
+    const unknown = 'Roof system, fastener count and purpose, corrosion, seal condition, active leakage, and surrounding roof/deck condition are unknown.'
+    const nextStep = 'Photograph and count the exposed fasteners, identify the roof system and fastener purpose, document seal and corrosion condition, and inspect directly below for staining or dampness.'
+    const why = 'Roof-system identification and underside evidence determine whether localized fastener treatment is appropriate or broader roof work is needed.'
     finding.paths = finding.paths.filter((path) => path.id !== 'repair-flashing').map((path) => ({ ...path, label: 'Evaluate and complete a roof-system-appropriate fastener repair' }))
     finding.researchSources = [sourceFrom(catalog, 'gaf-exposed-fasteners'), sourceFrom(catalog, 'homeguide-roof-minor'), sourceFrom(catalog, 'angi-roof-repair')]
+    finding.view = concise(view, 185, 1)
+    finding.keyUnknowns = [unknown]
+    finding.nextStep = concise(nextStep, 190, 1)
+    finding.why = concise(why, 170, 1)
+    finding.technicalDetails.fullInterpretation = view
+    finding.technicalDetails.unknowns = [unknown]
+    finding.technicalDetails.fullNextStep = nextStep
+    finding.technicalDetails.fullWhy = why
   }
 
   if (/unprotected knockout/.test(title)) {

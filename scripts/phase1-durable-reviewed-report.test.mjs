@@ -72,10 +72,23 @@ test('legacy reviewed artifacts receive only verified recipient-facing source re
   assert.equal(findings.get(hardSurface.id).category, 'Exterior / Envelope')
   assert.deepEqual(findings.get(fasteners.id).paths.map((path) => path.id), ['targeted-roof-repair'])
   assert.ok(findings.get(fasteners.id).researchSources.some((source) => source.id === 'gaf-exposed-fasteners'))
+  assert.match(findings.get(fasteners.id).view, /roof system/i)
+  assert.match(findings.get(fasteners.id).nextStep, /identify the roof system/i)
   assert.deepEqual(findings.get(knockout.id).paths[0].sources.map((source) => source.id), ['homeguide-electrical-small'])
   assert.equal(findings.get(knockout.id).paths[0].high, 419)
   assert.ok(findings.get(afci.id).researchSources.some((source) => source.id === 'esfi-afci'))
   assert.ok(findings.get(afci.id).paths.every((path) => path.sources.every((source) => source.id !== 'angi-outlet-repair')))
+})
+
+test('customer transcription cleans known PDF extraction artifacts without changing raw evidence', () => {
+  const artifact = artifactWithFindingCount(1)
+  artifact.atomicObservations[0].epistemic_states.source_observation = 'The rst floor has nished surfaces with adverse eects near missing ashings.'
+  artifact.atomicObservations[0].source.inspector_statement = artifact.atomicObservations[0].epistemic_states.source_observation
+  const raw = artifact.atomicObservations[0].source.inspector_statement
+  const brief = buildDecisionBrief(artifact, { total: 1, reviewed: 1, approved: 1, rejected: 0, needsInfo: 0, remaining: 0 })
+  const finding = brief.appendix.findings[0]
+  assert.equal(finding.found, 'The first floor has finished surfaces with adverse effects near missing flashings.')
+  assert.equal(raw, 'The rst floor has nished surfaces with adverse eects near missing ashings.')
 })
 
 test('reviewed report generation rejects paraphrase-only findings without independent research', () => {
