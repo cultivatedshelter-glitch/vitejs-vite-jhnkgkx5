@@ -9,6 +9,7 @@ import { createLocalProfessionalResearch } from '../server/phase1LocalProfession
 import { createPhase1HttpHandler } from '../server/phase1HttpServer.mjs'
 import { createPhase1ProcessingService } from '../server/phase1ProcessingService.mjs'
 import { createPhase1SupabaseRepository } from '../server/phase1SupabaseRepository.mjs'
+import { buildDecisionBrief } from '../server/phase1DecisionBrief.mjs'
 
 const reviewedArtifact = {
   schemaVersion: 'phase1-test',
@@ -45,6 +46,37 @@ function artifactWithFindingCount(count) {
   }
   return artifact
 }
+
+test('legacy reviewed artifacts receive only verified recipient-facing source relevance corrections', () => {
+  const artifact = artifactWithFindingCount(4)
+  artifact.external_sources = [
+    { id: 'homeguide-siding-repair', source_name: 'Siding repair guide', source_url: 'https://example.com/siding', price_low: 200, price_high: 1200, price_unit: 'project', source_geography: { label: 'United States' } },
+    { id: 'homeguide-roof-minor', source_name: 'Roof repair guide', source_url: 'https://example.com/roof', price_low: 150, price_high: 1000 },
+    { id: 'angi-roof-repair', source_name: 'Second roof repair guide', source_url: 'https://example.com/roof-2', price_low: 395, price_high: 1967 },
+    { id: 'homeguide-roof-flashing', source_name: 'Flashing guide', source_url: 'https://example.com/flashing', price_low: 200, price_high: 500 },
+    { id: 'angi-outlet-repair', source_name: 'Outlet repair guide', source_url: 'https://example.com/outlet', price_low: 60, price_high: 250 },
+    { id: 'homeguide-electrical-small', source_name: 'Electrical work guide', source_url: 'https://example.com/electrical', price_low: 141, price_high: 419 },
+    { id: 'homeguide-afci-breaker', source_name: 'AFCI breaker guide', source_url: 'https://example.com/afci', price_low: 150, price_high: 310 },
+  ]
+  const [hardSurface, fasteners, knockout, afci] = artifact.atomicObservations
+  Object.assign(hardSurface.finding_card, { finding_title: 'HARD SURFACES- DETERIORATION', repair_paths: [{ id: 'resurface-hard-surface', label: 'Resurface concrete', price_low: 3, price_high: 7, price_unit: 'square_foot', price_source_refs: ['homeguide-concrete-resurfacing'] }] })
+  hardSurface.source.inspector_statement = 'The patio or walk is touching the wood structure and deterioration exists due to contact.'
+  hardSurface.epistemic_states.source_observation = hardSurface.source.inspector_statement
+  Object.assign(fasteners.finding_card, { finding_title: 'EXPOSED FASTENERS', research_source_refs: ['doe-drip-edge'], repair_paths: [{ id: 'targeted-roof-repair', label: 'Localized roof repair', price_low: 395, price_high: 1000, price_source_refs: ['homeguide-roof-minor', 'angi-roof-repair'] }, { id: 'repair-flashing', label: 'Repair flashing', price_low: 200, price_high: 500, price_source_refs: ['homeguide-roof-flashing'] }] })
+  Object.assign(knockout.finding_card, { finding_title: 'UNPROTECTED KNOCKOUT OPENING', repair_paths: [{ id: 'close-panel-opening', label: 'Close panel opening', price_low: 141, price_high: 250, price_source_refs: ['homeguide-electrical-small', 'angi-outlet-repair'] }] })
+  Object.assign(afci.finding_card, { finding_title: 'AFCI: NONE INSTALLED', repair_paths: [{ id: 'evaluate-afci', label: 'Evaluate AFCI', price_low: 141, price_high: 250, price_source_refs: ['homeguide-electrical-small', 'angi-outlet-repair'] }, { id: 'retrofit-afci-breaker', label: 'Retrofit AFCI breaker', price_low: 150, price_high: 310, price_source_refs: ['homeguide-afci-breaker'] }] })
+
+  const brief = buildDecisionBrief(artifact, { total: 4, reviewed: 4, approved: 3, rejected: 1, needsInfo: 0, remaining: 0 })
+  const findings = new Map(brief.appendix.findings.map((finding) => [finding.id, finding]))
+  assert.deepEqual(findings.get(hardSurface.id).paths.map((path) => path.id), ['repair-contact-damage', 'restore-wall-clearance'])
+  assert.equal(findings.get(hardSurface.id).category, 'Exterior / Envelope')
+  assert.deepEqual(findings.get(fasteners.id).paths.map((path) => path.id), ['targeted-roof-repair'])
+  assert.ok(findings.get(fasteners.id).researchSources.some((source) => source.id === 'gaf-exposed-fasteners'))
+  assert.deepEqual(findings.get(knockout.id).paths[0].sources.map((source) => source.id), ['homeguide-electrical-small'])
+  assert.equal(findings.get(knockout.id).paths[0].high, 419)
+  assert.ok(findings.get(afci.id).researchSources.some((source) => source.id === 'esfi-afci'))
+  assert.ok(findings.get(afci.id).paths.every((path) => path.sources.every((source) => source.id !== 'angi-outlet-repair')))
+})
 
 test('reviewed report generation rejects paraphrase-only findings without independent research', () => {
   const artifact = structuredClone(reviewedArtifact)

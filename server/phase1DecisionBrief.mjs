@@ -11,6 +11,33 @@ const TRANSCRIPTION_FIXES = [
   [/\btted\b/gi, 'fitted'],
 ]
 
+const RELEVANCE_SOURCES = {
+  'hardie-clearance': {
+    id: 'hardie-clearance', source_name: 'James Hardie Installation Best Practices',
+    source_url: 'https://dealerkit.jameshardie.com/installation',
+    scope_basis: 'Manufacturer clearance guidance for siding at decks, walls, and adjacent exterior surfaces.',
+    source_geography: { label: 'United States' }, retrieved_at: '2026-09-21',
+  },
+  'gaf-exposed-fasteners': {
+    id: 'gaf-exposed-fasteners', source_name: 'GAF Steep-Slope Pro Field Guide',
+    source_url: 'https://www.gaf.com/en-us/document-library/documents/installation-instructions-%26-guides/pro-field-guide-for-steep-slope-roofs-resgn103.pdf',
+    scope_basis: 'Manufacturer guidance identifying exposed roof fasteners as potential leakage points; the applicable repair still depends on the installed roof system.',
+    source_geography: { label: 'United States' }, retrieved_at: '2026-09-21',
+  },
+  'schneider-panel-filler': {
+    id: 'schneider-panel-filler', source_name: 'Schneider Electric Panel Filler and Knockout Instructions',
+    source_url: 'https://iportal2.schneider-electric.com/Contents/docs/SQD-HOMT220220_INSTRUCTION%20SHEET.PDF',
+    scope_basis: 'Manufacturer instructions showing filler plates and approved fittings for unused panel openings; exact enclosure compatibility must be confirmed.',
+    source_geography: { label: 'United States' }, retrieved_at: '2026-09-21',
+  },
+  'esfi-afci': {
+    id: 'esfi-afci', source_name: 'Electrical Safety Foundation International AFCI Guide',
+    source_url: 'https://www.esfi.org/afcis-protecting-your-home-from-fires/',
+    scope_basis: 'Independent electrical-safety guidance describing listed AFCI protection types and their function.',
+    source_geography: { label: 'United States' }, retrieved_at: '2026-09-21',
+  },
+}
+
 export function cleanCustomerTranscription(value) {
   let text = String(value || '').replace(/\s+/g, ' ').trim()
   for (const [pattern, replacement] of TRANSCRIPTION_FIXES) text = text.replace(pattern, replacement)
@@ -116,6 +143,73 @@ function pathValues(path, corrections, catalog) {
   }
 }
 
+function sourceFrom(catalog, id) {
+  return normalizedSource(catalog.get(id) || RELEVANCE_SOURCES[id], id)
+}
+
+function correctLegacySourceRelevance(finding, catalog) {
+  const sourceText = finding.technicalDetails.fullSourceText.toLowerCase()
+  const title = finding.title.toLowerCase()
+
+  if (/hard surfaces-? deterioration/.test(title) && /touching|contact|clearance/.test(sourceText) && finding.paths.some((path) => path.id === 'resurface-hard-surface')) {
+    const sidingSource = catalog.get('homeguide-siding-repair') || {}
+    const view = 'Patio or walk contact at siding or exterior wood can hold moisture against the wall edge and conceal deterioration. The repair decision depends on both the wall damage and a practical way to restore durable clearance.'
+    const unknown = 'Siding and wood material, concealed damage extent, contact length, height relationship, drainage, and a feasible clearance method are unknown.'
+    const nextStep = 'Measure and photograph the full contact area, probe accessible siding or wood edges for deterioration, and document elevations and drainage before selecting wall repair and clearance work.'
+    const why = 'The damage extent determines the wall repair, while field measurements determine a practical clearance correction.'
+    finding.category = 'Exterior / Envelope'
+    finding.trade = 'Exterior Siding And Hardscape Contractor'
+    finding.view = concise(view, 185, 1)
+    finding.keyUnknowns = [unknown]
+    finding.nextStep = concise(nextStep, 190, 1)
+    finding.why = concise(why, 170, 1)
+    finding.paths = [{
+      id: 'repair-contact-damage', label: 'Repair confirmed siding or exterior wood deterioration', status: 'priced',
+      low: sidingSource.price_low ?? 200, high: sidingSource.price_high ?? 1200, unit: sidingSource.price_unit || 'project',
+      confidence: 'Low', sourceCount: 1, sources: [sourceFrom(catalog, 'homeguide-siding-repair')], geography: sidingSource.source_geography?.label || 'United States',
+      assumptions: ['Damage is localized and accessible', 'Compatible wall material is available'],
+      exclusions: ['Concealed sheathing or framing repair', 'Hardscape modification', 'Drainage redesign'],
+    }, {
+      id: 'restore-wall-clearance', label: 'Modify the patio or walk edge to restore durable wall clearance', status: 'blocked',
+      low: null, high: null, unit: 'project', confidence: 'Low', sourceCount: 0, sources: [], geography: null,
+      assumptions: ['Field measurements confirm a practical localized correction'],
+      exclusions: ['Wall reconstruction', 'Broad slab replacement', 'Drainage redesign'],
+    }]
+    finding.researchSources = [sourceFrom(catalog, 'hardie-clearance'), sourceFrom(catalog, 'homeguide-siding-repair')]
+    finding.technicalDetails.fullInterpretation = view
+    finding.technicalDetails.unknowns = [unknown]
+    finding.technicalDetails.fullNextStep = nextStep
+    finding.technicalDetails.fullWhy = why
+  }
+
+  if (/exposed fasteners/.test(title) && finding.paths.some((path) => path.id === 'repair-flashing')) {
+    finding.paths = finding.paths.filter((path) => path.id !== 'repair-flashing').map((path) => ({ ...path, label: 'Evaluate and complete a roof-system-appropriate fastener repair' }))
+    finding.researchSources = [sourceFrom(catalog, 'gaf-exposed-fasteners'), sourceFrom(catalog, 'homeguide-roof-minor'), sourceFrom(catalog, 'angi-roof-repair')]
+  }
+
+  if (/unprotected knockout/.test(title)) {
+    finding.paths = finding.paths.map((path) => {
+      if (!path.sources.some((source) => source.id === 'angi-outlet-repair')) return path
+      const sources = path.sources.filter((source) => source.id !== 'angi-outlet-repair')
+      const general = catalog.get('homeguide-electrical-small') || {}
+      return { ...path, low: general.price_low ?? 141, high: general.price_high ?? 419, confidence: 'Low', sourceCount: sources.length, sources }
+    })
+    finding.researchSources = [sourceFrom(catalog, 'schneider-panel-filler'), sourceFrom(catalog, 'homeguide-electrical-small')]
+  }
+
+  if (/\bafci\b/.test(title)) {
+    finding.paths = finding.paths.map((path) => {
+      const sources = path.sources.filter((source) => source.id !== 'angi-outlet-repair')
+      if (sources.length === path.sources.length) return path
+      const general = catalog.get('homeguide-electrical-small') || {}
+      return { ...path, low: general.price_low ?? 141, high: general.price_high ?? 419, confidence: 'Low', sourceCount: sources.length, sources }
+    })
+    finding.researchSources = [sourceFrom(catalog, 'esfi-afci'), sourceFrom(catalog, 'homeguide-afci-breaker'), sourceFrom(catalog, 'homeguide-electrical-small')]
+  }
+
+  return finding
+}
+
 function buildFinding(item, artifact, catalog) {
   const state = artifact.reviewState?.[item.id] || {}
   const event = state.event || {}
@@ -141,7 +235,7 @@ function buildFinding(item, artifact, catalog) {
   const fullWhy = cleanCustomerTranscription(corrections.rationale || card.why_next_step || '')
   const nextStep = concise(fullNextStep, 190, 1)
   const why = concise(fullWhy, 170, 1)
-  return {
+  return correctLegacySourceRelevance({
     id: item.id,
     findingId: state.findingId || null,
     reviewEventId: event.id || null,
@@ -177,7 +271,7 @@ function buildFinding(item, artifact, catalog) {
       reviewerReason: event.reason || null,
       reviewedAt: event.created_at || null,
     },
-  }
+  }, catalog)
 }
 
 function largestCostUncertainties(findings) {
