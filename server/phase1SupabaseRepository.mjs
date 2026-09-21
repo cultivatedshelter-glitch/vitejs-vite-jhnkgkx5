@@ -186,6 +186,13 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       return Boolean(data)
     },
 
+    async canUseActiveProperty(actorId, propertyId) {
+      const client = userClient(tokens.get(actorId))
+      const { data, error } = await client.from('properties').select('id,archived_at').eq('id', propertyId).maybeSingle()
+      if (error) throw new Error(`Property authorization failed: ${error.message}`)
+      return Boolean(data && !data.archived_at)
+    },
+
     async getPropertyAddress({ actor, propertyId }) {
       const client = userClient(tokens.get(actor.id))
       const { data, error } = await client.from('properties')
@@ -206,10 +213,11 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       const normalizedAddress = normalizePropertyAddress(address)
       if (!normalizedAddress) throw new Error('Property address normalization produced an empty value.')
       const { data: matches, error: lookupError } = await client.from('properties')
-        .select('id, source_address, address_line1, city, state, zip, normalized_address')
+        .select('id, source_address, address_line1, city, state, zip, normalized_address, archived_at')
         .eq('normalized_address', normalizedAddress)
         .limit(2)
       if (lookupError) throw new Error(`Property lookup failed: ${lookupError.message}`)
+      if (matches?.length === 1 && matches[0].archived_at) throw new Error('This Property is archived. Ask an authorized reviewer to restore it before adding evidence.')
       if (matches?.length === 1) return { ...matches[0], address: matches[0].source_address || matches[0].address_line1, created: false }
       if (matches?.length > 1) throw new Error('Multiple accessible properties match this address. Resolve the duplicate property records before continuing.')
 
@@ -230,6 +238,18 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       if (readError) throw new Error(`Created Property lookup failed: ${readError.message}`)
       if (created?.length !== 1) throw new Error('Created Property could not be resolved uniquely after insertion.')
       return { ...created[0], address: created[0].source_address || created[0].address_line1, created: true }
+    },
+
+    async setPropertyArchived({ actor, propertyId, archived, reason = null }) {
+      if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
+      const { data, error } = await admin.rpc('phase1_set_property_archive', {
+        target_property_id: propertyId,
+        target_actor_id: actor.id,
+        target_archived: archived,
+        target_reason: reason,
+      })
+      if (error) throw new Error(`Property ${archived ? 'archive' : 'restore'} failed: ${error.message}`)
+      return data
     },
 
     async storeEvidence({ actor, propertyId, file }) {
@@ -395,6 +415,17 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
         throw new Error(`Submission audit event failed: ${eventError.message}`)
       }
       return { ...data, evidenceReferences: data.stage_statuses?.evidence_references || [], note: data.stage_statuses?.note || '' }
+    },
+
+    async getSubmissionDraftPropertyId({ actor, requestId }) {
+      const { data, error } = await admin.from('inspection_pipeline_runs')
+        .select('property_id')
+        .eq('id', requestId)
+        .eq('requested_by', actor.id)
+        .eq('status', 'draft')
+        .maybeSingle()
+      if (error) throw new Error(`Submission lookup failed: ${error.message}`)
+      return data?.property_id || null
     },
 
     async updateSubmissionDraft({ actor, requestId, propertyId, evidenceReferences, note, deliveryRecipient }) {
@@ -724,7 +755,7 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       }
     },
 
-    async listReviewQueue({ actor }) {
+    async listReviewQueue({ actor, archived = false }) {
       if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
       const { data: requests, error: requestError } = await admin.from('inspection_pipeline_runs')
         .select('id,property_id,inspection_report_id,input_hash,requested_by,status,created_at,updated_at,last_activity_at,last_viewed_observation_id,workflow_state,next_responsible_role,next_action,submitter_name,submitter_email,delivery_recipient_email,released_artifact_version,released_at,error_message')
@@ -734,23 +765,26 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       if (requestError) throw new Error(`Review queue lookup failed: ${requestError.message}`)
       const propertyIds = [...new Set((requests || []).map((item) => item.property_id).filter(Boolean))]
       const { data: properties, error: propertyError } = propertyIds.length
-        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip').in('id', propertyIds)
+        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip,archived_at,archived_by,archive_reason').in('id', propertyIds)
         : { data: [], error: null }
       if (propertyError) throw new Error(`Review queue Property lookup failed: ${propertyError.message}`)
-      const propertyById = new Map((properties || []).map((item) => [item.id, item]))
-      const { data: queueReports, error: queueReportsError } = propertyIds.length
-        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', propertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
+      const visibleProperties = (properties || []).filter((item) => archived ? Boolean(item.archived_at) : !item.archived_at)
+      const visiblePropertyIds = visibleProperties.map((item) => item.id)
+      const propertyById = new Map(visibleProperties.map((item) => [item.id, item]))
+      const visibleRequests = (requests || []).filter((item) => propertyById.has(item.property_id))
+      const { data: queueReports, error: queueReportsError } = visiblePropertyIds.length
+        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', visiblePropertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
         : { data: [], error: null }
       if (queueReportsError) throw new Error(`Review queue report history failed: ${queueReportsError.message}`)
       const latestQueueReport = new Map()
       for (const report of queueReports || []) if (!latestQueueReport.has(report.property_id)) latestQueueReport.set(report.property_id, report)
-      const requesterIds = [...new Set((requests || []).map((item) => item.requested_by).filter(Boolean))]
+      const requesterIds = [...new Set(visibleRequests.map((item) => item.requested_by).filter(Boolean))]
       const emailById = new Map()
       await Promise.all(requesterIds.map(async (id) => {
         const { data } = await admin.auth.admin.getUserById(id)
         if (data?.user?.email) emailById.set(id, data.user.email)
       }))
-      const requestIds = (requests || []).map((item) => item.id)
+      const requestIds = visibleRequests.map((item) => item.id)
       const { data: deliveries, error: deliveryError } = requestIds.length
         ? await admin.from('phase1_notifications').select('processing_request_id,recipient,delivery_status,sent_at,provider_message_id,failure_reason,attempt_count').eq('event_type', 'reviewed_result_ready').in('processing_request_id', requestIds)
         : { data: [], error: null }
@@ -758,7 +792,7 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       const deliveryByRequest = new Map((deliveries || []).map((item) => [item.processing_request_id, item]))
 
       const items = []
-      for (const request of requests || []) {
+      for (const request of visibleRequests) {
         const { data: modelRun } = await admin.from('model_runs')
           .select('id,output')
           .eq('property_id', request.property_id)
@@ -809,6 +843,9 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
           error: request.error_message || null,
           latestReportId: latestQueueReport.get(request.property_id)?.id || null,
           latestReportVersion: latestQueueReport.get(request.property_id)?.report_version || null,
+          archivedAt: property.archived_at || null,
+          archivedBy: property.archived_by || null,
+          archiveReason: property.archive_reason || null,
         })
       }
       return items
@@ -824,23 +861,25 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       if (error) throw new Error(`Property history lookup failed: ${error.message}`)
       const propertyIds = [...new Set((requests || []).map((item) => item.property_id).filter(Boolean))]
       const { data: properties, error: propertyError } = propertyIds.length
-        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip').in('id', propertyIds)
+        ? await admin.from('properties').select('id,source_address,address_line1,city,state,zip,archived_at').in('id', propertyIds).is('archived_at', null)
         : { data: [], error: null }
       if (propertyError) throw new Error(`Property history address lookup failed: ${propertyError.message}`)
       const propertyById = new Map((properties || []).map((item) => [item.id, item]))
-      const { data: reviewedReports, error: reviewedReportsError } = propertyIds.length
-        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', propertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
+      const visibleRequests = (requests || []).filter((item) => propertyById.has(item.property_id))
+      const visiblePropertyIds = [...new Set(visibleRequests.map((item) => item.property_id))]
+      const { data: reviewedReports, error: reviewedReportsError } = visiblePropertyIds.length
+        ? await admin.from('phase1_reviewed_reports').select('id,property_id,report_version,report_status').in('property_id', visiblePropertyIds).in('report_status', ['released', 'superseded']).order('report_version', { ascending: false })
         : { data: [], error: null }
       if (reviewedReportsError) throw new Error(`Reviewed report history lookup failed: ${reviewedReportsError.message}`)
       const latestReportByProperty = new Map()
       for (const report of reviewedReports || []) if (!latestReportByProperty.has(report.property_id)) latestReportByProperty.set(report.property_id, report)
-      const requestIds = (requests || []).map((item) => item.id)
+      const requestIds = visibleRequests.map((item) => item.id)
       const { data: deliveries, error: deliveryError } = requestIds.length
         ? await admin.from('phase1_notifications').select('processing_request_id,recipient,delivery_status,sent_at,provider_message_id,failure_reason,attempt_count').eq('event_type', 'reviewed_result_ready').in('processing_request_id', requestIds)
         : { data: [], error: null }
       if (deliveryError) throw new Error(`Property history delivery lookup failed: ${deliveryError.message}`)
       const deliveryByRequest = new Map((deliveries || []).map((item) => [item.processing_request_id, item]))
-      return (requests || []).map((request) => {
+      return visibleRequests.map((request) => {
         const property = propertyById.get(request.property_id) || {}
         const address = property.source_address || [property.address_line1, property.city, property.state, property.zip].filter(Boolean).join(', ') || 'Property address unavailable'
         const status = request.status === 'completed' ? 'Ready'

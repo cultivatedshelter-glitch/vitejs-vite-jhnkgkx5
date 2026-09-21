@@ -62,7 +62,12 @@ export function createPhase1HttpHandler(service) {
         return json(await service.reviewQueue({ token: token(request) }))
       }
       if (request.method === 'GET' && url.pathname === '/api/phase1/dashboard') {
-        return json(await service.dashboard({ token: token(request) }))
+        return json(await service.dashboard({ token: token(request), archived: url.searchParams.get('archived') === 'true' }))
+      }
+      const archiveMatch = url.pathname.match(/^\/api\/phase1\/properties\/([^/]+)\/archive$/)
+      if (request.method === 'POST' && archiveMatch) {
+        const body = await request.json()
+        return json(await service.archiveProperty({ token: token(request), propertyId: decodeURIComponent(archiveMatch[1]), archived: body.archived, reason: body.reason || null }))
       }
       if (request.method === 'GET' && url.pathname === '/api/phase1/my-properties') {
         return json(await service.myProperties({ token: token(request) }))

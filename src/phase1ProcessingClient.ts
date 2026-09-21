@@ -82,6 +82,9 @@ export type Phase1ReviewQueueItem = {
   error: string | null
   latestReportId?: string | null
   latestReportVersion?: number | null
+  archivedAt?: string | null
+  archivedBy?: string | null
+  archiveReason?: string | null
 }
 
 export type Phase1DeliveryRecord = {
@@ -281,9 +284,16 @@ export async function loadPhase1ReviewQueue(): Promise<Phase1ReviewQueueItem[]> 
   return response.items
 }
 
-export async function loadPhase1Dashboard(): Promise<Phase1ReviewQueueItem[]> {
-  const response = await jsonRequest<{ items: Phase1ReviewQueueItem[] }>('/api/phase1/dashboard', { method: 'GET' })
+export async function loadPhase1Dashboard(archived = false): Promise<Phase1ReviewQueueItem[]> {
+  const response = await jsonRequest<{ items: Phase1ReviewQueueItem[] }>(`/api/phase1/dashboard${archived ? '?archived=true' : ''}`, { method: 'GET' })
   return response.items
+}
+
+export async function setPhase1PropertyArchived(propertyId: string, archived: boolean, reason: string | null = null) {
+  return jsonRequest<{ id: string; status: string; archived_at: string | null; archived_by: string | null; archive_reason: string | null }>(
+    `/api/phase1/properties/${encodeURIComponent(propertyId)}/archive`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived, reason }) },
+  )
 }
 
 export async function loadPhase1MyProperties(): Promise<Phase1PropertyHistoryItem[]> {

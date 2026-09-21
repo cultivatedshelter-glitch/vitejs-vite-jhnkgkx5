@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel, Phase1LinkedSource } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1BriefFinding, type Phase1BriefPath, type Phase1DecisionBrief, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1RecipientReadiness, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
+import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, setPhase1PropertyArchived, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1BriefFinding, type Phase1BriefPath, type Phase1DecisionBrief, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1RecipientReadiness, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
@@ -416,9 +416,13 @@ function AdminDashboard({ onNavigate }: { onNavigate: (path: string) => void }) 
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [view, setView] = useState<'active' | 'archived'>('active')
+  const [changingPropertyId, setChangingPropertyId] = useState<string | null>(null)
   useEffect(() => {
-    void loadPhase1Dashboard().then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'The admin dashboard could not be loaded.')).finally(() => setLoading(false))
-  }, [])
+    setLoading(true)
+    setError('')
+    void loadPhase1Dashboard(view === 'archived').then(setItems).catch((value) => setError(value instanceof Error ? value.message : 'The admin dashboard could not be loaded.')).finally(() => setLoading(false))
+  }, [view])
   const groups = [
     ['needs_review', 'Needs Review'],
     ['in_review', 'In Review'],
@@ -428,20 +432,42 @@ function AdminDashboard({ onNavigate }: { onNavigate: (path: string) => void }) 
     ['processing', 'Processing'],
   ] as const
   const visible = items.filter((item) => `${item.propertyAddress} ${item.submittingAgent}`.toLowerCase().includes(search.trim().toLowerCase()))
-  const resume = visible.find((item) => ['in_review', 'needs_review', 'waiting_for_evidence'].includes(item.queueStatus))
+  const archivedProperties = visible.filter((item, index, rows) => rows.findIndex((candidate) => candidate.propertyId === item.propertyId) === index)
+  const resume = view === 'active' ? visible.find((item) => ['in_review', 'needs_review', 'waiting_for_evidence'].includes(item.queueStatus)) : null
   function reviewPath(item: Phase1ReviewQueueItem) {
     const finding = item.lastViewedObservationId ? `&finding=${encodeURIComponent(item.lastViewedObservationId)}` : '&resume=1'
     return `/properties/${encodeURIComponent(item.propertyId)}/review?request=${encodeURIComponent(item.requestId)}${finding}`
   }
+  async function changeArchiveState(item: Phase1ReviewQueueItem, archived: boolean) {
+    const confirmed = archived
+      ? window.confirm('Archive this Property? It will be hidden from active work but all history will be preserved.')
+      : window.confirm('Restore this Property to its current workflow state?')
+    if (!confirmed) return
+    const reason = archived ? window.prompt('Optional archive reason', '') : null
+    if (archived && reason === null) return
+    setChangingPropertyId(item.propertyId)
+    setError('')
+    try {
+      await setPhase1PropertyArchived(item.propertyId, archived, reason)
+      const refreshed = await loadPhase1Dashboard(view === 'archived')
+      setItems(refreshed)
+    } catch (value) {
+      setError(value instanceof Error ? value.message : `The Property could not be ${archived ? 'archived' : 'restored'}.`)
+    } finally {
+      setChangingPropertyId(null)
+    }
+  }
   return <main className="phase1-main phase1-review-queue"><div className="phase1-page-title"><div><p className="phase1-kicker">Internal review</p><h1>Admin Dashboard</h1><p className="phase1-lede">Continue the next Property decision without reconstructing the workflow.</p></div><button type="button" onClick={() => onNavigate('/properties/new')}>+ New Property</button></div>
+    <div className="phase1-dashboard-view" role="group" aria-label="Property view"><button type="button" className={view === 'active' ? 'is-active' : ''} onClick={() => setView('active')}>Active</button><button type="button" className={view === 'archived' ? 'is-active' : ''} onClick={() => setView('archived')}>Archived</button></div>
     {loading && <p>Loading review work…</p>}{error && <p className="phase1-inline-error" role="alert">{error}</p>}
     {!loading && !error && resume && <section className="phase1-resume"><p className="phase1-kicker">Continue where you left off</p><div><h2>{resume.propertyAddress}</h2><p>{resume.reviewedCount} of {resume.findingCount} findings reviewed · {resume.remainingCount} remaining</p><p>Status: {resume.queueStatus === 'waiting_for_evidence' ? 'Waiting for Evidence' : 'In Review'} · Last activity {new Date(resume.lastActivityAt).toLocaleString([], { hour: 'numeric', minute: '2-digit' })}</p><p><strong>Next action</strong><br />{resume.nextAction}</p></div><button className="phase1-primary" type="button" onClick={() => onNavigate(reviewPath(resume))}>Resume Review</button></section>}
     {!loading && !error && <label className="phase1-field phase1-search"><span>Search</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Property or submitter" /></label>}
-    {!loading && !error && groups.map(([status, label]) => {
+    {!loading && !error && view === 'active' && groups.map(([status, label]) => {
       const rows = visible.filter((item) => item.queueStatus === status)
-      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings · {item.reviewedCount} reviewed · {item.remainingCount} remaining</span><span>{item.nextAction}{item.delivery ? ` · Delivery ${item.delivery.delivery_status}` : ''}</span><span>{new Date(item.lastActivityAt).toLocaleString()}</span><button type="button" onClick={() => onNavigate(item.queueStatus === 'released' && item.latestReportId ? `/properties/${item.propertyId}/reports/${item.latestReportId}` : reviewPath(item))}>{item.queueStatus === 'released' ? `View Released Result${item.latestReportVersion ? ` v${item.latestReportVersion}` : ''}` : item.queueStatus === 'in_review' ? 'Resume Review' : 'Open'}</button></article>)}</section>
+      return <section className="phase1-queue-group" key={status}><h2>{label}<span>{rows.length}</span></h2>{rows.length === 0 ? <p className="phase1-quiet-state">No requests.</p> : rows.map((item) => <article className="phase1-queue-row" key={item.requestId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>{item.findingCount} findings · {item.reviewedCount} reviewed · {item.remainingCount} remaining</span><span>{item.nextAction}{item.delivery ? ` · Delivery ${item.delivery.delivery_status}` : ''}</span><span>{new Date(item.lastActivityAt).toLocaleString()}</span><div className="phase1-queue-actions"><button type="button" onClick={() => onNavigate(item.queueStatus === 'released' && item.latestReportId ? `/properties/${item.propertyId}/reports/${item.latestReportId}` : reviewPath(item))}>{item.queueStatus === 'released' ? `View Released Result${item.latestReportVersion ? ` v${item.latestReportVersion}` : ''}` : item.queueStatus === 'in_review' ? 'Resume Review' : 'Open'}</button><button type="button" disabled={changingPropertyId === item.propertyId} onClick={() => void changeArchiveState(item, true)}>Archive Property</button></div></article>)}</section>
     })}
-    {!loading && !error && <section className="phase1-queue-group"><h2>Recent Properties<span>{visible.length}</span></h2>{visible.slice(0, 6).map((item) => <button className="phase1-recent-property" type="button" key={`recent-${item.requestId}`} onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}><strong>{item.propertyAddress}</strong><span>{item.queueStatus.replaceAll('_', ' ')}</span></button>)}</section>}
+    {!loading && !error && view === 'active' && <section className="phase1-queue-group"><h2>Recent Properties<span>{visible.length}</span></h2>{visible.slice(0, 6).map((item) => <button className="phase1-recent-property" type="button" key={`recent-${item.requestId}`} onClick={() => onNavigate(item.queueStatus === 'released' ? `/properties/${item.propertyId}/review?request=${item.requestId}` : reviewPath(item))}><strong>{item.propertyAddress}</strong><span>{item.queueStatus.replaceAll('_', ' ')}</span></button>)}</section>}
+    {!loading && !error && view === 'archived' && <section className="phase1-queue-group"><h2>Archived Properties<span>{archivedProperties.length}</span></h2>{archivedProperties.length === 0 ? <p className="phase1-quiet-state">No archived Properties.</p> : archivedProperties.map((item) => <article className="phase1-queue-row phase1-archived-row" key={item.propertyId}><div><strong>{item.propertyAddress}</strong><span>{item.submittingAgent}</span></div><span>Previous state: {item.queueStatus.replaceAll('_', ' ')}</span><span>{item.archiveReason || 'No archive reason recorded.'}</span><span>{item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Archive date unavailable'}</span><div className="phase1-queue-actions"><button type="button" onClick={() => onNavigate(item.latestReportId ? `/properties/${item.propertyId}/reports/${item.latestReportId}` : reviewPath(item))}>{item.latestReportId ? 'View Report History' : 'View History'}</button><button type="button" disabled={changingPropertyId === item.propertyId} onClick={() => void changeArchiveState(item, false)}>Restore Property</button></div></article>)}</section>}
   </main>
 }
 
