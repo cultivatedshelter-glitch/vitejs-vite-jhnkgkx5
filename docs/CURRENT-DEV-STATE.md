@@ -13,6 +13,9 @@ Date: 2026-09-21
 - Legacy stored reports are not rewritten. The production repository derives the same decision-brief presentation at read time when an older immutable report document lacks it; newly generated versions store the decision brief directly.
 - The released-report web view and reviewer preview consume the same decision brief. Full source and technical detail use progressive disclosure, and responsive rules collapse summary, overview, path, and next-step layouts without changing report data.
 - Acceptance coverage enforces a 6-10 page primary brief for a 31-finding report, preservation of the appendix and pricing sources, conservative OCR cleanup without raw-artifact mutation, human-readable confidence labels, legacy-report fallback, and mobile-safe web hierarchy.
+- Application commits `c5c92da` and `cf07208` were pushed to `shelter-prep-phase1-dev` and deployed by Railway. Production serves the compact report bundle, and `https://shelterprep.com/healthz` returns HTTP 200 with the expected Phase 1 health payload.
+- Authenticated production browser verification loaded released report version 6 with 31 findings, six category groups, no legacy long-form cards, no internal enum strings, full progressive source detail, and the existing private source-document action. At 390 by 844 there was no document overflow, no clipped finding block, all 31 next-step areas remained present, pricing remained prominent, and the reviewer navigation labels remained distinct.
+- Final local verification passes: `npm test` 98/98, `npm run build`, the Round 1 Python self-test, focused durable-report and UX contract tests, and `git diff --check`. The build emits only the existing stale `caniuse-lite` advisory.
 
 ## Finding-Level Investigation Quality Pass
 
