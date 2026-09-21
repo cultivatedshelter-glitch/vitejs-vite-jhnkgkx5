@@ -2,6 +2,17 @@
 
 Date: 2026-09-21
 
+## Safe Property Archive And Restore
+
+- Added nullable `archived_at`, `archived_by`, and `archive_reason` fields to the existing UUID Property model. No Property or related record is deleted, and Restore clears only archive metadata so the prior workflow status remains authoritative.
+- Archive and Restore are owner/admin-only server actions. The production RPC validates an active trusted profile, locks the Property, rejects Properties with draft/queued/running work, changes archive metadata, and inserts an immutable `property_archived` or `property_restored` workflow event in one transaction. Direct authenticated changes to archive fields are blocked by a database trigger; the RPC is executable only by `service_role` and `postgres`.
+- Active Dashboard groups, Recent Properties, reviewer queues, My Properties, and normal address resolution exclude archived Properties. The Admin Dashboard has an explicit Archived view with history access and Restore. Archived Properties cannot accept evidence, create or update submission drafts, or begin processing.
+- Applied `phase1_property_archive` only to production project `lbyzkvbtolpwrvjfbhlq`. RLS remains enabled on `properties`; the production schema has the three archive columns and the browser-write guard. Supabase security advisory output contains only the pre-existing leaked-password-protection warning and no archive/RLS exposure.
+- Production acceptance used synthetic test Property `da67343b-b65c-46f4-91b5-1f5b0731c2d7`. Archive returned HTTP 200, removed it from the active dashboard, added it to Archived, preserved authenticated access to its private PDF, and rejected a new evidence upload with HTTP 409 `property_archived`. Restore returned HTTP 200, retained Property status `active`, and returned it to active work.
+- Before and after the reversible acceptance, the test Property retained one evidence record, one processing request, one delivery record, and its existing provenance. It has no findings or reviewed report/PDF versions. The only new records were the expected archive and restore workflow events; `archived_at` is null after restoration.
+- Commit `bf03f0a` was pushed normally to `shelter-prep-phase1-dev` after macOS Keychain reauthorized the existing GitHub credential. Production serves bundle `index-DybKVkV5.js`, contains the exact Archive/Archived/Restore controls, and `https://shelterprep.com/healthz` returns Railway HTTP 200.
+- Final local verification passes: `npm test` 104/104, `npm run build`, the Round 1 Python self-test, focused archive tests 3/3, and `git diff --check`. The build emits only the existing stale `caniuse-lite` advisory.
+
 ## Human Review Completion vs Recipient Readiness
 
 - Human decision completion and recipient-report readiness are now separate server-authoritative states. A request can remain `31 / 31 reviewed` while recipient generation is blocked by stale, internal, paraphrase-only, unsourced, or missing finding content.
