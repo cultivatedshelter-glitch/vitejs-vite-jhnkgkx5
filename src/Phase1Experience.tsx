@@ -332,6 +332,7 @@ function OverviewStep({ artifact, reportBusy, reportError, onSelect, onGenerateR
         <p className="phase1-cost-rule"><strong>Cost context</strong>{artifact.overview.aggregateCostRule}</p>
         {artifact.humanObservations.length > 0 && <details><summary>Submitter context ({artifact.humanObservations.length})</summary>{artifact.humanObservations.map((observation) => <article className="phase1-human-observation" key={observation.id}><p>{observation.observation}</p><small>{observation.role} · {observation.directness} · professional status {observation.professionalStatus.toLowerCase()} · {observation.verificationStatus}</small></article>)}</details>}
       </section>
+      <LocalProfessionals groups={artifact.localProfessionals.groups} />
       <section className="phase1-band" aria-labelledby="priority-findings">
         <div className="phase1-section-heading"><h2 id="priority-findings">Repair items</h2><span>{artifact.categories.length} systems</span></div>
         {groups.map((group) => {
@@ -375,6 +376,11 @@ function SourceDrawer({ source, onClose }: { source: Phase1LinkedSource; onClose
       {source.url ? <a className="phase1-primary phase1-source-open" href={source.url} target="_blank" rel="noreferrer">Open actual source</a> : <p className="phase1-quiet-state">This source has stored reference details but no public URL.</p>}
     </aside>
   </div>
+}
+
+function ResearchSources({ sources }: { sources: Phase1LinkedSource[] }) {
+  if (!sources.length) return null
+  return <section className="phase1-research-sources"><p className="phase1-kicker">Independent research</p>{sources.map((source) => <p key={source.id}><strong>{source.label}</strong><span>{source.scopeBasis}</span><small>{source.geography}{source.publishedAt ? ` · Published ${source.publishedAt.slice(0, 10)}` : source.retrievedAt ? ` · Retrieved ${source.retrievedAt.slice(0, 10)}` : ''}</small>{source.url && <a href={source.url} target="_blank" rel="noreferrer">View source</a>}</p>)}</section>
 }
 
 function RepairPathList({ finding, onAdjustPrice, onOpenSource }: { finding: Phase1FindingViewModel; onAdjustPrice?: (pathId: string) => void; onOpenSource?: (source: Phase1LinkedSource) => void }) {
@@ -588,6 +594,7 @@ function FindingStep({ finding, findingIndex, findingCount, reviewedCount, remai
             <div className="phase1-source-meta"><span>{finding.sourceEvidence.documentName}</span>{finding.sourceEvidence.page && <span>Page {finding.sourceEvidence.page}</span>}{finding.sourceEvidence.itemNumber && <span>Item {finding.sourceEvidence.itemNumber}</span>}{finding.sourceEvidence.section && <span>{finding.sourceEvidence.section}</span>}</div>
           </section>
           <section className="phase1-reasoning-section"><div className="phase1-inline-label"><p className="phase1-kicker">Shelter Prep interpretation</p>{!isFixture && <button type="button" onClick={() => beginFieldEdit('interpretation')}>Edit</button>}</div><p>{finding.interpretation}</p>{editingField === 'interpretation' && <div className="phase1-inline-editor"><label>Interpretation<textarea value={interpretation} onChange={(event) => setInterpretation(event.target.value)} /></label><InlineSaveControls /></div>}</section>
+          <ResearchSources sources={finding.researchSources} />
           <section className="phase1-inline-fact"><div><span>Likely trade</span><strong>{finding.likelyTrade}</strong></div>{!isFixture && <button type="button" onClick={() => beginFieldEdit('likely_trade')}>Edit</button>}{editingField === 'likely_trade' && <div className="phase1-inline-editor"><label>Likely trade<select value={likelyTrade} onChange={(event) => setLikelyTrade(event.target.value)}><option>Plumbing</option><option>Electrical</option><option>HVAC</option><option>Roofing</option><option>Carpentry</option><option>General Contractor</option><option>Exterior / Siding</option><option>Unknown</option></select></label><InlineSaveControls /></div>}</section>
           <RepairPathList finding={finding} onAdjustPrice={beginPriceAdjustment} onOpenSource={setSelectedSource} />
           {transactionPerspective !== 'Not Stated' && <section className="phase1-transaction-considerations"><p className="phase1-kicker">{transactionPerspective} context</p><TextList values={finding.transactionConsiderations} empty="No transaction-specific considerations were returned." /></section>}
@@ -641,6 +648,7 @@ function ReleasedResultContent({ artifact }: { artifact: Phase1ExperienceViewMod
       <p><strong>What was reported</strong>{finding.sourceEvidence.excerpt}</p>
       <p className="phase1-agent-source"><strong>Source</strong>{finding.sourceEvidence.documentName}{finding.sourceEvidence.page ? ` · Page ${finding.sourceEvidence.page}` : ''}{finding.sourceEvidence.itemNumber ? ` · Item ${finding.sourceEvidence.itemNumber}` : ''}{finding.sourceEvidence.section ? ` · ${finding.sourceEvidence.section}` : ''}</p>
       <p><strong>Shelter Prep interpretation</strong>{finding.interpretation}</p>
+      <ResearchSources sources={finding.researchSources} />
       {finding.releaseDisposition === 'approved' && <RepairPathList finding={finding} />}
       {artifact.transactionPerspective !== 'Not Stated' && <><p><strong>{artifact.transactionPerspective} context</strong></p><TextList values={finding.transactionConsiderations} empty="No transaction-specific considerations were released." /></>}
       <div className="phase1-released-facts"><section><p><strong>What we know</strong></p><TextList values={finding.known} empty="No reviewed known facts were released." /></section><section><p><strong>What is still unknown</strong></p><TextList values={finding.unknown} empty="No reviewed unknowns were released." /></section><section><p><strong>What changes the decision</strong></p><TextList values={finding.whatChangesDecision} empty="No additional decision factors were released." /></section></div>

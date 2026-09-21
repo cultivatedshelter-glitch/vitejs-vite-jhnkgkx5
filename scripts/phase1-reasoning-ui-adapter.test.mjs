@@ -288,3 +288,18 @@ test('candidate evidence and page previews remain unconfirmed until a human corr
   const reviewed = adaptPhase1ReasoningArtifact(artifact, { mode: 'live' }).findings[0]
   assert.equal(reviewed.sourceEvidence.confirmedEvidence?.imageId, 'image-12-1')
 })
+
+test('independent research sources remain adjacent to the finding interpretation', () => {
+  const artifact = structuredClone(liveArtifact)
+  artifact.external_sources = [{
+    id: 'technical-guidance-1', source_name: 'Authoritative technical guidance',
+    source_url: 'https://example.com/technical', source_type: 'technical_guidance',
+    source_geography: { label: 'United States' }, scope_basis: 'Issue-specific repair decision guidance.',
+    retrieved_at: '2030-01-02T00:00:00Z',
+  }]
+  artifact.atomicObservations[0].finding_card.research_source_refs = ['technical-guidance-1']
+  const finding = adaptPhase1ReasoningArtifact(artifact, { mode: 'live' }).findings[0]
+  assert.equal(finding.researchSources.length, 1)
+  assert.equal(finding.researchSources[0].label, 'Authoritative technical guidance')
+  assert.equal(finding.researchSources[0].scopeBasis, 'Issue-specific repair decision guidance.')
+})

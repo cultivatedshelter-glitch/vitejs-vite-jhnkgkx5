@@ -139,6 +139,7 @@ export type Phase1FindingViewModel = {
   sourceEvidence: Phase1SourceEvidence
   evidenceReferences: string[]
   sources: Phase1LinkedSource[]
+  researchSources: Phase1LinkedSource[]
   price: {
     status: 'available' | 'blocked'
     low: number | null
@@ -182,6 +183,10 @@ export type Phase1ExperienceViewModel = {
     aggregateCostRule: string
   }
   humanObservations: Phase1HumanObservation[]
+  localProfessionals: {
+    groups: Array<{ trade: string; professionals: Array<{ providerId: string; name: string; address: string | null; rating: number | null; reviewCount: number | null; source: string; sourceUrl: string | null; retrievedAt: string; qualificationStatus: string }> }>
+    lookups: Array<{ trade: string; status: string; provider: string }>
+  }
   transactionPerspective: string
 }
 
@@ -487,6 +492,7 @@ function normalizeFinding(
   const catalog = collectSourceCatalog(root, entry)
   const linkedIds = [
     ...priceSourceIds,
+    ...asStringArray(card.research_source_refs),
     ...(weather?.sourceIds ?? []),
     asString(contractor.source_id),
   ].filter(Boolean)
@@ -500,6 +506,10 @@ function normalizeFinding(
       kind: 'unresolved_source_reference',
       geography: 'Geography unavailable', publishedAt: null, retrievedAt: null, scopeBasis: '', priceLabel: null,
     })
+  const researchSourceIds = asStringArray(card.research_source_refs)
+  const researchSources = researchSourceIds
+    .map((sourceId) => catalog.get(sourceId))
+    .filter((source): source is Phase1LinkedSource => Boolean(source))
 
   const rawRelated = asStringArray(card.related_findings)
   const relatedFindings = [...rawRelated, ...(related.get(id) ?? [])]
@@ -656,6 +666,7 @@ function normalizeFinding(
     },
     evidenceReferences: evidenceRefStrings(card, entry),
     sources,
+    researchSources,
     price: {
       status: priced ? 'available' : 'blocked',
       low: priced ? priceLow : null,
@@ -740,6 +751,7 @@ export function adaptPhase1ReasoningArtifact(
     }
   }).filter((item) => item.observation)
   const transactionContext = asRecord(input.transactionContext)
+  const localProfessionalResearch = asRecord(input.localProfessionals)
   return {
     schemaVersion: asString(input.schemaVersion) || asString(input.schema_version) || 'unknown',
     mode: options.mode,
@@ -763,6 +775,27 @@ export function adaptPhase1ReasoningArtifact(
       aggregateCostRule: asString(rawOverview.aggregate_cost_rule) || 'Finding and path ranges should not be summed without reconciling overlap and alternatives.',
     },
     humanObservations,
+    localProfessionals: {
+      groups: asArray(localProfessionalResearch.groups).filter(isRecord).map((group) => ({
+        trade: asString(group.trade),
+        professionals: asArray(group.professionals).filter(isRecord).map((professional) => ({
+          providerId: asString(professional.providerId),
+          name: asString(professional.name),
+          address: asString(professional.address) || null,
+          rating: asNumber(professional.rating),
+          reviewCount: asNumber(professional.reviewCount),
+          source: asString(professional.source),
+          sourceUrl: asString(professional.sourceUrl) || null,
+          retrievedAt: asString(professional.retrievedAt),
+          qualificationStatus: asString(professional.qualificationStatus),
+        })).filter((professional) => professional.providerId && professional.name),
+      })).filter((group) => group.trade && group.professionals.length),
+      lookups: asArray(localProfessionalResearch.lookups).filter(isRecord).map((lookup) => ({
+        trade: asString(lookup.trade),
+        status: asString(lookup.status),
+        provider: asString(lookup.provider),
+      })).filter((lookup) => lookup.trade && lookup.status),
+    },
     transactionPerspective: humanize(asString(transactionContext.perspective) || 'not stated'),
   }
 }

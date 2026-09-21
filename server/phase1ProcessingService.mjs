@@ -60,6 +60,12 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
         await repository.markProcessing(request.id)
         const artifact = await reasoningRunner({ propertyId, evidence, note, actor })
         validatePhase1Artifact(artifact, { propertyId })
+        const propertyAddress = repository.getPropertyAddress
+          ? await repository.getPropertyAddress({ actor, propertyId })
+          : null
+        artifact.localProfessionals = propertyAddress
+          ? await localProfessionalResearch({ artifact, propertyAddress, reviewedOnly: false })
+          : { groups: [], lookups: [{ trade: 'Property', status: 'skipped_missing_property_address', provider: 'Google Places' }] }
         await repository.completeProcessing(request.id, artifact)
         if (notifications) {
           try {
@@ -277,7 +283,9 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const profile = await repository.getActorProfile({ actor })
     const report = await repository.reserveReviewedReport({ actor, requestId, recipient: request.submission.deliveryRecipientEmail, artifactSchemaVersion: request.artifactVersion || 'unknown' })
     try {
-      const localProfessionals = await localProfessionalResearch({ artifact: request.artifact, propertyAddress: request.submission.propertyAddress })
+      const localProfessionals = request.artifact.localProfessionals?.lookups?.some((lookup) => ['sourced', 'no_defensible_results'].includes(lookup.status))
+        ? request.artifact.localProfessionals
+        : await localProfessionalResearch({ artifact: request.artifact, propertyAddress: request.submission.propertyAddress, reviewedOnly: true })
       const document = buildReviewedReportDocument({ report, request, reviewer: profile, localProfessionals })
       const pdf = await pdfGenerator(document)
       const stored = await repository.completeReviewedReport({ report, document, findingVersions: reviewedFindingVersions(document), pricingVersions: reviewedPricingVersions(document), pdf })

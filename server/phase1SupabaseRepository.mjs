@@ -185,6 +185,17 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       return Boolean(data)
     },
 
+    async getPropertyAddress({ actor, propertyId }) {
+      const client = userClient(tokens.get(actor.id))
+      const { data, error } = await client.from('properties')
+        .select('source_address,address_line1,city,state,zip')
+        .eq('id', propertyId)
+        .maybeSingle()
+      if (error) throw new Error(`Property address lookup failed: ${error.message}`)
+      if (!data) return null
+      return data.source_address || [data.address_line1, data.city, data.state, data.zip].filter(Boolean).join(', ') || null
+    },
+
     async isReviewer(actorId) {
       return isReviewerId(actorId)
     },

@@ -1,9 +1,9 @@
 const ENDPOINT = 'https://places.googleapis.com/v1/places:searchText'
 
-function tradeGroups(artifact) {
+function tradeGroups(artifact, reviewedOnly = false) {
   const values = new Set()
   for (const item of artifact?.atomicObservations || []) {
-    if (artifact?.reviewState?.[item.id]?.event?.review_action !== 'approve') continue
+    if (reviewedOnly && artifact?.reviewState?.[item.id]?.event?.review_action !== 'approve') continue
     const corrections = item && artifact.reviewState[item.id]?.event?.new_value?.corrections
     const trade = String(corrections?.likely_trade || item.finding_card?.next_step_owner || '').trim()
     if (trade && !/human|review|owner|agent/i.test(trade)) values.add(trade)
@@ -12,8 +12,8 @@ function tradeGroups(artifact) {
 }
 
 export function createLocalProfessionalResearch({ apiKey = process.env.GOOGLE_PLACES_API_KEY, fetchImpl = fetch } = {}) {
-  return async function research({ artifact, propertyAddress }) {
-    const trades = tradeGroups(artifact)
+  return async function research({ artifact, propertyAddress, reviewedOnly = false }) {
+    const trades = tradeGroups(artifact, reviewedOnly)
     if (!apiKey) return { groups: [], lookups: trades.map((trade) => ({ trade, status: 'skipped_not_configured', provider: 'Google Places' })) }
     const seen = new Set()
     const groups = []

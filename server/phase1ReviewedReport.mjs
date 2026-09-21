@@ -1,4 +1,20 @@
 const TERMINAL = new Set(['approve', 'needs_more_info', 'reject'])
+const INTERNAL_RELEASE_LANGUAGE = /organize it as|round 1|decision-blocking uncertainty|uncertainty-reduction item|human review has not verified this interpretation|ai draft interpretation/i
+
+function assertInvestigationQuality(artifact) {
+  for (const observation of artifact?.atomicObservations || []) {
+    const card = observation.finding_card || {}
+    const interpretation = String(observation.epistemic_states?.shelter_prep_interpretation || '')
+    const nextTask = String(card.recommended_next_step || '')
+    const unknowns = Array.isArray(card.what_we_dont_know) ? card.what_we_dont_know.join(' ') : ''
+    if (!interpretation || INTERNAL_RELEASE_LANGUAGE.test(`${interpretation} ${nextTask} ${unknowns}`)) {
+      throw new Error(`Finding ${card.finding_title || observation.id || 'unknown'} still contains internal or paraphrase-only reasoning.`)
+    }
+    if (!Array.isArray(card.research_source_refs) || !card.research_source_refs.length) {
+      throw new Error(`Finding ${card.finding_title || observation.id || 'unknown'} has no independent research source.`)
+    }
+  }
+}
 
 export function reviewedReportSummary(artifact) {
   const observations = Array.isArray(artifact?.atomicObservations) ? artifact.atomicObservations : []
@@ -14,6 +30,7 @@ export function reviewedReportSummary(artifact) {
 export function buildReviewedReportDocument({ report, request, reviewer, localProfessionals }) {
   const summary = reviewedReportSummary(request.artifact)
   if (!summary.total || summary.remaining) throw new Error(`${summary.remaining || 'All'} findings still require a terminal review decision.`)
+  assertInvestigationQuality(request.artifact)
   return {
     schemaVersion: 'phase1-reviewed-report-v1',
     reportId: report.id,

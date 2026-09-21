@@ -48,13 +48,23 @@ for index, item in enumerate(observations, 1):
     story += [Paragraph('WHAT WAS REPORTED', styles['H3x']), Paragraph(esc(epi.get('source_observation') or source.get('inspector_statement') or title), styles['Bodyx'])]
     story += [Paragraph('SOURCE', styles['H3x']), Paragraph('Inspection report · Page {} · Item {} · {}'.format(esc(src.get('source_page') or source.get('source_page') or 'not specified'), esc(src.get('source_item_number') or source.get('source_item_number') or 'not specified'), esc(src.get('source_section') or source.get('source_section') or 'section not specified')), styles['Bodyx'])]
     story += [Paragraph('SHELTER PREP INTERPRETATION', styles['H3x']), Paragraph(esc(corr.get('interpretation') or epi.get('shelter_prep_interpretation') or 'No reviewed interpretation.'), styles['Bodyx'])]
+    catalog = {(s.get('id') or s.get('source_id')): s for s in (artifact.get('external_sources') or []) if (s.get('id') or s.get('source_id'))}
+    research_sources = [catalog.get(source_id) for source_id in card.get('research_source_refs') or [] if catalog.get(source_id)]
+    if research_sources:
+        source_lines = []
+        for research_source in research_sources:
+            label = research_source.get('source_name') or research_source.get('provider') or research_source.get('title') or research_source.get('id')
+            url = research_source.get('source_url') or research_source.get('source_reference') or ''
+            scope = research_source.get('scope_basis') or ''
+            linked_label = '<link href="{}" color="#174c35">{}</link>'.format(esc(url), esc(label)) if str(url).startswith('http') else esc(label)
+            source_lines.append('{}{}'.format(linked_label, ' — {}'.format(esc(scope)) if scope else ''))
+        story += [Paragraph('INDEPENDENT RESEARCH SOURCES', styles['H3x']), Paragraph('<br/>'.join(source_lines), styles['Smallx'])]
     story += [Paragraph('KNOWN', styles['H3x']), Paragraph(text_list(corr.get('known') or card.get('what_we_know')), styles['Bodyx']), Paragraph('UNKNOWN', styles['H3x']), Paragraph(text_list(corr.get('unknown') or card.get('what_we_dont_know')), styles['Bodyx'])]
     paths = card.get('repair_paths') or []
     if paths and action == 'approve':
         story.append(Paragraph('LIKELY PATHS AND COST CONTEXT', styles['H3x']))
         adjustments = {p.get('path_id'): p for p in (corr.get('price_adjustments') or []) if p}
         if corr.get('price'): adjustments[corr['price'].get('path_id')] = corr['price']
-        catalog = {(s.get('id') or s.get('source_id')): s for s in (artifact.get('external_sources') or []) if (s.get('id') or s.get('source_id'))}
         for path in paths:
             adj = adjustments.get(path.get('id')) or {}; low = adj.get('low', path.get('price_low')); high = adj.get('high', path.get('price_high'))
             source_ids = adj.get('supporting_source_ids') or path.get('price_source_refs') or []

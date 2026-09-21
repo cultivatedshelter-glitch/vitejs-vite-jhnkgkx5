@@ -21,7 +21,7 @@ from phase1_pricing_contract import build_unpriced_finding_card, pricing_contrac
 from phase1_decision_support import enrich_decision_support
 
 
-SCHEMA_VERSION = "shelter-prep-phase1-round1g-source-integration-contract.v1"
+SCHEMA_VERSION = "shelter-prep-phase1-finding-investigation.v1"
 PIPELINE_NAME = "phase1-round1-local-reasoning-benchmark"
 DEFAULT_OUTPUT_DIR = "local-fixtures/round1-reasoning-benchmark"
 DEFAULT_OUTPUT_FILE = "jo-court-reasoning-artifact.json"
@@ -37,7 +37,9 @@ DOMAIN_LABELS = {
     "crawlspace_drainage_pest_pathway": "Crawlspace / Drainage / Pest Pathway",
     "deferred_maintenance_fyi": "Deferred Maintenance / FYI",
     "dryer_exhaust_ventilation": "Dryer / Exhaust Ventilation",
+    "deck_carpentry": "Deck / Carpentry",
     "electrical": "Electrical",
+    "foundation_structure": "Foundation / Structure",
     "floors_drywall_interior_finishes": "Floors / Drywall / Interior Finishes",
     "hvac": "HVAC",
     "life_safety": "Life Safety",
@@ -212,7 +214,9 @@ OPERATIONAL_REVIEWERS_BY_DOMAIN = {
     "crawlspace_drainage_pest_pathway": "crawlspace / drainage reviewer",
     "deferred_maintenance_fyi": "human reviewer",
     "dryer_exhaust_ventilation": "dryer exhaust / ventilation reviewer",
+    "deck_carpentry": "deck / carpentry reviewer",
     "electrical": "electrician",
+    "foundation_structure": "foundation / structural reviewer",
     "floors_drywall_interior_finishes": "finish / interior reviewer",
     "hvac": "HVAC reviewer",
     "life_safety": "life-safety reviewer",
@@ -939,8 +943,10 @@ def build_localized_cost_context(
     }
 
 
-def external_claim_controls(price_sources: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    price_sources = price_sources or []
+def external_claim_controls(external_sources: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    external_sources = external_sources or []
+    price_sources = [source for source in external_sources if source.get("source_type") == "repair_cost_guide"]
+    technical_sources = [source for source in external_sources if source.get("source_type") == "technical_guidance"]
     return {
         "weather": {
             "claims_made": False,
@@ -956,6 +962,11 @@ def external_claim_controls(price_sources: list[dict[str, Any]] | None = None) -
             "claims_made": False,
             "sources": [],
             "required_before_claim": "Use official jurisdiction/code or manufacturer source plus human review; otherwise say qualified review is needed.",
+        },
+        "technical_guidance": {
+            "claims_made": bool(technical_sources),
+            "sources": [source["id"] for source in technical_sources],
+            "required_before_claim": "Use authoritative technical or manufacturer guidance, preserve its scope, and do not turn guidance into an unsupported code or causation claim.",
         },
         "materials": {
             "claims_made": False,
@@ -975,23 +986,10 @@ def contractor_input_model() -> dict[str, Any]:
 
 
 def make_interpretation(finding: dict[str, Any], system_label: str, category: str) -> str:
-    statement = clean_inline(finding.get("inspector_statement", "this source finding"))
-    section = finding.get("source_section", "inspection report")
-    if category == "safety_life_safety":
-        emphasis = "a safety-related review item"
-    elif category == "active_damage_or_water":
-        emphasis = "a water, moisture, or active-damage review item"
-    elif category == "major_system_or_lifecycle":
-        emphasis = "a major-system or lifecycle review item"
-    elif category == "needs_more_info":
-        emphasis = "an uncertainty-reduction item"
-    elif category == "deferred_maintenance":
-        emphasis = "a maintenance or FYI review item"
-    else:
-        emphasis = "a functional or condition review item"
+    title = clean_inline(finding.get("title", "the reported condition"))
     return (
-        f"The source report states: {statement}. Shelter Prep can organize it as {emphasis} in the {system_label} system "
-        f"based on the {section} source section. This is an AI draft interpretation and does not establish final cause, final scope, code status, or pricing."
+        f"{title} needs an issue-specific review of condition, realistic response paths, and the field facts that select among them. "
+        f"The current evidence supports routing it to {system_label}, but does not establish final cause or field scope."
     )
 
 
@@ -1003,7 +1001,7 @@ def make_unknowns(
     cached_visual_count: int,
     cause: str,
 ) -> list[str]:
-    unknowns = ["Human review has not verified this interpretation."]
+    unknowns: list[str] = []
     if not cause:
         unknowns.append("Exact cause is not established unless the inspector explicitly stated it.")
     mechanism_set = set(mechanisms)
@@ -1031,7 +1029,7 @@ def make_unknowns(
         unknowns.append("No linked report photo caption was deterministically attached to this observation.")
     elif cached_visual_count == 0:
         unknowns.append("No cached independent visual observation is available for the linked photo evidence in this reasoning artifact.")
-    unknowns.append("Final repair scope, contractor means/methods, permits, and cost are outside this Round 1 benchmark.")
+    unknowns.append("Final field scope, means and methods, permit needs, and contractor pricing remain unverified.")
     return list(dict.fromkeys(unknowns))
 
 
@@ -1173,10 +1171,10 @@ def make_next_evidence(record: dict[str, Any]) -> dict[str, Any]:
         materiality = ["next_human_decision"]
         new_evidence_requested = True
     elif category == "needs_more_info":
-        uncertainty = "What exact source detail or field fact is missing from the inspector recommendation."
-        request = f"Identify the specific unresolved fact in the source recommendation for {location_text} and request only the photo, measurement, or test that resolves that fact."
-        owner = "human_reviewer"
-        why = "Round 1 should reduce one decision-blocking uncertainty, not ask for broad reinspection."
+        uncertainty = "Which observable condition determines whether this is maintenance, repair, replacement, or specialist evaluation."
+        request = f"Photograph the full affected component at {location_text}, record the relevant measurement or operating test, and ask the qualified trade to state which response path applies."
+        owner = mechanism_owner(mechanisms, "qualified_trade")
+        why = "A component-specific photo plus the relevant measurement or test is the smallest evidence set that can select a defensible response path."
         materiality = ["next_human_decision"]
         new_evidence_requested = True
 
@@ -2659,6 +2657,10 @@ Sewer and private systems are not inspected.""",
         assert record["affected_location"]["orientation_status"] != "inferred_low_confidence"
         assert record["finding_card"]["source_evidence"]["inspector_statement"]
         assert record["review_workflow"]["priority"] in {"quick_review", "careful_review", "waiting_for_evidence"}
+        serialized = json.dumps(record).lower()
+        assert "organize it as" not in serialized
+        assert "decision-blocking uncertainty" not in serialized
+        assert "human review has not verified this interpretation" not in serialized
     explicit_location = normalize_affected_location(
         {
             "source_file_id": "synthetic-source",
@@ -2744,6 +2746,14 @@ Sewer and private systems are not inspected.""",
     assert records_by_id["atomic-observation-1"]["environmental_context"]["causal_claim_policy"] == "No causal claim may be made from weather correlation alone."
     assert records_by_id["atomic-observation-3"]["environmental_context"]["is_relevant_to_interpretation"] is False
     assert "heat/cooling mode" in records_by_id["atomic-observation-6"]["smallest_useful_next_evidence"]["next_evidence_needed"]
+    gfci = records_by_id["atomic-observation-4"]
+    assert gfci["organization"]["domain_key"] == "electrical"
+    assert gfci["finding_card"]["next_step_owner"] == "Licensed electrician"
+    assert len(gfci["finding_card"]["research_source_refs"]) >= 2
+    assert "test the affected receptacle" in gfci["finding_card"]["recommended_next_step"]
+    smoke = records_by_id["atomic-observation-8"]
+    assert smoke["organization"]["domain_key"] == "life_safety"
+    assert "ten years" in smoke["epistemic_states"]["shelter_prep_interpretation"].lower()
     assert "material_deterioration_or_damage" not in artifact["summary"]["mechanism_candidate_distribution"]
     assert "electrical_shock_hazard" not in classify_mechanisms("Cracked deteriorated back of fireplace firebox")
     assert classify_mechanisms("Inspect the flues, smoke chambers, and firebox") == ["chimney_firebox_flue_safety"]

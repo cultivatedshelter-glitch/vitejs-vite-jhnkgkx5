@@ -134,6 +134,78 @@ ALTERNATE_SOURCE_IDS = {
 }
 
 
+def technical_source(source_id: str, name: str, url: str, scope: str) -> dict[str, Any]:
+    return {
+        "id": source_id,
+        "source_id": source_id,
+        "source_name": name,
+        "source_type": "technical_guidance",
+        "source_class": "authoritative_public_or_manufacturer_guidance",
+        "source_reference": url,
+        "source_url": url,
+        "source_geography": {"level": "national", "label": "United States", "match_quality": "national_guidance"},
+        "scope_basis": scope,
+        "retrieved_at": "2026-09-20",
+        "review_status": "external_source_retrieved_needs_human_review",
+    }
+
+
+TECHNICAL_SOURCES = {
+    item["id"]: item
+    for item in [
+        technical_source("cpsc-gfci", "U.S. Consumer Product Safety Commission GFCI Fact Sheet", "https://www.cpsc.gov/s3fs-public/099_0.pdf", "GFCI protection types and qualified-electrician installation."),
+        technical_source("cpsc-fire-safety", "U.S. Consumer Product Safety Commission Fire Safety", "https://www.cpsc.gov/Safety-Education/Safety-Education-Centers/Fire-Safety-Information-Center", "Smoke-alarm placement, testing, and replacement guidance."),
+        technical_source("cpsc-co-alarms", "U.S. Consumer Product Safety Commission CO Alarms", "https://www.cpsc.gov/Safety-Education/Safety-Education-Centers/Carbon-Monoxide-Information-Center/CO-Alarms", "CO-alarm placement, testing, and maintenance guidance."),
+        technical_source("energy-star-hvac", "ENERGY STAR HVAC Maintenance Checklist", "https://www.energystar.gov/saveathome/heating-cooling/maintenance-checklist", "Professional heating/cooling inspection, cleaning, controls, airflow, and combustion checks."),
+        technical_source("doe-furnace-venting", "U.S. Department of Energy High-Efficiency Gas Furnace Measure Guideline", "https://www1.eere.energy.gov/buildings/publications/pdfs/building_america/highefficiency_gas_furnaces.pdf", "Existing vent-system deterioration, terminal clearances, and qualified HVAC review."),
+        technical_source("doe-kickout-flashing", "Building America Step and Kick-Out Flashing Guide", "https://basc.pnnl.gov/resource-guides/step-and-kick-out-flashing-roof-wall-intersections", "Roof-wall drainage-plane integration and concealed-damage inspection."),
+        technical_source("doe-gutters", "Building America Gutters and Downspouts Guide", "https://basc.pnnl.gov/resource-guides/gutters-and-downspouts", "Roof runoff, gutter drainage, drip-edge relationship, and water management."),
+        technical_source("doe-drip-edge", "Building Science Education Drip Edge Guide", "https://bsesc.energy.gov/energy-basics/drip-edge-roof-eaves-and-rakes", "Roof-edge moisture protection and drip-edge integration."),
+        technical_source("doe-wall-flashing", "Building America Exterior Wall Flashing Guide", "https://basc.pnnl.gov/resource-guides/flashing-bottom-exterior-walls", "Drainage-plane, flashing, cladding, and concealed moisture context."),
+        technical_source("epa-moisture", "U.S. EPA Mold, Moisture and Your Home", "https://www.epa.gov/mold/brief-guide-mold-moisture-and-your-home", "Moisture-source correction, drying, and limits on sealing damp or moldy materials."),
+        technical_source("epa-bathroom-water", "U.S. EPA Remodeling and Indoor Air Quality", "https://www.epa.gov/indoor-air-quality-iaq/remodeling-your-home-and-indoor-air-quality", "Bathroom leak, wet-wall, and water-resistant surface guidance."),
+        technical_source("hardie-fiber-cement", "James Hardie Fiber-Cement Repair Guidance", "https://www.jameshardie.com/faq/", "Small fiber-cement damage repair and failed perimeter caulk maintenance."),
+    ]
+}
+
+
+def research_rule(pattern: str, domain: str, system: str, trade: str, interpretation: str, unknown: str, next_task: str, why: str, source_ids: list[str]) -> dict[str, Any]:
+    return {"pattern": pattern, "domain": domain, "system": system, "trade": trade, "interpretation": interpretation, "unknown": unknown, "next_task": next_task, "why": why, "source_ids": source_ids}
+
+
+RESEARCH_RULES = [
+    research_rule(r"trip hazard", "site_grading_drainage", "Site / Hardscape", "Concrete / hardscape contractor", "A walking-surface displacement is operationally a fall hazard. The realistic response is localized leveling or repair when the material and movement allow it, or section replacement when deterioration or movement is broader.", "Surface material, vertical displacement, affected area, and the cause of movement are not established.", "Measure the maximum vertical displacement, identify whether the surface is concrete, asphalt, or pavers, and photograph the full transition.", "Material, displacement, and movement cause determine whether leveling, patching, or replacement is the defensible path.", ["homeguide-sidewalk-repair", "fixr-sidewalk-repair"]),
+    research_rule(r"cracks?- minor", "foundation_structure", "Foundation / Structure", "Foundation specialist or structural engineer", "A visible crack can remain a localized non-structural repair only after its width, pattern, moisture condition, and movement history support that conclusion. Movement or displacement changes the path to structural evaluation before repair.", "Crack width, orientation, displacement, moisture, and evidence of ongoing movement are unknown.", "Photograph the full crack with a ruler, record width and any displacement, and compare it with dated photos or monitoring marks before selecting repair.", "Those observations separate a stable cosmetic or injection repair from a condition needing structural evaluation.", ["homeguide-foundation-inspection", "homeguide-foundation-crack", "angi-foundation-crack"]),
+    research_rule(r"fiber-cement siding|rot damaged siding", "moisture_envelope", "Exterior Envelope / Siding", "Exterior siding contractor", "Localized fiber-cement damage may be patchable or replaceable by section, but softness, staining, failed flashing, or damaged sheathing would expand the work beyond the visible face.", "Damage dimensions, material match, fastener condition, and concealed sheathing or flashing condition are unknown.", "Measure and photograph the damaged siding area, probe the visible edges for softness, and inspect the nearest flashing and wall transition for moisture evidence.", "The visible extent and substrate condition decide whether this is a surface repair, board replacement, or broader envelope investigation.", ["hardie-fiber-cement", "doe-wall-flashing", "homeguide-siding-repair"]),
+    research_rule(r"minor caulking|split caulking", "moisture_envelope", "Exterior Envelope / Siding", "Exterior siding contractor", "Failed exterior sealant may be a localized joint-maintenance item, but resealing is appropriate only after the adjacent surfaces are dry, sound, and not concealing a flashing or drainage-plane defect.", "Joint length, substrate condition, moisture behind the joint, and compatibility of replacement sealant are unknown.", "Photograph the complete joint, measure its length and width, and check whether adjacent siding or trim is soft, stained, loose, or wet before resealing.", "Sound, dry adjacent materials support a localized sealant repair; deterioration or moisture changes the path to envelope repair.", ["hardie-fiber-cement", "doe-wall-flashing", "epa-moisture"]),
+    research_rule(r"lost(?: window)? seals", "windows_doors_finish_carpentry", "Windows / Doors", "Window repair contractor", "Condensation or fogging between panes usually points to a failed insulated-glass seal rather than a surface-cleaning issue. The practical choice is glass-unit replacement when the frame is serviceable or full-window replacement when the frame, sash, or hardware is also deficient.", "Frame and sash condition, glass dimensions, unit compatibility, and the number of affected windows are unknown.", "Confirm that fogging is between the panes, record glass and frame dimensions, and test sash and hardware operation.", "That evidence distinguishes insulated-glass replacement from a complete window replacement.", ["homeguide-window-seal", "angi-window-seal", "fixr-window-seal"]),
+    research_rule(r"decking- deterioration", "deck_carpentry", "Deck / Carpentry", "Deck contractor or carpenter", "Visible deck deterioration can be limited to replaceable decking, but softness at fasteners, joists, beams, posts, or ledger connections would expand the path into structural component repair.", "The depth and area of deterioration and the condition of supporting framing and connections are unknown.", "Photograph and probe the affected boards and visible framing, including fasteners and ledger area, to determine whether deterioration is limited to decking or extends into structural members.", "The framing check separates limited board work from a broader structural deck repair.", ["homeguide-deck-simple", "angi-deck-limited", "fixr-deck-patching"]),
+    research_rule(r"hard surfaces- deterioration", "site_grading_drainage", "Site / Hardscape", "Concrete / hardscape contractor", "Deteriorated hardscape may support resurfacing when the slab remains stable, while heaving, settlement, drainage defects, or deep section loss generally require a different repair or replacement path.", "Material, measured area, depth of deterioration, movement, and drainage condition are unknown.", "Identify the surface material, measure the affected area and any height change, and document cracking, heaving, settlement, and nearby drainage.", "Substrate stability and movement determine whether resurfacing is viable or replacement/correction is needed.", ["homeguide-concrete-resurfacing", "fixr-sidewalk-repair"]),
+    research_rule(r"exposed(?: roof)? fasteners", "roof", "Roof", "Roofing contractor", "Exposed roof fasteners can be a localized maintenance repair when the surrounding roofing and deck are sound; corrosion, failed seals, repeated leakage, or widespread fastener exposure would broaden the scope.", "Fastener count, corrosion, seal condition, active leakage, and surrounding roof/deck condition are unknown.", "Photograph and count the exposed fasteners, document seal and corrosion condition, and inspect the roof underside directly below for staining or dampness.", "Extent and underside evidence determine whether localized sealing/fastener work is enough.", ["doe-drip-edge", "homeguide-roof-minor", "angi-roof-repair"]),
+    research_rule(r"minor moss", "roof", "Roof", "Roofing contractor", "Moss is primarily a maintenance condition, but aggressive cleaning can damage some roof coverings. The useful path depends on covering type, remaining condition, moss extent, and safe access.", "Roof material, moss coverage, surface deterioration, pitch, and access are unknown.", "Identify the roof covering, photograph moss coverage and nearby surface wear, and have a roofer select a cleaning method compatible with that material.", "Material and surface condition determine whether cleaning alone is appropriate or repairs are also needed.", ["homeguide-roof-cleaning", "angi-roof-cleaning"]),
+    research_rule(r"caulking at the roof|roof jack flashing caulked", "roof", "Roof", "Roofing contractor", "Sealant at a roof penetration may be a temporary maintenance detail rather than a durable flashing repair. The repair choice depends on whether the boot/flashing is intact and integrated with the roof covering.", "Flashing type, sealant condition, roof-covering condition, and evidence of leakage below are unknown.", "Photograph the complete penetration and flashing laps, then inspect directly below it for staining or dampness before choosing reseal versus flashing replacement.", "Flashing integrity and underside evidence distinguish maintenance from a water-entry repair.", ["doe-kickout-flashing", "homeguide-roof-flashing", "angi-roof-flashing"]),
+    research_rule(r"gutters restricted holding water", "site_grading_drainage", "Roof Drainage", "Gutter / roofing contractor", "Standing water in a gutter can result from debris, inadequate slope, blocked discharge, loose supports, or deformation. Cleaning is sufficient only if flow and pitch are sound afterward.", "Whether debris, pitch, supports, downspout blockage, or fascia damage is causing the standing water is unknown.", "Clean and flush the affected run, verify slope and downspout discharge, and photograph supports and fascia where water remains.", "A post-cleaning flow check separates routine cleaning from gutter realignment, hardware repair, or fascia work.", ["doe-gutters", "homeguide-gutter-cleaning", "angi-gutter-cleaning"]),
+    research_rule(r"kick-out flashings missing", "moisture_envelope", "Roof / Wall Flashing", "Roofing and siding contractor", "Missing kick-out flashing can direct concentrated roof runoff behind wall cladding. A durable correction must integrate roof flashing, wall drainage plane, siding clearance, and the gutter rather than merely cover the visible joint.", "Wall-cavity moisture, sheathing condition, existing step flashing, and the amount of siding removal required are unknown.", "Open or inspect enough of the roof-wall termination to confirm step flashing and drainage-plane integration, and check the wall below for moisture or deterioration.", "The concealed integration and damage check determine whether this is flashing-only work or flashing plus wall repair.", ["doe-kickout-flashing", "doe-wall-flashing", "homeguide-roof-flashing"]),
+    research_rule(r"drip edge missing", "roof", "Roof", "Roofing contractor", "Drip edge protects the roof edge and helps direct water away from sheathing and fascia. Retrofit feasibility depends on roof-covering integration and the condition of the edge, fascia, and gutter.", "Linear footage, edge condition, existing underlayment/covering integration, and access are unknown.", "Measure the missing length and photograph the roof edge, underlayment/covering interface, fascia, and gutter relationship.", "Those details determine whether drip edge can be added locally or whether adjacent roof-edge materials also need repair.", ["doe-drip-edge", "doe-gutters", "homeguide-drip-edge"]),
+    research_rule(r"unprotected knockout", "electrical", "Electrical", "Licensed electrician", "An open or oversized panel knockout leaves the enclosure incomplete. The practical repair is normally a listed closure or fitting when the enclosure is otherwise serviceable; panel damage or incompatible openings can require broader work.", "Opening dimensions, panel condition, enclosure compatibility, and whether other panel defects are present are unknown.", "Have an electrician measure the opening, identify the panel/enclosure, and confirm whether a listed closure or fitting can restore the enclosure.", "Panel compatibility decides whether this is a small enclosure repair or a broader panel correction.", ["homeguide-electrical-small"]),
+    research_rule(r"afci: none installed", "electrical", "Electrical", "Licensed electrician", "Absence of AFCI protection is an upgrade and applicability question, not proof that a particular retrofit method is suitable. Panel compatibility, circuit configuration, and locally applicable requirements determine the options.", "Applicable requirements, panel compatibility, shared-neutral conditions, and circuit count are unknown.", "Have an electrician identify the affected circuits, panel and breaker compatibility, and shared-neutral conditions before proposing AFCI protection.", "Those facts determine whether compatible breakers, another listed method, troubleshooting, or no retrofit is appropriate.", ["homeguide-afci-breaker", "homeguide-electrical-small"]),
+    research_rule(r"cpvc plumbing issues", "plumbing", "Plumbing", "Licensed plumber", "A reported CPVC concern may support a localized repair when damage is isolated and accessible; repeated leakage, brittle material, or distributed deterioration shifts the decision toward broader replacement planning.", "The issue type, extent, leak history, pipe condition, access, and finish-restoration scope are unknown.", "Map the affected CPVC locations, photograph joints and damage, and have a plumber assess brittleness and whether the condition is isolated or systemic.", "Extent and material condition distinguish a targeted repair from broader repiping.", ["homeguide-pipe-repair", "homeguide-house-repipe"]),
+    research_rule(r"corroded piping connections", "plumbing", "Plumbing", "Licensed plumber", "Corrosion at one connection may be repairable locally, but active leakage or similar corrosion at multiple connections can indicate broader material or water-condition involvement.", "Active leakage, depth and extent of corrosion, adjacent pipe condition, and access are unknown.", "Dry and photograph the connection, check for active seepage, and inspect comparable accessible connections for similar corrosion.", "Whether corrosion is isolated or repeated determines local connection repair versus broader piping evaluation.", ["homeguide-pipe-repair", "homeguide-house-repipe"]),
+    research_rule(r"exhaust vent- slope", "hvac", "HVAC / Combustion Venting", "Licensed HVAC contractor", "Improper combustion-vent slope can affect condensate drainage and safe vent performance. The correction depends on equipment and fuel type, vent material, route, clearances, and manufacturer requirements.", "Equipment type, vent material, measured slope, route, deterioration, and manufacturer requirements are unknown.", "Have an HVAC technician identify the appliance and vent system, measure the horizontal slope, and document joints, supports, corrosion, and termination.", "Those measurements determine whether support adjustment, section replacement, or a larger vent redesign is appropriate.", ["doe-furnace-venting", "energy-star-hvac", "homeguide-hvac-inspect"]),
+    research_rule(r"needs servicing/cleaning|dirty furnace|clean and service", "hvac", "HVAC", "Licensed HVAC contractor", "Routine cleaning and service should include operating controls, airflow components, filters, condensate drainage where applicable, and combustion-related checks rather than surface cleaning alone.", "Equipment type, service history, operating condition, filter/airflow condition, and any repair needs are unknown.", "Schedule a documented HVAC service that records equipment condition, filter and blower condition, controls, airflow, condensate drainage, and combustion findings where applicable.", "A complete service record separates maintenance from a repair or replacement decision.", ["energy-star-hvac", "homeguide-furnace-clean", "angi-furnace-cleaning"]),
+    research_rule(r"gfci missing|no gfci protection", "electrical", "Electrical", "Licensed electrician", "Missing GFCI protection can sometimes be addressed at an existing receptacle or breaker, but device location, downstream protection, grounding, wiring, and panel compatibility select the method.", "Existing wiring, grounding, upstream/downstream protection, box condition, and panel compatibility are unknown.", "Have an electrician test the affected receptacle and downstream devices, identify existing protection and grounding, and confirm the appropriate listed GFCI method.", "The circuit test prevents duplicate or incompatible work and identifies whether one device can protect downstream outlets.", ["cpsc-gfci", "homeguide-gfci-replacement", "angi-gfci"]),
+    research_rule(r"receptacle loose", "electrical", "Electrical", "Licensed electrician", "A loose receptacle may need only secure mounting or device replacement, but a damaged box, overheated connection, or compromised wiring changes the scope.", "Whether the device, mounting ears, box, or wiring is loose or damaged is unknown.", "De-energize and have an electrician inspect device mounting, box condition, conductor terminations, and signs of heat damage.", "The loose component and wiring condition determine securement, device replacement, or box/wiring repair.", ["homeguide-outlet-replacement", "angi-outlet-repair", "angi-outlet-replacement"]),
+    research_rule(r"no catch pan", "plumbing", "Laundry / Plumbing", "Licensed plumber or appliance installer", "A washing-machine pan above finished space is a loss-mitigation measure. A pan-only installation is practical only when appliance clearance, floor support, and a lawful drain or discharge route are workable.", "Appliance dimensions, available height, floor condition, drain route, and discharge feasibility are unknown.", "Measure the washer footprint and clearances, inspect the floor, and identify whether a feasible drain or approved discharge route exists before selecting a pan-only or pan-and-drain scope.", "The drain route and clearances are the facts that control feasibility and cost.", ["epa-moisture"]),
+    research_rule(r"\bloose\b.*\btoilet\b|\btoilet\b.*\bloose\b", "plumbing", "Plumbing", "Licensed plumber", "Movement at a toilet can result from loose mounting, a failed seal, flange damage, or deteriorated flooring. Resetting the fixture is reasonable only when the toilet, flange, and subfloor are serviceable.", "Fixture condition, flange condition, seal leakage, and subfloor condition are unknown.", "Remove or lift the toilet as needed to confirm whether the flange is intact and whether the subfloor around the base is sound.", "This separates a routine reset or replacement from work involving a damaged flange or concealed floor deterioration.", ["epa-bathroom-water", "homeguide-toilet-repair", "angi-toilet-repair"]),
+    research_rule(r"sticking shower door", "plumbing", "Bathroom / Glazing", "Shower-door or glazing contractor", "A sticking shower door may be corrected by adjustment or hardware repair when the glass and frame are sound; distortion, corrosion, unavailable hardware, or glass damage can favor replacement.", "Glass, frame, hinge/roller, alignment, opening dimensions, and leakage condition are unknown.", "Photograph the frame and hardware, test where the door binds, and measure the opening before choosing adjustment, hardware repair, or replacement.", "The binding point and component condition identify the smallest workable path.", ["homeguide-shower-repair", "fixr-shower-repair", "angi-shower-door"]),
+    research_rule(r"faucet handle issue", "plumbing", "Plumbing", "Licensed plumber", "A handle problem may be limited to a loose handle or replaceable cartridge, but corrosion, leakage, discontinued parts, or damaged valve connections can make faucet replacement more practical.", "The failed component, active leakage, faucet model/parts availability, and connection condition are unknown.", "Identify the faucet model, test for leakage and handle movement, and inspect accessible supply and mounting connections.", "Component identity and leakage determine repair versus faucet replacement.", ["homeguide-faucet", "angi-faucet"]),
+    research_rule(r"backsplash- caulking|caulk at spout", "plumbing", "Bathroom / Wet Area", "Plumber or qualified finish contractor", "Failed sealant at a wet-area joint can be a localized reseal when the substrate is dry and sound. Active leakage, soft materials, or a plumbing leak would require repair before new sealant.", "Substrate moisture, hidden damage, joint dimensions, and whether plumbing is leaking are unknown.", "Remove loose sealant, inspect and moisture-check the exposed joint and adjacent wall, and test the nearby fixture for leakage before resealing.", "Dry, sound materials support resealing; moisture or fixture leakage changes the repair path.", ["epa-bathroom-water", "epa-moisture", "homeguide-bath-caulk"]),
+    research_rule(r"smoke alarm is over 10 yrs old|old smoke alarm", "life_safety", "Life Safety", "Licensed electrician or alarm installer", "A smoke alarm older than ten years has reached the CPSC replacement interval. Replacement still needs to match the existing power and interconnection arrangement and should be followed by functional testing.", "Power type, interconnection, device count, compatibility, and current test status are unknown.", "Record the alarm model, manufacture date, power source, and interconnection, then replace the aged unit with a compatible alarm and test the system.", "Compatibility and interconnection determine the replacement product and whether one or several alarms require coordinated work.", ["cpsc-fire-safety", "homeguide-smoke-alarm", "angi-smoke-alarm"]),
+    research_rule(r"missing carbon monoxide detector", "life_safety", "Life Safety", "Licensed electrician or alarm installer", "A missing CO alarm leaves the reported level without the warning coverage described by CPSC guidance. The installation path depends on placement, power source, interconnection, and the existing alarm system.", "Exact placement, power/interconnection method, device count, and compatibility with existing alarms are unknown.", "Map existing smoke and CO alarms by level and sleeping area, then select a compatible location and power/interconnection method for the missing CO alarm.", "The alarm map establishes the actual coverage gap and prevents an unsupported placement assumption.", ["cpsc-co-alarms", "homeguide-co-alarm"]),
+    research_rule(r"previous repairs attic", "attic_ventilation_insulation", "Attic / Structure", "Roofing, attic, or structural specialist", "Evidence of a prior attic repair is not itself proof of current failure. The useful question is whether the repaired area is stable, dry, adequately connected, and documented.", "Repair purpose, date, materials, current moisture, movement, and permit or invoice history are unknown.", "Photograph the entire repaired area and connections, take moisture readings at and around it, and obtain permits, invoices, or prior photos if available.", "Current condition plus repair history determines whether documentation is enough or specialist/structural evaluation is warranted.", ["epa-moisture", "homeguide-attic-inspection"]),
+]
+
+
 def comparison_sources(primary_source_id: str | None) -> list[dict[str, Any]]:
     if not primary_source_id or primary_source_id not in SOURCES:
         return []
@@ -200,8 +272,62 @@ def _matching_rule(record: dict[str, Any]):
     return [], []
 
 
+def _record_text(record: dict[str, Any]) -> str:
+    source_record = record.get("source", {})
+    card = record.get("finding_card", {})
+    return " ".join(str(value or "") for value in [card.get("finding_title"), source_record.get("source_section"), source_record.get("inspector_statement"), source_record.get("inspector_recommendation")]).lower()
+
+
+def _matching_research_rule(record: dict[str, Any]) -> dict[str, Any] | None:
+    text = _record_text(record)
+    return next((rule for rule in RESEARCH_RULES if re.search(rule["pattern"], text, re.IGNORECASE)), None)
+
+
+def apply_research_profile(record: dict[str, Any], retrieved_at: str) -> list[dict[str, Any]]:
+    profile = _matching_research_rule(record)
+    if not profile:
+        return []
+    organization = record["organization"]
+    organization["domain_key"] = profile["domain"]
+    organization["building_system"] = profile["system"]
+    organization["semantic_classification_basis"] = "issue_specific_research_profile_needs_human_review"
+    epistemic = record["epistemic_states"]
+    epistemic["shelter_prep_interpretation"] = profile["interpretation"]
+    epistemic["unknowns"] = [profile["unknown"], *[
+        value for value in epistemic.get("unknowns", [])
+        if "human review has not verified" not in value.lower()
+        and "round 1" not in value.lower()
+        and value != profile["unknown"]
+    ]]
+    next_evidence = record["smallest_useful_next_evidence"]
+    next_evidence.update({
+        "uncertainty": profile["unknown"],
+        "smallest_fact_or_check": profile["next_task"],
+        "next_evidence_needed": profile["next_task"],
+        "owner": profile["trade"],
+        "why_it_matters": profile["why"],
+        "reason": "issue_specific_decision_evidence",
+    })
+    record["recommended_next_step"].update({"move": profile["next_task"], "owner": profile["trade"], "why_this_next_step": profile["why"]})
+    card = record["finding_card"]
+    card["next_step_owner"] = profile["trade"]
+    card["recommended_next_step"] = profile["next_task"]
+    card["why_next_step"] = profile["why"]
+    card["what_we_dont_know"] = epistemic["unknowns"]
+    card["research_source_refs"] = list(dict.fromkeys(profile["source_ids"]))
+    card["research_status"] = "bounded_independent_research_needs_human_review"
+    record["review_workflow"]["reasons"] = list(dict.fromkeys([*record["review_workflow"].get("reasons", []), "independent_research_needs_review"]))
+    sources = []
+    for source_id in profile["source_ids"]:
+        source_record = TECHNICAL_SOURCES.get(source_id) or SOURCES.get(source_id)
+        if source_record:
+            sources.append({**source_record, "retrieved_at": retrieved_at})
+    return sources
+
+
 def apply_decision_support(record: dict[str, Any], retrieved_at: str) -> list[dict[str, Any]]:
     card = record["finding_card"]
+    research_sources = apply_research_profile(record, retrieved_at)
     configured_paths, decision_factors = _matching_rule(record)
     rendered_paths = []
     used_sources = []
@@ -256,6 +382,10 @@ def apply_decision_support(record: dict[str, Any], retrieved_at: str) -> list[di
     card["repair_paths"] = rendered_paths
     card["what_changes_the_decision"] = decision_factors
     card["decision_support_status"] = "sourced_paths_available" if used_sources else "no_sourced_path_available"
+    card["research_source_refs"] = list(dict.fromkeys([
+        *card.get("research_source_refs", []),
+        *[source_record["id"] for source_record in used_sources],
+    ]))
     card["transaction_considerations"] = [
         "Repair, replacement, and information-gathering paths can have different timing and ownership implications.",
         "The recipient should choose among supported paths after the listed decision-changing facts are confirmed.",
@@ -316,7 +446,8 @@ def apply_decision_support(record: dict[str, Any], retrieved_at: str) -> list[di
             else "No defensible source in the current supported geography catalog matched this finding."
         ),
     }
-    unique_sources = {source["id"]: {**source, "retrieved_at": retrieved_at} for source in used_sources}
+    unique_sources = {source["id"]: source for source in research_sources}
+    unique_sources.update({source["id"]: {**source, "retrieved_at": retrieved_at} for source in used_sources})
     return list(unique_sources.values())
 
 

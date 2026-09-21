@@ -34,6 +34,9 @@ function repository(root) {
       return { ...property, created: true }
     },
     async canAccessProperty(actor, property) { return actor === 'authorized-token' && property === PROPERTY_ID && [...properties.values()].some((item) => item.actorId === actor && item.id === property) },
+    async getPropertyAddress({ actor, propertyId }) {
+      return [...properties.values()].find((item) => item.actorId === actor.id && item.id === propertyId)?.address || null
+    },
     async isReviewer() { return false },
     async storeEvidence({ actor, propertyId, file }) {
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -147,8 +150,13 @@ test('real private PDF travels through authorized processing, validation, and th
     await generatePdf(pdfPath)
     const repo = repository(root)
     const notificationCalls = []
+    const professionalResearchCalls = []
     const notifications = { async notifyNeedsReview(value) { notificationCalls.push(['needs_review', value]) }, async notifyProcessingFailed(value) { notificationCalls.push(['processing_failed', value]) } }
-    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: runExistingPhase1Reasoning, notifications })
+    const localProfessionalResearch = async (input) => {
+      professionalResearchCalls.push(input)
+      return { groups: [], lookups: [{ trade: 'Exterior / Siding', status: 'sourced', provider: 'Test Places' }] }
+    }
+    const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: runExistingPhase1Reasoning, notifications, localProfessionalResearch })
     const handle = createPhase1HttpHandler(service)
     const property = await requestJson(handle, 'http://test/api/phase1/properties/resolve', {
       method: 'POST', headers: { authorization: 'Bearer authorized-token', 'content-type': 'application/json' },
@@ -202,6 +210,10 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.ok(observation.finding_card.review_workflow.reasons.includes('sourced_path_range_needs_review'))
     assert.ok(observation.finding_card.what_we_dont_know.some((value) => /contractor pricing remain unverified/i.test(value)))
     assert.equal(completed.body.artifact.decisionOverview.total_findings, completed.body.artifact.atomicObservations.length)
+    assert.equal(professionalResearchCalls.length, 1)
+    assert.equal(professionalResearchCalls[0].propertyAddress, '10 Test Ave, Exampletown, OR 97000')
+    assert.equal(professionalResearchCalls[0].reviewedOnly, false)
+    assert.equal(completed.body.artifact.localProfessionals.lookups[0].provider, 'Test Places')
 
     const adapter = await loadAdapter(root)
     const viewModel = adapter.adaptPhase1ReasoningArtifact(completed.body.artifact, { mode: 'live' })
@@ -211,6 +223,7 @@ test('real private PDF travels through authorized processing, validation, and th
     assert.ok(viewModel.findings[0].unknown.length > 0)
     assert.ok(viewModel.findings[0].repairPaths[0].sources[0].url)
     assert.equal(viewModel.humanObservations[0].professionalStatus, 'Not Established')
+    assert.equal(viewModel.localProfessionals.lookups[0].status, 'sourced')
     assert.equal(notificationCalls.length, 1)
     assert.equal(notificationCalls[0][0], 'needs_review')
     assert.equal(notificationCalls[0][1].requestId, submit.body.id)

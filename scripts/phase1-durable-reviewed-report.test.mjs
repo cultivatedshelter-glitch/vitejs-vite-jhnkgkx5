@@ -12,9 +12,22 @@ import { createPhase1SupabaseRepository } from '../server/phase1SupabaseReposito
 
 const reviewedArtifact = {
   schemaVersion: 'phase1-test',
-  atomicObservations: [{ id: 'obs-1', source: { source_page: 7, inspector_statement: 'Fixture moved.' }, epistemic_states: { source_observation: 'Fixture moved.', shelter_prep_interpretation: 'Movement may indicate a loose connection.' }, finding_card: { finding_title: 'Loose fixture', next_step_owner: 'Plumber', what_we_know: ['Movement was reported.'], what_we_dont_know: ['Flange condition is unknown.'], recommended_next_step: 'Confirm flange condition.', why_next_step: 'This separates reset from concealed repair.', repair_paths: [{ id: 'reset', label: 'Reset fixture', price_low: 250, price_high: 600, price_unit: 'project', price_source_refs: ['source-1'], price_geography: { level: 'metro', label: 'Portland metro' }, assumptions: ['Fixture reusable'], major_exclusions: ['Floor repair'], range_status: 'broad_preliminary' }] } }],
+  external_sources: [{ id: 'source-1', source_name: 'Qualified repair guide', source_url: 'https://example.com/source', scope_basis: 'Fixture reset and flange decision context.' }],
+  atomicObservations: [{ id: 'obs-1', source: { source_page: 7, inspector_statement: 'Fixture moved.' }, epistemic_states: { source_observation: 'Fixture moved.', shelter_prep_interpretation: 'Movement at the fixture can reflect mounting, flange, seal, or floor conditions; those conditions select reset, flange repair, or replacement.' }, finding_card: { finding_title: 'Loose fixture', next_step_owner: 'Plumber', research_source_refs: ['source-1'], what_we_know: ['Movement was reported.'], what_we_dont_know: ['Flange condition is unknown.'], recommended_next_step: 'Confirm fixture, flange, seal, and floor condition.', why_next_step: 'This separates reset from concealed repair.', repair_paths: [{ id: 'reset', label: 'Reset fixture', price_low: 250, price_high: 600, price_unit: 'project', price_source_refs: ['source-1'], price_geography: { level: 'metro', label: 'Portland metro' }, assumptions: ['Fixture reusable'], major_exclusions: ['Floor repair'], range_status: 'broad_preliminary' }] } }],
   reviewState: { 'obs-1': { findingId: 'finding-1', event: { id: 'event-1', review_action: 'approve', created_at: '2030-01-01T00:00:00Z', new_value: { corrections: {} } } } },
 }
+
+test('reviewed report generation rejects paraphrase-only findings without independent research', () => {
+  const artifact = structuredClone(reviewedArtifact)
+  artifact.atomicObservations[0].epistemic_states.shelter_prep_interpretation = 'Shelter Prep can organize it as a repair item.'
+  artifact.atomicObservations[0].finding_card.research_source_refs = []
+  assert.throws(() => buildReviewedReportDocument({
+    report: { id: 'report-bad', report_version: 1, recipient: 'agent@example.com' },
+    request: { id: 'request-bad', propertyId: 'property-1', artifact, submission: { propertyAddress: '1150 Greentree Rd' } },
+    reviewer: { id: 'reviewer-1' },
+    localProfessionals: { groups: [], lookups: [] },
+  }), /paraphrase-only reasoning|independent research source/)
+})
 
 test('reviewed report snapshots require terminal review and retain review-event identity', () => {
   const document = buildReviewedReportDocument({

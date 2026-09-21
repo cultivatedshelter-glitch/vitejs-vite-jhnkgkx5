@@ -2,6 +2,18 @@
 
 Date: 2026-09-20
 
+## Finding-Level Investigation Quality Pass
+
+- The current 131-page production inspection source was rerun locally through the exact reasoning entry point: 131 pages extracted, 31 atomic observations, 11 systems, 14 relationship candidates, and zero incomplete extractions.
+- The resulting `shelter-prep-phase1-finding-investigation.v1` artifact passed the server artifact validator and the finding-level audit with zero paraphrase-only interpretations.
+- Finding interpretation now uses issue-specific research profiles rather than repeating the inspector statement. Each matched material finding carries a corrected domain/system/trade, a consequential unknown, a concrete next task and rationale, and provenance-bearing technical guidance where relevant.
+- The audited 31-finding output corrected known classification errors for electrical panel knockouts, HVAC combustion venting, laundry catch pans, bathroom wet-area caulk, and carbon-monoxide alarms.
+- Repair paths remain bounded to realistic issue-specific options. Across the audited report, path pricing uses up to three compatible sources; fewer are retained when fewer defensible sources exist, and the laundry catch-pan path remains explicitly blocked rather than receiving a fabricated range.
+- Technical research sources are mapped adjacent to interpretation in the reviewer and released-result UI and in the reviewed PDF. New reviewed reports reject findings that contain banned internal process language or lack independent research provenance.
+- Local-professional research now runs before human review using the repository-resolved Property address and is stored on the draft artifact. `GOOGLE_PLACES_API_KEY` is not configured in Railway, so the current result honestly records `skipped_not_configured` by trade and no businesses are fabricated. The key must remain server-only and must not use a `VITE_` prefix.
+- Human review, corrections, report generation, release, delivery, immutable history, auth/RLS, and private storage contracts were not weakened or bypassed. The improved 31-finding draft has not been automatically reviewed or released.
+- Verification: `npm test` passed 95/95, `npm run build` passed, the Python reasoning self-test passed, the exact real-report artifact passed server validation, and `git diff --check` passed.
+
 ## Checkout
 
 - Active branch: `shelter-prep-phase1-dev` at checkpoint `1f573a77d08c2e2d9c7d7d0d76894aed9b3c7bf5` when the local runtime work began.
