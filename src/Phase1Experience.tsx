@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel, Phase1LinkedSource } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1BriefFinding, type Phase1BriefPath, type Phase1DecisionBrief, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
+import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1BriefFinding, type Phase1BriefPath, type Phase1DecisionBrief, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1RecipientReadiness, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
@@ -298,9 +298,13 @@ function ProcessingStep({ state, error, onContinue, onBack }: {
   )
 }
 
-function OverviewStep({ artifact, reportBusy, reportError, onSelect, onGenerateReport }: { artifact: Phase1ExperienceViewModel; reportBusy: boolean; reportError: string; onSelect: (index: number) => void; onGenerateReport: () => void }) {
+function OverviewStep({ artifact, recipientReadiness, reportBusy, reportError, onSelect, onGenerateReport }: { artifact: Phase1ExperienceViewModel; recipientReadiness: Phase1RecipientReadiness | null; reportBusy: boolean; reportError: string; onSelect: (index: number) => void; onGenerateReport: () => void }) {
   const summary = summarizeReview(artifact)
   const firstUnresolved = artifact.findings.findIndex((finding) => !isTerminalReview(finding))
+  const humanReviewComplete = summary.remaining === 0
+  const recipientReady = humanReviewComplete && (artifact.isFixture || recipientReadiness?.ready === true)
+  const firstContentIssue = recipientReadiness?.issues[0]
+  const firstContentIssueIndex = firstContentIssue ? artifact.findings.findIndex((finding) => finding.id === firstContentIssue.observationId) : -1
   const groups = [
     { priority: 'quick_review', label: 'Quick Review' },
     { priority: 'careful_review', label: 'Careful Review' },
@@ -309,9 +313,14 @@ function OverviewStep({ artifact, reportBusy, reportError, onSelect, onGenerateR
   return (
     <main className="phase1-main phase1-overview">
       {artifact.isFixture && <p className="phase1-kicker">Development fixture</p>}
-      <p className="phase1-kicker">{summary.remaining === 0 ? 'Review complete' : 'Property review'}</p>
-      <h1>{summary.remaining === 0 ? `${summary.reviewed} / ${summary.total} reviewed` : `${summary.remaining} findings remaining`}</h1>
-      <p className="phase1-lede">{summary.remaining === 0 ? 'The current reviewed request is ready to generate as a recipient report.' : 'Continue with the first finding that still needs a decision.'}</p>
+      <p className="phase1-kicker">{recipientReady ? 'Recipient report ready' : humanReviewComplete ? 'Human review complete' : 'Property review'}</p>
+      <h1>{humanReviewComplete ? `${summary.reviewed} / ${summary.total} reviewed` : `${summary.remaining} findings remaining`}</h1>
+      <p className="phase1-lede">{recipientReady ? 'The current reviewed request is ready to generate as a recipient report.' : humanReviewComplete ? 'Every finding has a human decision. Recipient content must pass its separate quality check before report generation.' : 'Continue with the first finding that still needs a decision.'}</p>
+      {humanReviewComplete && recipientReadiness && !recipientReadiness.ready && <section className="phase1-readiness-warning" role="status" aria-label="Recipient report readiness">
+        <div><strong>{recipientReadiness.issueCount} {recipientReadiness.issueCount === 1 ? 'finding needs' : 'findings need'} content correction before report generation</strong>{firstContentIssue && <p>{firstContentIssue.title} is the first finding that does not meet the recipient-content contract.</p>}</div>
+        {firstContentIssueIndex >= 0 && <button type="button" onClick={() => onSelect(firstContentIssueIndex)}>Fix finding</button>}
+      </section>}
+      {humanReviewComplete && !artifact.isFixture && !recipientReadiness && <p className="phase1-inline-error" role="status">Recipient readiness is still being checked. Report generation remains unavailable.</p>}
       {reportError && <p className="phase1-inline-error" role="alert">{reportError}</p>}
       <div className="phase1-review-summary" aria-label="Current review summary">
         <div><span>Findings</span><strong>{summary.total}</strong></div>
@@ -347,7 +356,7 @@ function OverviewStep({ artifact, reportBusy, reportError, onSelect, onGenerateR
           ))}</div>
         })}
       </section>
-      <div className="phase1-actions"><button className="phase1-primary" type="button" disabled={reportBusy} onClick={summary.remaining === 0 ? onGenerateReport : () => onSelect(firstUnresolved >= 0 ? firstUnresolved : 0)}>{reportBusy ? 'Generating…' : summary.remaining === 0 ? 'Generate Reviewed Report' : 'Continue Review'} <span aria-hidden="true">→</span></button></div>
+      <div className="phase1-actions"><button className="phase1-primary" type="button" disabled={reportBusy || (humanReviewComplete && !recipientReady)} onClick={recipientReady ? onGenerateReport : () => onSelect(firstUnresolved >= 0 ? firstUnresolved : 0)}>{reportBusy ? 'Generating…' : humanReviewComplete ? 'Generate Reviewed Report' : 'Continue Review'} <span aria-hidden="true">→</span></button></div>
     </main>
   )
 }
@@ -859,6 +868,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [reviewing, setReviewing] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [reportSummary, setReportSummary] = useState<Phase1ReviewSummary | null>(null)
+  const [recipientReadiness, setRecipientReadiness] = useState<Phase1RecipientReadiness | null>(null)
   const [reportBusy, setReportBusy] = useState(false)
   const [reportError, setReportError] = useState('')
   const [reportProfessionalGroups, setReportProfessionalGroups] = useState<Array<{ trade: string; professionals: Phase1LocalProfessional[] }>>([])
@@ -877,6 +887,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setFiles([])
       setNote('')
       setArtifact(null)
+      setRecipientReadiness(null)
       setSubmission(null)
       setActiveRequestId(null)
       setUploadedEvidenceNames([])
@@ -943,6 +954,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setFiles([])
       setNote('')
       setArtifact(null)
+      setRecipientReadiness(null)
       setIdentity(null)
       setStep('property')
       clearPhase1PropertyContext(window.sessionStorage)
@@ -979,6 +991,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setPropertyContext(context)
       writePhase1PropertyContext(window.sessionStorage, context)
       setArtifact(result)
+      setRecipientReadiness(request.recipientReadiness || null)
       setSubmission(request.submission || null)
       setActiveRequestId(request.id)
       const requestedFinding = findingFromLocation() || request.submission?.lastViewedObservationId
@@ -1101,10 +1114,12 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
         return
       }
       setArtifact(result)
+      setRecipientReadiness(null)
       setFindingIndex(0)
       setProcessingState('completed')
     } catch (error) {
       setArtifact(null)
+      setRecipientReadiness(null)
       const message = error instanceof Error ? error.message : 'Processing failed. The selected evidence was not replaced with fixture data.'
       if (fixtureMode) {
         setStep('processing')
@@ -1164,6 +1179,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
         throw new Error('The saved review could not be verified against the current finding.')
       }
       setArtifact(refreshed)
+      setRecipientReadiness(request.recipientReadiness || result.recipientReadiness || null)
       if (action === 'edit') {
         setFindingIndex(refreshedIndex >= 0 ? refreshedIndex : reviewedFindingIndex)
         setStep('finding')
@@ -1214,6 +1230,10 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
 
   async function generateReviewedReport() {
     if (!activeRequestId) return
+    if (!artifact?.isFixture && !recipientReadiness?.ready) {
+      setReportError('Recipient content must pass readiness review before report generation.')
+      return
+    }
     setReportBusy(true)
     setReportError('')
     try {
@@ -1289,7 +1309,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       {step === 'submission_review' && <ReviewSubmissionStep address={submission?.propertyAddress || address} evidenceNames={uploadedEvidenceNames.length ? uploadedEvidenceNames : submission?.evidence.map((item) => item.name) || []} note={note} recipientName={recipientName} recipientEmail={recipientEmail} submitting={submissionSubmitting} error={submissionError} onRecipientName={setRecipientName} onRecipientEmail={setRecipientEmail} onBack={() => setStep('evidence')} onSubmit={() => void submitReviewedSubmission()} />}
       {step === 'submitted' && <SubmittedSummary address={submission?.propertyAddress || address} submission={submission} evidenceNames={uploadedEvidenceNames.length ? uploadedEvidenceNames : submission?.evidence.map((item) => item.name) || []} note={note} onNavigate={navigate} onAddEvidence={() => { setFiles([]); setNote(''); setSubmission(null); setActiveRequestId(null); setUploadedEvidenceNames([]); setUploadedEvidenceReferences([]); window.history.pushState({}, '', `/properties/${encodeURIComponent(propertyContext?.id || '')}/evidence`); setRoute(window.location.pathname); setStep('evidence') }} />}
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
-      {step === 'overview' && artifact && <OverviewStep artifact={artifact} reportBusy={reportBusy} reportError={reportError} onSelect={openFinding} onGenerateReport={() => void generateReviewedReport()} />}
+      {step === 'overview' && artifact && <OverviewStep artifact={artifact} recipientReadiness={recipientReadiness} reportBusy={reportBusy} reportError={reportError} onSelect={openFinding} onGenerateReport={() => void generateReviewedReport()} />}
       {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} findingIndex={findingIndex} findingCount={artifact.findings.length} reviewedCount={summarizeReview(artifact).reviewed} remainingCount={summarizeReview(artifact).remaining} propertyAddress={artifact.propertyAddress} transactionPerspective={artifact.transactionPerspective} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onOpenProperty={() => setStep('overview')} onPrevious={() => openFinding(Math.max(0, findingIndex - 1))} onNext={() => openFinding(Math.min(artifact.findings.length - 1, findingIndex + 1))} onReview={(action, payload) => void reviewFinding(action, payload)} />}
       {step === 'report_preview' && artifact && reportSummary && <ReviewedReportPreview artifact={artifact} brief={reportDecisionBrief} requestId={activeRequestId} summary={reportSummary} recipient={submission?.deliveryRecipientEmail || ''} professionalGroups={reportProfessionalGroups} busy={reportBusy} error={reportError} onBack={() => setStep('overview')} onViewPdf={() => reviewedReportId && void openPhase1ReviewedReportPdf(reviewedReportId)} onRelease={() => void releaseReviewedReport()} />}
       {step === 'report_released' && artifact && <ReportReleased address={artifact.propertyAddress} submission={submission} busy={reportBusy} error={reportError} onSend={() => void sendReviewedResult()} />}

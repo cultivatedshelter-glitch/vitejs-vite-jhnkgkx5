@@ -697,7 +697,7 @@ function normalizeFinding(
     weather,
     relatedFindings,
     repairPaths,
-    whatChangesDecision: asStringArray(card.what_changes_the_decision),
+    whatChangesDecision: correctedUnknown.length ? correctedUnknown : asStringArray(card.what_changes_the_decision),
     transactionConsiderations: asStringArray(card.transaction_considerations),
   }
 }
@@ -707,6 +707,12 @@ function propertyAddress(root: UnknownRecord): string | null {
   const property = asRecord(reconstruction.property)
   const parts = [asString(property.address_line1), asString(property.city), asString(property.state), asString(property.zip)].filter(Boolean)
   return parts.length ? parts.join(', ') : null
+}
+
+const INTERNAL_SUMMARY_LANGUAGE = /organize it as|round 1|decision-blocking uncertainty|uncertainty-reduction item|human review has not verified this interpretation|ai draft interpretation|no additional field evidence is required for initial triage|identify the specific unresolved fact/i
+
+function recipientSafeSummary(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter((value) => value && !INTERNAL_SUMMARY_LANGUAGE.test(value)))]
 }
 
 export function adaptPhase1ReasoningArtifact(
@@ -728,14 +734,12 @@ export function adaptPhase1ReasoningArtifact(
     : allFindings
   const categories = findings.map((finding) => finding.category).filter((value, index, all) => all.indexOf(value) === index)
   const rawOverview = asRecord(input.decisionOverview)
-  const reportedMajorCategories = asArray(rawOverview.major_categories).filter(isRecord).map((item) => ({
-    label: asString(item.label),
-    findingCount: asNumber(item.finding_count) ?? 0,
-  })).filter((item) => item.label && item.findingCount > 0)
   const findingCategoryCounts = new Map<string, number>()
   for (const finding of findings) findingCategoryCounts.set(finding.category, (findingCategoryCounts.get(finding.category) ?? 0) + 1)
   const derivedMajorCategories = [...findingCategoryCounts].map(([label, findingCount]) => ({ label, findingCount })).sort((a, b) => b.findingCount - a.findingCount || a.label.localeCompare(b.label))
-  const majorCategories = audience === 'agent' || !reportedMajorCategories.length ? derivedMajorCategories : reportedMajorCategories
+  const majorCategories = derivedMajorCategories
+  const decisionFactors = recipientSafeSummary(findings.flatMap((finding) => finding.whatChangesDecision.length ? finding.whatChangesDecision : finding.unknowns)).slice(0, 10)
+  const immediateNextTasks = recipientSafeSummary(findings.map((finding) => finding.nextStep)).slice(0, 8)
   const humanObservations = asArray(input.humanObservations).filter(isRecord).map((item, index) => {
     const source = asRecord(item.source)
     return {
@@ -764,14 +768,10 @@ export function adaptPhase1ReasoningArtifact(
     totalFindingCount: allFindings.length,
     overview: {
       majorCategories,
-      findingsWithSourcedPaths: asNumber(rawOverview.findings_with_sourced_paths) ?? findings.filter((finding) => finding.repairPaths.some((path) => path.status === 'priced')).length,
-      findingsWithoutSourcedPaths: asNumber(rawOverview.findings_without_sourced_paths) ?? findings.filter((finding) => !finding.repairPaths.some((path) => path.status === 'priced')).length,
-      decisionFactors: audience === 'agent'
-        ? [...new Set(findings.flatMap((finding) => finding.whatChangesDecision))].slice(0, 10)
-        : asStringArray(rawOverview.decision_factors),
-      immediateNextTasks: audience === 'agent'
-        ? [...new Set(findings.map((finding) => finding.nextStep))].slice(0, 8)
-        : asStringArray(rawOverview.immediate_next_tasks),
+      findingsWithSourcedPaths: findings.filter((finding) => finding.repairPaths.some((path) => path.status === 'priced')).length,
+      findingsWithoutSourcedPaths: findings.filter((finding) => !finding.repairPaths.some((path) => path.status === 'priced')).length,
+      decisionFactors,
+      immediateNextTasks,
       aggregateCostRule: asString(rawOverview.aggregate_cost_rule) || 'Finding and path ranges should not be summed without reconciling overlap and alternatives.',
     },
     humanObservations,

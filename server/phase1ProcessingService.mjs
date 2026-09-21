@@ -1,5 +1,5 @@
 import { validatePhase1Artifact } from './phase1ArtifactValidator.mjs'
-import { buildReviewedReportDocument, reviewedFindingVersions, reviewedPricingVersions } from './phase1ReviewedReport.mjs'
+import { buildReviewedReportDocument, recipientReadiness, reviewedFindingVersions, reviewedPricingVersions } from './phase1ReviewedReport.mjs'
 import { generateReviewedReportPdf } from './phase1ReviewedReportPdf.mjs'
 import { createLocalProfessionalResearch } from './phase1LocalProfessionals.mjs'
 
@@ -168,7 +168,9 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const actor = await requireActor(token)
     const request = await repository.getProcessingRequest({ actor, requestId })
     if (!request) throw new ProcessingError('authorization_failed', 'This processing request is not available.', 404)
-    return request
+    return request.artifact
+      ? { ...request, recipientReadiness: recipientReadiness(request.artifact) }
+      : request
   }
 
   async function sourceDocument({ token, requestId }) {
@@ -270,7 +272,7 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
     const result = await repository.reviewFinding({ actor, requestId, observationId, action, newValue, reason: String(reason).trim() })
     if (!result) throw new ProcessingError('finding_not_found', 'This finding is not available for review.', 404)
     const refreshed = await repository.getProcessingRequest({ actor, requestId })
-    return { ...result, completion: reviewSummary(refreshed?.artifact) }
+    return { ...result, completion: reviewSummary(refreshed?.artifact), recipientReadiness: recipientReadiness(refreshed?.artifact) }
   }
 
   async function previewReviewedReport({ token, requestId }) {

@@ -251,6 +251,26 @@ test('human correction overlays preserve the draft and agent output waits for a 
   assert.equal(releasedAgent.findings[0].repairPaths[1].reviewedPriceVersion, 1)
 })
 
+test('whole-report overview is rebuilt from canonical findings and omits stale internal summary language', () => {
+  const artifact = structuredClone(liveArtifact)
+  artifact.decisionOverview = {
+    decision_factors: ['Identify the specific unresolved fact for Round 1.'],
+    immediate_next_tasks: ['No additional field evidence is required for initial triage.'],
+  }
+  artifact.reviewState = {
+    'observation-1': {
+      event: {
+        review_action: 'approve',
+        new_value: { corrections: { next_step: 'Photograph the west roof edge and check the attic below for active moisture.', unknown: ['Whether moisture is active below the west roof edge.'] } },
+      },
+    },
+  }
+  const result = adaptPhase1ReasoningArtifact(artifact, { mode: 'live', audience: 'reviewer' })
+  assert.ok(result.overview.immediateNextTasks.includes('Photograph the west roof edge and check the attic below for active moisture.'))
+  assert.ok(result.overview.decisionFactors.includes('Whether moisture is active below the west roof edge.'))
+  assert.doesNotMatch(JSON.stringify(result.overview), /round 1|initial triage|identify the specific unresolved fact/i)
+})
+
 test('missing optional fields fail gracefully without inventing money or provenance', () => {
   const result = adaptPhase1ReasoningArtifact({
     schema_version: 'minimal',

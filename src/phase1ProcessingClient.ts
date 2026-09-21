@@ -4,6 +4,8 @@ import type { Phase1PropertyContext } from './phase1PropertyContext'
 export type LiveProcessingState = 'draft' | 'uploaded' | 'queued' | 'processing' | 'completed' | 'under_review' | 'ready' | 'failed'
 
 export type EvidenceReference = { id: string; sourceFileId: string }
+export type Phase1RecipientReadinessIssue = { observationId: string; title: string; reasons: string[] }
+export type Phase1RecipientReadiness = { ready: boolean; issueCount: number; issues: Phase1RecipientReadinessIssue[] }
 export type ProcessingResponse = {
   id: string
   propertyId: string
@@ -13,6 +15,7 @@ export type ProcessingResponse = {
   audience?: 'reviewer' | 'agent'
   totalFindingCount?: number
   submission?: Phase1SubmissionMetadata
+  recipientReadiness?: Phase1RecipientReadiness
 }
 
 export type Phase1Identity = { id: string; email: string | null; fullName: string | null; role: string; active: boolean; isReviewer: boolean }
@@ -326,7 +329,7 @@ export async function reviewPhase1Finding({
   fieldsApproved?: string[]
   expectedReviewEventId?: string | null
 }) {
-  return jsonRequest<{ findingId: string; status: string; eventId: string; completion?: Phase1ReviewSummary }>(
+  return jsonRequest<{ findingId: string; status: string; eventId: string; completion?: Phase1ReviewSummary; recipientReadiness?: Phase1RecipientReadiness }>(
     `/api/phase1/processing-requests/${encodeURIComponent(requestId)}/findings/${encodeURIComponent(observationId)}/review`,
     {
       method: 'POST',

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import test from 'node:test'
-import { buildReviewedReportDocument, reviewedFindingVersions, reviewedPricingVersions } from '../server/phase1ReviewedReport.mjs'
+import { buildReviewedReportDocument, recipientReadiness, reviewedFindingVersions, reviewedPricingVersions } from '../server/phase1ReviewedReport.mjs'
 import { createLocalProfessionalResearch } from '../server/phase1LocalProfessionals.mjs'
 import { createPhase1HttpHandler } from '../server/phase1HttpServer.mjs'
 import { createPhase1ProcessingService } from '../server/phase1ProcessingService.mjs'
@@ -56,6 +56,30 @@ test('reviewed report generation rejects paraphrase-only findings without indepe
     reviewer: { id: 'reviewer-1' },
     localProfessionals: { groups: [], lookups: [] },
   }), /paraphrase-only reasoning|independent research source/)
+})
+
+test('recipient readiness is separate from review completion and honors canonical human corrections', () => {
+  const artifact = structuredClone(reviewedArtifact)
+  artifact.atomicObservations[0].epistemic_states.shelter_prep_interpretation = 'Shelter Prep can organize it as a repair item.'
+  artifact.atomicObservations[0].finding_card.recommended_next_step = 'Identify the specific unresolved fact.'
+  const blocked = recipientReadiness(artifact)
+  assert.equal(blocked.ready, false)
+  assert.equal(blocked.issueCount, 1)
+  assert.equal(blocked.issues[0].observationId, 'obs-1')
+  assert.ok(blocked.issues[0].reasons.includes('internal_or_generic_language'))
+
+  artifact.reviewState['obs-1'].event.new_value.corrections = {
+    interpretation: 'Movement at the fixture can reflect mounting, flange, seal, or floor conditions.',
+    next_step: 'Confirm fixture, flange, seal, and floor condition.',
+    unknown: ['Flange and concealed floor condition remain unknown.'],
+  }
+  assert.deepEqual(recipientReadiness(artifact), { ready: true, issueCount: 0, issues: [] })
+  assert.doesNotThrow(() => buildReviewedReportDocument({
+    report: { id: 'report-corrected', report_version: 1, recipient: 'agent@example.com' },
+    request: { id: 'request-corrected', propertyId: 'property-1', artifact, submission: { propertyAddress: '1150 Greentree Rd' } },
+    reviewer: { id: 'reviewer-1' },
+    localProfessionals: { groups: [], lookups: [] },
+  }))
 })
 
 test('reviewed report snapshots require terminal review and retain review-event identity', () => {

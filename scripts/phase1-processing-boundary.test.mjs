@@ -357,6 +357,24 @@ test('malformed and fixture artifacts are rejected and become an explicit failed
   }
 })
 
+test('processing status exposes server-authoritative recipient readiness separately from completion', async () => {
+  const artifact = {
+    atomicObservations: [{ id: 'obs-1', epistemic_states: { shelter_prep_interpretation: 'Shelter Prep can organize it as a repair item.' }, finding_card: { finding_title: 'Trip hazard', recommended_next_step: 'Identify the specific unresolved fact.', research_source_refs: [] } }],
+    reviewState: { 'obs-1': { event: { review_action: 'approve', new_value: { corrections: {} } } } },
+  }
+  const service = createPhase1ProcessingService({
+    repository: {
+      async authenticate() { return { id: 'reviewer-1' } },
+      async getProcessingRequest() { return { id: 'request-1', processingStatus: 'completed', artifact } },
+    },
+    reasoningRunner: async () => artifact,
+  })
+  const status = await service.status({ token: 'reviewer-token', requestId: 'request-1' })
+  assert.equal(status.recipientReadiness.ready, false)
+  assert.equal(status.recipientReadiness.issueCount, 1)
+  assert.equal(status.recipientReadiness.issues[0].observationId, 'obs-1')
+})
+
 test('readable PDFs with no parseable findings fail at extraction instead of artifact validation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'phase1-parser-failure-test-'))
   try {

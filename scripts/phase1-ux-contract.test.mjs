@@ -134,6 +134,12 @@ test('review completion is explicit and separated from preview, release, and sen
   assert.match(component, /previewPhase1ReviewedReport/)
   assert.match(component, /releasePhase1ReviewedReport/)
   assert.match(component, /sendPhase1ReviewedResult/)
+  assert.match(component, /Human review complete/)
+  assert.match(component, /Recipient report ready/)
+  assert.match(component, /content correction before report generation/)
+  assert.match(component, /Fix finding/)
+  assert.match(component, /disabled=\{reportBusy \|\| \(humanReviewComplete && !recipientReady\)\}/)
+  assert.match(component, /recipientReadiness\?\.ready/)
 })
 
 test('released web reports use the compact canonical decision brief with mobile-safe hierarchy', () => {

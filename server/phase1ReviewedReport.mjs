@@ -1,21 +1,42 @@
 import { buildDecisionBrief } from './phase1DecisionBrief.mjs'
 
 const TERMINAL = new Set(['approve', 'needs_more_info', 'reject'])
-const INTERNAL_RELEASE_LANGUAGE = /organize it as|round 1|decision-blocking uncertainty|uncertainty-reduction item|human review has not verified this interpretation|ai draft interpretation/i
+const INTERNAL_RELEASE_LANGUAGE = /organize it as|round 1|decision-blocking uncertainty|uncertainty-reduction item|human review has not verified this interpretation|ai draft interpretation|no additional field evidence is required for initial triage|identify the specific unresolved fact/i
+
+function effectiveFindingContent(artifact, observation) {
+  const card = observation.finding_card || {}
+  const corrections = artifact?.reviewState?.[observation.id]?.event?.new_value?.corrections || {}
+  return {
+    title: String(corrections.title || card.finding_title || observation.id || 'Unknown finding'),
+    interpretation: String(corrections.interpretation || observation.epistemic_states?.shelter_prep_interpretation || ''),
+    nextTask: String(corrections.next_step || card.recommended_next_step || ''),
+    unknowns: Array.isArray(corrections.unknown) ? corrections.unknown.join(' ') : Array.isArray(card.what_we_dont_know) ? card.what_we_dont_know.join(' ') : '',
+    researchSourceRefs: Array.isArray(card.research_source_refs) ? card.research_source_refs : [],
+  }
+}
+
+export function recipientReadiness(artifact) {
+  const issues = []
+  for (const observation of artifact?.atomicObservations || []) {
+    const content = effectiveFindingContent(artifact, observation)
+    const reasons = []
+    if (!content.interpretation.trim()) reasons.push('missing_interpretation')
+    if (INTERNAL_RELEASE_LANGUAGE.test(`${content.interpretation} ${content.nextTask} ${content.unknowns}`)) reasons.push('internal_or_generic_language')
+    if (!content.nextTask.trim()) reasons.push('missing_next_task')
+    if (!content.researchSourceRefs.length) reasons.push('missing_independent_research')
+    if (reasons.length) issues.push({ observationId: observation.id, title: content.title, reasons })
+  }
+  return { ready: issues.length === 0, issueCount: issues.length, issues }
+}
 
 function assertInvestigationQuality(artifact) {
-  for (const observation of artifact?.atomicObservations || []) {
-    const card = observation.finding_card || {}
-    const interpretation = String(observation.epistemic_states?.shelter_prep_interpretation || '')
-    const nextTask = String(card.recommended_next_step || '')
-    const unknowns = Array.isArray(card.what_we_dont_know) ? card.what_we_dont_know.join(' ') : ''
-    if (!interpretation || INTERNAL_RELEASE_LANGUAGE.test(`${interpretation} ${nextTask} ${unknowns}`)) {
-      throw new Error(`Finding ${card.finding_title || observation.id || 'unknown'} still contains internal or paraphrase-only reasoning.`)
-    }
-    if (!Array.isArray(card.research_source_refs) || !card.research_source_refs.length) {
-      throw new Error(`Finding ${card.finding_title || observation.id || 'unknown'} has no independent research source.`)
-    }
+  const readiness = recipientReadiness(artifact)
+  const issue = readiness.issues[0]
+  if (!issue) return
+  if (issue.reasons.includes('missing_independent_research') && issue.reasons.length === 1) {
+    throw new Error(`Finding ${issue.title} has no independent research source.`)
   }
+  throw new Error(`Finding ${issue.title} still contains internal or paraphrase-only reasoning.`)
 }
 
 export function reviewedReportSummary(artifact) {
