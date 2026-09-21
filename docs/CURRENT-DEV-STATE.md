@@ -2,6 +2,17 @@
 
 Date: 2026-09-21
 
+## Agent-Facing Reviewed Report Completion Pass
+
+- The existing compact reviewed-report model remains unchanged: one summary page, trade/category grouping, compact decision-first finding blocks, and a full technical appendix derived from the same canonical reviewed artifact on web and PDF.
+- Audited repair-path relevance against the current 31-finding production report. Hard-surface contact at siding now uses an exterior-envelope damage/clearance decision instead of concrete resurfacing; the electrical-panel knockout and AFCI findings no longer inherit outlet-repair pricing; and exposed roof fasteners no longer inherit drip-edge or unrelated flashing guidance. New processing uses the corrected decision-support rules, while a narrowly detected presentation projection corrects the same four mismatches in immutable legacy reviewed artifacts without changing review events or stored source history.
+- Customer-facing transcription now cleans the verified dropped-letter PDF extraction artifacts `qualied`, `oor`, `ashing`, `ashings`, `eects`, `nished`, `rst`, and `Modications`. Raw extracted evidence remains unchanged underneath the presentation model.
+- Production draft report version 12 (`8f652062-976d-43aa-880b-294d5dd40f9a`) was generated through the authenticated reviewer preview boundary for request `cd235456-12fe-4ef1-bc41-ca8891f5fae7`. It remains draft and was not released or delivered. The persisted PDF has 37 total pages, a 9-page primary brief, an appendix beginning on page 10, 31 findings, 30 approved findings, 1 rejected finding, 185 URI hyperlink annotations, and 67 unique URI targets.
+- Authenticated production browser verification loaded the exact version-12 report and displayed the corrected hard-surface, panel-knockout, AFCI, and exposed-fastener paths with prominent pricing, concise unknowns, specific next steps, source counts, and progressive technical details. At a measured 391 by 844 CSS viewport (one-pixel browser rounding from the requested 390 width), document width matched viewport width, horizontal overflow was false, all 31 finding blocks remained present, and report actions/summary panels stacked cleanly.
+- `GOOGLE_PLACES_API_KEY` remains unconfigured in Railway. Version 12 records `skipped_not_configured` for local-professional lookups and shows no fabricated businesses; this remains optional configuration rather than a report blocker.
+- Application commit `a6fffe9` is pushed to `shelter-prep-phase1-dev` and is live at `https://shelterprep.com`; Railway health returns HTTP 200. Follow-up commit `b997b26`, containing the final browser-found OCR cleanup and exposed-fastener presentation alignment, is local because the macOS `osxkeychain` Git credential helper returned authentication error `-25293`. No force push, remote rewrite, or alternate credential was used.
+- Final verification passes: `npm test` 107/107, `npm run build`, the Round 1 Python self-test, focused reviewed-report/source-relevance tests 15/15, and `git diff --check`. The build emits only the existing stale `caniuse-lite` advisory.
+
 ## Safe Property Archive And Restore
 
 - Added nullable `archived_at`, `archived_by`, and `archive_reason` fields to the existing UUID Property model. No Property or related record is deleted, and Restore clears only archive metadata so the prior workflow status remains authoritative.
