@@ -6,8 +6,8 @@ import { createClient } from '@supabase/supabase-js'
 
 const BUCKET = process.env.PHASE1_EVIDENCE_BUCKET || 'phase1-evidence'
 
-function required(name, fallback) {
-  const value = process.env[name] || fallback
+function required(name, fallback, environment = process.env) {
+  const value = environment[name] || fallback
   if (!value) throw new Error(`${name} is required for the Phase 1 processing server.`)
   return value
 }
@@ -118,14 +118,14 @@ export function normalizePropertyAddress(address) {
     .replace(/\s+/g, ' ')
 }
 
-export function createPhase1SupabaseRepository() {
-  const url = required('SUPABASE_URL', process.env.VITE_SUPABASE_URL)
-  const publishableKey = required('SUPABASE_PUBLISHABLE_KEY', process.env.VITE_SUPABASE_ANON_KEY)
-  const secretKey = required('SUPABASE_SECRET_KEY')
-  const admin = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
+export function createPhase1SupabaseRepository({ createClientImpl = createClient, environment = process.env } = {}) {
+  const url = required('SUPABASE_URL', environment.VITE_SUPABASE_URL, environment)
+  const publishableKey = required('SUPABASE_PUBLISHABLE_KEY', environment.VITE_SUPABASE_ANON_KEY, environment)
+  const secretKey = required('SUPABASE_SECRET_KEY', null, environment)
+  const admin = createClientImpl(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
   function userClient(token) {
-    return createClient(url, publishableKey, {
+    return createClientImpl(url, publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
     })
@@ -137,6 +137,21 @@ export function createPhase1SupabaseRepository() {
     const { data, error } = await admin.from('profiles').select('role,active').eq('id', actorId).maybeSingle()
     if (error) throw new Error(`Reviewer authorization failed: ${error.message}`)
     return data?.active === true && ['owner', 'admin'].includes(data.role)
+  }
+
+  async function releaseReviewedReport({ actor, requestId, reportId = null }) {
+    if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')
+    let query = admin.from('phase1_reviewed_reports')
+      .select('id,processing_request_id,report_version,report_status')
+      .eq('processing_request_id', requestId)
+    if (reportId) query = query.eq('id', reportId)
+    else query = query.eq('report_status', 'draft').order('report_version', { ascending: false }).limit(1)
+    const { data: report, error: lookupError } = await query.maybeSingle()
+    if (lookupError) throw new Error(`Reviewed report release lookup failed: ${lookupError.message}`)
+    if (!report) return null
+    const { data, error } = await admin.rpc('phase1_release_reviewed_report', { target_report_id: report.id, target_reviewer_id: actor.id })
+    if (error) throw new Error(`Reviewed report release failed: ${error.message}`)
+    return data
   }
 
   return {
@@ -997,6 +1012,8 @@ export function createPhase1SupabaseRepository() {
       if (error) throw new Error(`Reviewed report access failed: ${error.message}`)
       return { url: data.signedUrl, expiresIn: 300 }
     },
+
+    releaseReviewedReport,
 
     async releaseReviewedReportVersion({ actor, reportId }) {
       if (!await isReviewerId(actor.id)) throw new Error('Reviewer access is required.')

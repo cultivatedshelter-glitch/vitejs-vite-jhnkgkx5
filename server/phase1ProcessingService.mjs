@@ -290,14 +290,12 @@ export function createPhase1ProcessingService({ repository, reasoningRunner, not
 
   async function releaseReviewedReport({ token, requestId, reportId = null }) {
     const actor = await requireReviewer(token)
-    if (reportId && repository.releaseReviewedReportVersion) {
-      const released = await repository.releaseReviewedReportVersion({ actor, reportId })
-      return { ready: true, released: true, reportId: released.id, reportVersion: released.report_version, releasedAt: released.released_at }
+    if (typeof repository.releaseReviewedReport !== 'function') {
+      throw new ProcessingError('release_unavailable', 'Reviewed report release is not configured.', 503)
     }
-    const preview = await previewReviewedReport({ token, requestId })
-    const release = await repository.releaseReviewedReport({ actor, requestId })
-    if (!release?.ready) throw new ProcessingError('review_incomplete', 'The reviewed report is not eligible for release.', 409)
-    return { ...release, summary: preview.summary, submission: preview.submission }
+    const released = await repository.releaseReviewedReport({ actor, requestId, reportId })
+    if (!released) throw new ProcessingError('report_not_found', 'Generate the durable reviewed report before release.', 404)
+    return { ready: true, released: true, reportId: released.id, reportVersion: released.report_version, releasedAt: released.released_at }
   }
 
   async function sendReviewedResult({ token, requestId, reportId = null }) {

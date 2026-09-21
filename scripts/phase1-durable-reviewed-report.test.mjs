@@ -6,6 +6,9 @@ import { spawn } from 'node:child_process'
 import test from 'node:test'
 import { buildReviewedReportDocument, reviewedFindingVersions, reviewedPricingVersions } from '../server/phase1ReviewedReport.mjs'
 import { createLocalProfessionalResearch } from '../server/phase1LocalProfessionals.mjs'
+import { createPhase1HttpHandler } from '../server/phase1HttpServer.mjs'
+import { createPhase1ProcessingService } from '../server/phase1ProcessingService.mjs'
+import { createPhase1SupabaseRepository } from '../server/phase1SupabaseRepository.mjs'
 
 const reviewedArtifact = {
   schemaVersion: 'phase1-test',
@@ -64,4 +67,58 @@ test('ReportLab renderer produces a real PDF from the canonical reviewed documen
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
     assert.ok(pdf.length > 1500)
   } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('production repository factory releases the generated report for current and stale clients', async () => {
+  const reportLookups = []
+  const rpcCalls = []
+  const admin = {
+    auth: { async getUser() { return { data: { user: { id: 'reviewer-1', email: 'reviewer@example.com' } }, error: null } } },
+    from(table) {
+      const filters = {}
+      const query = {
+        select() { return query },
+        eq(column, value) { filters[column] = value; return query },
+        order() { return query },
+        limit() { return query },
+        async maybeSingle() {
+          if (table === 'profiles') return { data: { role: 'admin', active: true }, error: null }
+          if (table === 'phase1_reviewed_reports') {
+            reportLookups.push({ ...filters })
+            return { data: { id: filters.id || 'report-latest', processing_request_id: filters.processing_request_id, report_version: 3, report_status: filters.report_status || 'draft' }, error: null }
+          }
+          throw new Error(`Unexpected production repository table: ${table}`)
+        },
+      }
+      return query
+    },
+    async rpc(name, values) {
+      rpcCalls.push({ name, values })
+      return { data: { id: values.target_report_id, report_version: 3, released_at: '2030-01-02T00:00:00Z' }, error: null }
+    },
+  }
+  const repository = createPhase1SupabaseRepository({
+    createClientImpl: () => admin,
+    environment: { SUPABASE_URL: 'https://production.example', SUPABASE_PUBLISHABLE_KEY: 'publishable', SUPABASE_SECRET_KEY: 'secret' },
+  })
+  const service = createPhase1ProcessingService({ repository, reasoningRunner: async () => ({}) })
+  const handle = createPhase1HttpHandler(service)
+  const release = async (body) => {
+    const response = await handle(new Request('https://shelterprep.com/api/phase1/processing-requests/request-1/reviewed-report/release', {
+      method: 'POST', headers: { authorization: 'Bearer reviewer-token', 'content-type': 'application/json' }, body: JSON.stringify(body),
+    }))
+    return { status: response.status, body: await response.json() }
+  }
+
+  const currentClient = await release({ reportId: 'report-3' })
+  const staleClient = await release({})
+  assert.equal(currentClient.status, 200)
+  assert.equal(currentClient.body.reportId, 'report-3')
+  assert.equal(staleClient.status, 200)
+  assert.equal(staleClient.body.reportId, 'report-latest')
+  assert.deepEqual(reportLookups, [
+    { processing_request_id: 'request-1', id: 'report-3' },
+    { processing_request_id: 'request-1', report_status: 'draft' },
+  ])
+  assert.deepEqual(rpcCalls.map((call) => call.name), ['phase1_release_reviewed_report', 'phase1_release_reviewed_report'])
 })

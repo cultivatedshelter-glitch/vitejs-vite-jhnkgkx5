@@ -478,7 +478,7 @@ test('review completion requires explicit preview, release, and idempotent deliv
     async isReviewer() { return true },
     async getProcessingRequest() { return { id: 'request-1', propertyId: 'property-1', processingStatus: 'completed', artifactVersion: artifact.schemaVersion, artifact, submission: { deliveryRecipientEmail: 'agent@example.com', releasedAt: releaseCalls ? '2030-01-01T00:00:00Z' : null } } },
     async reviewFinding() { return { findingId: 'finding-1', status: 'human_verified', eventId: 'event-1' } },
-    async releaseReviewedReport() { releaseCalls += 1; return { ready: true, released: releaseCalls === 1, releasedAt: '2030-01-01T00:00:00Z' } },
+    async releaseReviewedReport() { releaseCalls += 1; return { id: 'report-1', report_version: 1, released_at: '2030-01-01T00:00:00Z' } },
   }
   const notifications = { async notifyReviewedResult(value) { deliveries.push(value); return { status: 'sent', duplicate: deliveries.length > 1 } } }
   const service = createPhase1ProcessingService({ repository: repo, reasoningRunner: async () => artifact, notifications })
