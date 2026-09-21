@@ -17,6 +17,35 @@ const reviewedArtifact = {
   reviewState: { 'obs-1': { findingId: 'finding-1', event: { id: 'event-1', review_action: 'approve', created_at: '2030-01-01T00:00:00Z', new_value: { corrections: {} } } } },
 }
 
+async function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args)
+    let stdout = ''; let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.on('error', reject)
+    child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`${command} exited ${code}: ${stderr}`)))
+  })
+}
+
+function artifactWithFindingCount(count) {
+  const artifact = structuredClone(reviewedArtifact)
+  artifact.atomicObservations = []
+  artifact.reviewState = {}
+  for (let index = 1; index <= count; index += 1) {
+    const observation = structuredClone(reviewedArtifact.atomicObservations[0])
+    observation.id = `obs-${index}`
+    observation.source.source_page = index + 3
+    observation.source.inspector_statement = `Qualied inspector reported movement at oor fixture ${index}.`
+    observation.epistemic_states.source_observation = observation.source.inspector_statement
+    observation.finding_card.finding_title = `Fixture finding ${index}`
+    observation.finding_card.source_refs = { source_page: index + 3, source_item_number: `2.${index}` }
+    artifact.atomicObservations.push(observation)
+    artifact.reviewState[observation.id] = { findingId: `finding-${index}`, event: { id: `event-${index}`, review_action: index === count ? 'reject' : 'approve', created_at: '2030-01-01T00:00:00Z', new_value: { corrections: {} } } }
+  }
+  return artifact
+}
+
 test('reviewed report generation rejects paraphrase-only findings without independent research', () => {
   const artifact = structuredClone(reviewedArtifact)
   artifact.atomicObservations[0].epistemic_states.shelter_prep_interpretation = 'Shelter Prep can organize it as a repair item.'
@@ -38,6 +67,9 @@ test('reviewed report snapshots require terminal review and retain review-event 
   })
   assert.equal(document.reportVersion, 2)
   assert.equal(document.summary.approved, 1)
+  assert.equal(document.decisionBrief.schemaVersion, 'phase1-reviewed-decision-brief.v1')
+  assert.equal(document.decisionBrief.groups[0].findings[0].paths[0].confidence, 'Low')
+  assert.equal(document.artifact.atomicObservations[0].finding_card.repair_paths[0].range_status, 'broad_preliminary')
   assert.deepEqual(reviewedFindingVersions(document), [{ observationId: 'obs-1', findingId: 'finding-1', reviewEventId: 'event-1', action: 'approve', reviewedAt: '2030-01-01T00:00:00Z' }])
   assert.equal(reviewedPricingVersions(document).length, 1)
   assert.deepEqual(reviewedPricingVersions(document)[0].sourceIds, ['source-1'])
@@ -89,6 +121,28 @@ test('ReportLab renderer produces a real PDF from the canonical reviewed documen
     const pdf = await readFile(output)
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
     assert.ok(pdf.length > 1500)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('31-finding decision brief stays within the primary-page target and retains the technical appendix', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'phase1-report-pagination-'))
+  try {
+    const input = join(directory, 'input.json'); const output = join(directory, 'output.pdf')
+    const artifact = artifactWithFindingCount(31)
+    const document = buildReviewedReportDocument({ report: { id: 'report-31', report_version: 4, recipient: 'agent@example.com' }, request: { id: 'request-31', propertyId: 'property-1', artifact, submission: { propertyAddress: '1150 Greentree Rd' } }, reviewer: { id: 'reviewer-1' }, localProfessionals: { groups: [], lookups: [] } })
+    assert.equal(document.decisionBrief.summary.total, 31)
+    assert.equal(document.decisionBrief.summary.rejected, 1)
+    assert.match(document.decisionBrief.groups[0].findings[0].found, /qualified inspector reported movement at floor fixture 1\./i)
+    assert.match(artifact.atomicObservations[0].source.inspector_statement, /Qualied.*oor/)
+    await writeFile(input, JSON.stringify(document))
+    await run(process.env.SHELTER_PREP_PYTHON || '.venv/bin/python', ['scripts/phase1_reviewed_report_pdf.py', input, output])
+    const inspection = JSON.parse(await run(process.env.SHELTER_PREP_PYTHON || '.venv/bin/python', ['-c', 'import json,sys; from pypdf import PdfReader; r=PdfReader(sys.argv[1]); t=[p.extract_text() or "" for p in r.pages]; print(json.dumps({"pages":len(t),"appendix":next((i+1 for i,v in enumerate(t) if "Technical Appendix" in v),None),"text":"\\n".join(t)}))', output]))
+    const primaryPages = inspection.appendix - 1
+    assert.ok(primaryPages >= 6 && primaryPages <= 10, `primary brief used ${primaryPages} pages`)
+    assert.match(inspection.text, /Fixture finding 31/)
+    assert.match(inspection.text, /Technical Appendix/)
+    assert.match(inspection.text, /Pricing source: Qualified repair guide/)
+    assert.doesNotMatch(inspection.text, /broad_preliminary|Qualied|\boor\b/)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 

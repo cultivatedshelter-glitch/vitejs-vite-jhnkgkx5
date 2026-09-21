@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Phase1ExperienceViewModel, Phase1FindingViewModel, Phase1LinkedSource } from './phase1ReasoningAdapter'
 import { adaptPhase1ReasoningArtifact, loadPhase1ReasoningArtifact } from './phase1ReasoningAdapter'
-import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
+import { createPhase1SubmissionDraft, loadPhase1Dashboard, loadPhase1Identity, loadPhase1MyProperties, loadPhase1ProcessingRequest, loadPhase1PropertyReports, loadPhase1ReviewedReport, openPhase1ReviewedReportPdf, openPhase1SourceDocument, previewPhase1ReviewedReport, releasePhase1ReviewedReport, resolvePhase1Property, reviewPhase1Finding, savePhase1ReviewPosition, sendPhase1ReviewedResult, submitPhase1SubmissionDraft, updatePhase1SubmissionDraft, uploadPhase1Evidence, type EvidenceReference, type LiveProcessingState, type Phase1BriefFinding, type Phase1BriefPath, type Phase1DecisionBrief, type Phase1Identity, type Phase1LocalProfessional, type Phase1PropertyHistoryItem, type Phase1ReviewAction, type Phase1ReviewQueueItem, type Phase1ReviewSummary, type Phase1SubmissionMetadata } from './phase1ProcessingClient'
 import { clearPhase1PropertyContext, propertyContextBelongsToUser, propertyContextMatchesAddress, readPhase1PropertyContext, writePhase1PropertyContext, type Phase1PropertyContext } from './phase1PropertyContext'
 import { supabase } from './supabase'
 import './Phase1Experience.css'
@@ -658,6 +658,47 @@ function ReleasedResultContent({ artifact }: { artifact: Phase1ExperienceViewMod
   </>
 }
 
+function briefMoney(value: number | null) {
+  return value === null ? 'Not yet sourced' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
+}
+
+function BriefPath({ path }: { path: Phase1BriefPath }) {
+  const price = path.status === 'priced' ? `${briefMoney(path.low)}–${briefMoney(path.high)}${path.unit !== 'project' ? ` / ${path.unit}` : ''}` : 'Not yet sourced'
+  return <div className="phase1-brief-path">
+    <div><strong>{path.label}</strong><span>{price}</span></div>
+    <small>Confidence: {path.confidence} · Pricing sources: {path.sourceCount}</small>
+    {(path.sources.length > 0 || path.assumptions.length > 0 || path.exclusions.length > 0) && <details><summary>View pricing sources</summary><div className="phase1-brief-sources">{path.sources.map((source) => <p key={source.id}><strong>{source.name}</strong>{source.geography && <> · {source.geography}</>}{source.date && <> · {source.date}</>}{source.scopeBasis && <> · {source.scopeBasis}</>}{source.url && <> · <a href={source.url} target="_blank" rel="noreferrer">View source</a></>}</p>)}{path.assumptions.length > 0 && <p><strong>Assumptions</strong>{path.assumptions.join('; ')}</p>}{path.exclusions.length > 0 && <p><strong>Major exclusions</strong>{path.exclusions.join('; ')}</p>}</div></details>}
+  </div>
+}
+
+function BriefFinding({ finding, requestId }: { finding: Phase1BriefFinding; requestId?: string | null }) {
+  return <article className={`phase1-brief-finding is-${finding.status}`} id={`finding-${finding.id}`}>
+    <div className="phase1-brief-status"><span>{finding.statusLabel}</span>{finding.priorityLabels.map((label) => <span key={label}>{label}</span>)}<small>{finding.trade}</small></div>
+    <h3>{finding.title}</h3>
+    <div className="phase1-brief-copy"><p><strong>What was found</strong>{finding.found}</p><p><strong>Shelter Prep view</strong>{finding.view}</p></div>
+    {finding.paths.length > 0 && finding.status !== 'rejected' && <section className="phase1-brief-paths"><h4>Likely paths</h4>{finding.paths.map((path) => <BriefPath path={path} key={path.id} />)}</section>}
+    {finding.keyUnknowns.length > 0 && <p className="phase1-brief-unknown"><strong>Key unknown</strong>{finding.keyUnknowns.join(' ')}</p>}
+    <section className="phase1-brief-next"><span>Next step</span><strong>{finding.nextStep}</strong><small><b>Why this matters</b>{finding.why}</small></section>
+    <div className="phase1-brief-source-row"><span>{finding.inspectionSource.document}{finding.inspectionSource.page ? ` · Page ${finding.inspectionSource.page}` : ''}{finding.inspectionSource.item ? ` · Item ${finding.inspectionSource.item}` : ''}{requestId && <button type="button" onClick={() => void openPhase1SourceDocument(requestId, finding.inspectionSource.page)}>View source</button>}</span><span>Research sources: {finding.researchSources.length}</span></div>
+    <details className="phase1-brief-details"><summary>Technical details and sources</summary><div><h4>Inspection source text</h4><p>{finding.technicalDetails.fullSourceText}</p><h4>Reviewed interpretation</h4><p>{finding.technicalDetails.fullInterpretation}</p>{finding.researchSources.length > 0 && <><h4>Research sources</h4>{finding.researchSources.map((source) => <p key={source.id}><strong>{source.name}</strong>{source.geography && <> · {source.geography}</>}{source.date && <> · {source.date}</>}{source.scopeBasis && <> · {source.scopeBasis}</>}{source.url && <> · <a href={source.url} target="_blank" rel="noreferrer">View source</a></>}</p>)}</>}<h4>Known</h4><TextList values={finding.technicalDetails.known} empty="No additional known detail." /><h4>Unknown</h4><TextList values={finding.technicalDetails.unknowns} empty="No additional unknown detail." /></div></details>
+  </article>
+}
+
+function DecisionBriefContent({ brief, requestId }: { brief: Phase1DecisionBrief; requestId?: string | null }) {
+  const summary = brief.summary
+  return <div className="phase1-decision-brief">
+    <section className="phase1-brief-summary" aria-label="Reviewed report summary"><div><strong>{summary.total}</strong><span>Findings</span></div><div><strong>{summary.approved}</strong><span>Approved</span></div><div><strong>{summary.rejected}</strong><span>Rejected</span></div><div><strong>{summary.needsInfo}</strong><span>Need more information</span></div></section>
+    <section className="phase1-brief-overview">
+      <div><h2>Key decisions</h2>{brief.overview.keyDecisions.slice(0, 6).map((item) => <p key={item.findingId}><strong>{item.title}</strong>{item.decision}</p>)}</div>
+      <div><h2>Immediate follow-up</h2>{brief.overview.immediateFollowUp.slice(0, 5).map((item) => <p key={item.findingId}><strong>{item.title}</strong>{item.task}</p>)}</div>
+      <div><h2>Major trades</h2><ul>{brief.overview.majorTrades.map((item) => <li key={item.trade}><span>{item.trade}</span><strong>{item.count}</strong></li>)}</ul></div>
+      <div><h2>Largest cost uncertainties</h2>{brief.overview.largestCostUncertainties.map((item) => <p key={`${item.findingId}-${item.path}`}><strong>{item.title}</strong>{item.status === 'blocked' ? 'Not yet sourced' : `${briefMoney(item.low)}–${briefMoney(item.high)}`} · {item.path}</p>)}</div>
+    </section>
+    {brief.groups.map((group) => <section className="phase1-brief-group" key={group.label}><header><h2>{group.label}</h2><span>{group.findings.length} {group.findings.length === 1 ? 'finding' : 'findings'}</span></header>{group.findings.map((finding) => <BriefFinding finding={finding} requestId={requestId} key={finding.id} />)}</section>)}
+    <details className="phase1-report-caveats"><summary>Report notes</summary>{brief.universalCaveats.map((value) => <p key={value}>{value}</p>)}</details>
+  </div>
+}
+
 function LocalProfessionals({ groups }: { groups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }> }) {
   if (!groups.length) return null
   return <section className="phase1-decision-overview"><div className="phase1-section-heading"><h2>Local pros to consider</h2></div><p>Selected from public business information based on trade, location, rating, review volume, and recency. Shelter Prep has not independently verified availability, pricing, licensing, or workmanship unless specifically noted.</p>{groups.map((group) => <div key={group.trade}><h3>{group.trade}</h3>{group.professionals.map((professional) => <p key={professional.providerId}><strong>{professional.name}</strong><br />{professional.rating !== null ? `${professional.rating} / 5` : 'Rating not returned'}{professional.reviewCount !== null ? ` · ${professional.reviewCount} reviews` : ''}<br />{professional.address || 'Service area not returned'}<br />Source: {professional.source}{professional.sourceUrl && <> · <a href={professional.sourceUrl} target="_blank" rel="noreferrer">View Business</a></>}</p>)}</div>)}</section>
@@ -675,6 +716,7 @@ function AgentView({ artifact }: { artifact: Phase1ExperienceViewModel }) {
 
 function DurableReportView({ reportId }: { reportId: string }) {
   const [artifact, setArtifact] = useState<Phase1ExperienceViewModel | null>(null)
+  const [decisionBrief, setDecisionBrief] = useState<Phase1DecisionBrief | null>(null)
   const [version, setVersion] = useState<number | null>(null)
   const [requestId, setRequestId] = useState<string | null>(null)
   const [status, setStatus] = useState('')
@@ -684,6 +726,7 @@ function DurableReportView({ reportId }: { reportId: string }) {
   useEffect(() => {
     void loadPhase1ReviewedReport(reportId).then((report) => {
       setArtifact(adaptPhase1ReasoningArtifact(report.reviewed_artifact.artifact, { mode: 'live', audience: 'agent' }))
+      setDecisionBrief(report.reviewed_artifact.decisionBrief || null)
       setVersion(report.report_version)
       setRequestId(report.processing_request_id)
       setStatus(report.report_status)
@@ -705,13 +748,12 @@ function DurableReportView({ reportId }: { reportId: string }) {
       setReleasing(false)
     }
   }
-  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Human Reviewed · Version {version}</p><h1>{artifact.propertyAddress}</h1><div className="phase1-report-actions"><button type="button" onClick={() => void openPhase1ReviewedReportPdf(reportId)}>View PDF</button>{status === 'draft' && requestId && <button className="phase1-primary" type="button" disabled={releasing} onClick={() => void release()}>{releasing ? 'Releasing…' : 'Release Report'}</button>}{status === 'released' && <span className="phase1-status">Released</span>}</div>{error && <p className="phase1-inline-error" role="alert">{error}</p>}<ReleasedResultContent artifact={artifact} /><LocalProfessionals groups={professionalGroups} /></main>
+  return <main className="phase1-main phase1-agent-view"><p className="phase1-kicker">Shelter Prep</p><h1>Reviewed Property Report</h1><p className="phase1-report-address">{artifact.propertyAddress}</p><p className="phase1-report-meta">Version {version} · Human Reviewed</p><div className="phase1-report-actions"><button type="button" onClick={() => void openPhase1ReviewedReportPdf(reportId)}>View PDF</button>{status === 'draft' && requestId && <button className="phase1-primary" type="button" disabled={releasing} onClick={() => void release()}>{releasing ? 'Releasing…' : 'Release Report'}</button>}{status === 'released' && <span className="phase1-status">Released</span>}</div>{error && <p className="phase1-inline-error" role="alert">{error}</p>}{decisionBrief ? <DecisionBriefContent brief={decisionBrief} requestId={requestId} /> : <ReleasedResultContent artifact={artifact} />}<LocalProfessionals groups={professionalGroups} /></main>
 }
 
-function ReviewedReportPreview({ artifact, summary, recipient, professionalGroups, busy, error, onBack, onViewPdf, onRelease }: { artifact: Phase1ExperienceViewModel; summary: Phase1ReviewSummary; recipient: string; professionalGroups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; busy: boolean; error: string; onBack: () => void; onViewPdf: () => void; onRelease: () => void }) {
-  return <main className="phase1-main phase1-report-preview"><p className="phase1-kicker">Preview reviewed report</p><h1>{artifact.propertyAddress}</h1><p className="phase1-lede">This is what {recipient || 'the stored recipient'} will receive. Generating this preview has not sent anything.</p>
-    <div className="phase1-review-summary"><div><span>Approved</span><strong>{summary.approved}</strong></div><div><span>Needs info</span><strong>{summary.needsInfo}</strong></div><div><span>Rejected</span><strong>{summary.rejected}</strong></div></div>
-    <ReleasedResultContent artifact={artifact} />
+function ReviewedReportPreview({ artifact, brief, requestId, summary, recipient, professionalGroups, busy, error, onBack, onViewPdf, onRelease }: { artifact: Phase1ExperienceViewModel; brief: Phase1DecisionBrief | null; requestId: string | null; summary: Phase1ReviewSummary; recipient: string; professionalGroups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; busy: boolean; error: string; onBack: () => void; onViewPdf: () => void; onRelease: () => void }) {
+  return <main className="phase1-main phase1-report-preview"><p className="phase1-kicker">Shelter Prep</p><h1>Reviewed Property Report</h1><p className="phase1-report-address">{artifact.propertyAddress}</p><p className="phase1-lede">Preview for {recipient || 'the stored recipient'}. Nothing has been sent.</p>
+    {brief ? <DecisionBriefContent brief={brief} requestId={requestId} /> : <><div className="phase1-review-summary"><div><span>Approved</span><strong>{summary.approved}</strong></div><div><span>Needs info</span><strong>{summary.needsInfo}</strong></div><div><span>Rejected</span><strong>{summary.rejected}</strong></div></div><ReleasedResultContent artifact={artifact} /></>}
     <LocalProfessionals groups={professionalGroups} />
     {error && <p className="phase1-inline-error" role="alert">{error}</p>}<div className="phase1-actions"><button type="button" className="phase1-text-action" onClick={onBack}>Back to Review</button><button type="button" onClick={onViewPdf}>View PDF</button><button type="button" className="phase1-primary" disabled={busy} onClick={onRelease}>{busy ? 'Releasing…' : 'Release Report'}</button></div>
   </main>
@@ -820,6 +862,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
   const [reportBusy, setReportBusy] = useState(false)
   const [reportError, setReportError] = useState('')
   const [reportProfessionalGroups, setReportProfessionalGroups] = useState<Array<{ trade: string; professionals: Phase1LocalProfessional[] }>>([])
+  const [reportDecisionBrief, setReportDecisionBrief] = useState<Phase1DecisionBrief | null>(null)
   const [reviewedReportId, setReviewedReportId] = useState<string | null>(null)
   const reviewLoadStarted = useRef<string | null>(null)
   const evidenceCount = useMemo(() => files.length + (note.trim() ? 1 : 0), [files, note])
@@ -1179,6 +1222,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       setArtifact(reviewedArtifact)
       setSubmission(preview.submission)
       setReportSummary(preview.summary)
+      setReportDecisionBrief(preview.report?.decisionBrief || null)
       setReportProfessionalGroups(preview.report?.localProfessionals.groups || [])
       setReviewedReportId(preview.reportId || null)
       setStep('report_preview')
@@ -1247,7 +1291,7 @@ export default function Phase1Experience({ fixtureMode = false }: { fixtureMode?
       {step === 'processing' && <ProcessingStep state={processingState} error={processingError} onContinue={() => setStep('overview')} onBack={() => setStep('evidence')} />}
       {step === 'overview' && artifact && <OverviewStep artifact={artifact} reportBusy={reportBusy} reportError={reportError} onSelect={openFinding} onGenerateReport={() => void generateReviewedReport()} />}
       {step === 'finding' && artifact && finding && <FindingStep key={`${finding.id}-${finding.reviewDecision.reviewedAt || 'draft'}`} finding={finding} findingIndex={findingIndex} findingCount={artifact.findings.length} reviewedCount={summarizeReview(artifact).reviewed} remainingCount={summarizeReview(artifact).remaining} propertyAddress={artifact.propertyAddress} transactionPerspective={artifact.transactionPerspective} isFixture={artifact.isFixture} requestId={activeRequestId} reviewing={reviewing} reviewError={reviewError} onBack={() => setStep('overview')} onOpenProperty={() => setStep('overview')} onPrevious={() => openFinding(Math.max(0, findingIndex - 1))} onNext={() => openFinding(Math.min(artifact.findings.length - 1, findingIndex + 1))} onReview={(action, payload) => void reviewFinding(action, payload)} />}
-      {step === 'report_preview' && artifact && reportSummary && <ReviewedReportPreview artifact={artifact} summary={reportSummary} recipient={submission?.deliveryRecipientEmail || ''} professionalGroups={reportProfessionalGroups} busy={reportBusy} error={reportError} onBack={() => setStep('overview')} onViewPdf={() => reviewedReportId && void openPhase1ReviewedReportPdf(reviewedReportId)} onRelease={() => void releaseReviewedReport()} />}
+      {step === 'report_preview' && artifact && reportSummary && <ReviewedReportPreview artifact={artifact} brief={reportDecisionBrief} requestId={activeRequestId} summary={reportSummary} recipient={submission?.deliveryRecipientEmail || ''} professionalGroups={reportProfessionalGroups} busy={reportBusy} error={reportError} onBack={() => setStep('overview')} onViewPdf={() => reviewedReportId && void openPhase1ReviewedReportPdf(reviewedReportId)} onRelease={() => void releaseReviewedReport()} />}
       {step === 'report_released' && artifact && <ReportReleased address={artifact.propertyAddress} submission={submission} busy={reportBusy} error={reportError} onSend={() => void sendReviewedResult()} />}
       {step === 'gap' && finding && <GapStep finding={finding} onEvidence={(file) => { setFiles((current) => [...current, file]); setStep('next') }} onSkip={() => setStep('next')} />}
       {step === 'next' && artifact && finding && <NextStep address={address} evidenceCount={evidenceCount} artifact={artifact} finding={finding} onContinue={continueReview} />}

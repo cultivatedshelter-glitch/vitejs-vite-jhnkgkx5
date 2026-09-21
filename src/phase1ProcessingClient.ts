@@ -50,7 +50,11 @@ export type Phase1ReviewedReportPreview = {
 }
 
 export type Phase1LocalProfessional = { providerId: string; name: string; address: string | null; rating: number | null; reviewCount: number | null; latestReviewAt?: string | null; source: string; sourceUrl: string | null; retrievedAt: string; qualificationStatus: string }
-export type Phase1DurableReportDocument = { localProfessionals: { groups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; lookups: Array<Record<string, unknown>> } }
+export type Phase1BriefSource = { id: string; name: string; url: string | null; reference: string | null; geography: string | null; date: string | null; scopeBasis: string | null }
+export type Phase1BriefPath = { id: string; label: string; status: 'priced' | 'blocked'; low: number | null; high: number | null; unit: string; confidence: string; sourceCount: number; sources: Phase1BriefSource[]; geography: string | null; assumptions: string[]; exclusions: string[] }
+export type Phase1BriefFinding = { id: string; findingId: string | null; reviewEventId: string | null; status: 'approved' | 'rejected' | 'needs_more_information'; statusLabel: string; title: string; category: string; trade: string; priorityLabels: string[]; found: string; view: string; keyEvidence: string; keyUnknowns: string[]; paths: Phase1BriefPath[]; nextStep: string; why: string; inspectionSource: { document: string; page: number | null; item: string | null; section: string | null }; researchSources: Phase1BriefSource[]; technicalDetails: { known: string[]; unknowns: string[]; inspectorRecommendation: string; fullSourceText: string; fullInterpretation: string; fullNextStep: string; fullWhy: string; affectedLocation: Record<string, unknown> | null; reviewerReason: string | null; reviewedAt: string | null } }
+export type Phase1DecisionBrief = { schemaVersion: string; summary: Phase1ReviewSummary; overview: { keyDecisions: Array<{ findingId: string; title: string; decision: string }>; immediateFollowUp: Array<{ findingId: string; title: string; task: string }>; majorTrades: Array<{ trade: string; count: number }>; largestCostUncertainties: Array<{ findingId: string; title: string; path: string; low: number | null; high: number | null; status: string; keyUnknown: string }> }; groups: Array<{ label: string; findings: Phase1BriefFinding[] }>; appendix: { findings: Phase1BriefFinding[] }; universalCaveats: string[] }
+export type Phase1DurableReportDocument = { decisionBrief?: Phase1DecisionBrief; localProfessionals: { groups: Array<{ trade: string; professionals: Phase1LocalProfessional[] }>; lookups: Array<Record<string, unknown>> } }
 
 export type Phase1ReviewAction = 'approve' | 'edit' | 'needs_more_info' | 'reject'
 export type Phase1ReviewQueueItem = {
@@ -368,5 +372,5 @@ export async function loadPhase1PropertyReports(propertyId: string) {
 }
 
 export async function loadPhase1ReviewedReport(reportId: string) {
-  return jsonRequest<{ id: string; property_id: string; processing_request_id: string | null; report_version: number; report_status: string; reviewed_artifact: { artifact: unknown; propertyAddress: string; generatedAt: string; localProfessionals: Phase1DurableReportDocument['localProfessionals'] }; released_at: string | null }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
+  return jsonRequest<{ id: string; property_id: string; processing_request_id: string | null; report_version: number; report_status: string; reviewed_artifact: { artifact: unknown; propertyAddress: string; generatedAt: string; decisionBrief?: Phase1DecisionBrief; localProfessionals: Phase1DurableReportDocument['localProfessionals'] }; released_at: string | null }>(`/api/phase1/reviewed-reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
 }

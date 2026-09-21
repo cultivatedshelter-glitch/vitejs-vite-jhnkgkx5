@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
+import { buildDecisionBrief } from './phase1DecisionBrief.mjs'
 
 const BUCKET = process.env.PHASE1_EVIDENCE_BUCKET || 'phase1-evidence'
 
@@ -1001,7 +1002,10 @@ export function createPhase1SupabaseRepository({ createClientImpl = createClient
       const submitter = request?.requested_by === actor.id
       if (!reviewer && (!submitter || !['released', 'superseded'].includes(data.report_status))) return null
       const { data: reviewerProfile } = data.reviewer_id ? await admin.from('profiles').select('full_name').eq('id', data.reviewer_id).maybeSingle() : { data: null }
-      return { ...data, reviewer_name: reviewerProfile?.full_name || 'Shelter Prep reviewer' }
+      const reviewedArtifact = data.reviewed_artifact && !data.reviewed_artifact.decisionBrief
+        ? { ...data.reviewed_artifact, decisionBrief: buildDecisionBrief(data.reviewed_artifact.artifact, data.reviewed_artifact.summary) }
+        : data.reviewed_artifact
+      return { ...data, reviewed_artifact: reviewedArtifact, reviewer_name: reviewerProfile?.full_name || 'Shelter Prep reviewer' }
     },
 
     async listPropertyReports({ actor, propertyId }) {

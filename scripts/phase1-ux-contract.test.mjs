@@ -126,7 +126,7 @@ test('secondary evidence and machinery stay behind compact disclosure controls',
 })
 
 test('review completion is explicit and separated from preview, release, and send', () => {
-  for (const label of ['Review complete', 'Generate Reviewed Report', 'Preview reviewed report', 'Back to Review', 'Release Report', 'Report released', 'Send Reviewed Result']) {
+  for (const label of ['Review complete', 'Generate Reviewed Report', 'Reviewed Property Report', 'Preview for', 'Back to Review', 'Release Report', 'Report released', 'Send Reviewed Result']) {
     assert.match(component, new RegExp(label, 'i'))
   }
   assert.match(component, /isTerminalReview/)
@@ -134,6 +134,15 @@ test('review completion is explicit and separated from preview, release, and sen
   assert.match(component, /previewPhase1ReviewedReport/)
   assert.match(component, /releasePhase1ReviewedReport/)
   assert.match(component, /sendPhase1ReviewedResult/)
+})
+
+test('released web reports use the compact canonical decision brief with mobile-safe hierarchy', () => {
+  for (const required of ['DecisionBriefContent', 'Likely paths', 'Key unknown', 'Next step', 'Why this matters', 'View pricing sources', 'Technical details and sources']) assert.match(component, new RegExp(required, 'i'))
+  assert.match(component, /report\.reviewed_artifact\.decisionBrief/)
+  assert.match(component, /preview\.report\?\.decisionBrief/)
+  assert.match(css, /\.phase1-brief-summary[\s\S]*grid-template-columns: repeat\(4/)
+  assert.match(css, /@media \(max-width: 430px\)[\s\S]*\.phase1-brief-summary[\s\S]*repeat\(2/)
+  assert.match(css, /overflow-wrap: anywhere/)
 })
 
 test('durable draft reports can be released from property history through the canonical endpoint', () => {

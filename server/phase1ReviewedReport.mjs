@@ -1,3 +1,5 @@
+import { buildDecisionBrief } from './phase1DecisionBrief.mjs'
+
 const TERMINAL = new Set(['approve', 'needs_more_info', 'reject'])
 const INTERNAL_RELEASE_LANGUAGE = /organize it as|round 1|decision-blocking uncertainty|uncertainty-reduction item|human review has not verified this interpretation|ai draft interpretation/i
 
@@ -43,6 +45,7 @@ export function buildReviewedReportDocument({ report, request, reviewer, localPr
     recipient: report.recipient,
     status: 'Human Reviewed',
     summary,
+    decisionBrief: buildDecisionBrief(request.artifact, summary),
     artifact: structuredClone(request.artifact),
     localProfessionals: localProfessionals || { groups: [], lookups: [] },
     notice: 'Property-specific reviewed information. Not valid for unrelated properties. Qualified trades determine final field scope and means and methods.',

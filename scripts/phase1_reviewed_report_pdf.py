@@ -1,98 +1,218 @@
 #!/usr/bin/env python3
-import json, sys
+import json
+import sys
+from datetime import datetime
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, KeepTogether
+from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, NextPageTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, KeepTogether, HRFlowable
 
-data = json.load(open(sys.argv[1], encoding='utf-8'))
-artifact = data.get('artifact') or {}
-states = artifact.get('reviewState') or {}
-observations = artifact.get('atomicObservations') or []
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+brief = data.get("decisionBrief") or {}
+if not brief.get("groups"):
+    raise ValueError("Reviewed report decision brief is missing.")
+
 styles = getSampleStyleSheet()
-green, ink, muted, rule = colors.HexColor('#174c35'), colors.HexColor('#17251d'), colors.HexColor('#5f6d64'), colors.HexColor('#d9ded9')
-styles.add(ParagraphStyle(name='Brand', parent=styles['Normal'], textColor=green, fontName='Helvetica-Bold', fontSize=9, leading=12, spaceAfter=18))
-styles.add(ParagraphStyle(name='Title2', parent=styles['Title'], textColor=ink, fontName='Times-Roman', fontSize=25, leading=29, spaceAfter=8))
-styles.add(ParagraphStyle(name='H2x', parent=styles['Heading2'], textColor=ink, fontName='Times-Bold', fontSize=15, leading=19, spaceBefore=14, spaceAfter=6))
-styles.add(ParagraphStyle(name='H3x', parent=styles['Heading3'], textColor=green, fontName='Helvetica-Bold', fontSize=9, leading=12, spaceBefore=8, spaceAfter=3))
-styles.add(ParagraphStyle(name='Bodyx', parent=styles['BodyText'], textColor=ink, fontSize=9, leading=13, spaceAfter=5))
-styles.add(ParagraphStyle(name='Smallx', parent=styles['BodyText'], textColor=muted, fontSize=7.5, leading=10, spaceAfter=4))
+green, forest, ink = colors.HexColor("#174C35"), colors.HexColor("#0F3927"), colors.HexColor("#17251D")
+muted, rule, soft = colors.HexColor("#637067"), colors.HexColor("#D7DED9"), colors.HexColor("#F4F7F4")
+mint, amber, red_soft = colors.HexColor("#EAF2ED"), colors.HexColor("#F7F1E6"), colors.HexColor("#F8ECE9")
+styles.add(ParagraphStyle(name="Brand", parent=styles["Normal"], textColor=green, fontName="Helvetica-Bold", fontSize=9, leading=11, spaceAfter=5))
+styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], textColor=ink, fontName="Times-Bold", fontSize=23, leading=26, spaceAfter=5))
+styles.add(ParagraphStyle(name="Address", parent=styles["Heading2"], textColor=ink, fontName="Helvetica-Bold", fontSize=12, leading=15, spaceAfter=9))
+styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], textColor=forest, fontName="Helvetica-Bold", fontSize=13, leading=16, spaceBefore=10, spaceAfter=5))
+styles.add(ParagraphStyle(name="FindingTitle", parent=styles["Heading3"], textColor=ink, fontName="Helvetica-Bold", fontSize=9.8, leading=11.5, spaceAfter=2))
+styles.add(ParagraphStyle(name="Label", parent=styles["Normal"], textColor=muted, fontName="Helvetica-Bold", fontSize=6.2, leading=7, spaceAfter=1))
+styles.add(ParagraphStyle(name="Body", parent=styles["BodyText"], textColor=ink, fontSize=7.4, leading=8.8, spaceAfter=2))
+styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], textColor=muted, fontSize=6.2, leading=7.3, spaceAfter=1))
+styles.add(ParagraphStyle(name="Price", parent=styles["BodyText"], textColor=green, fontName="Helvetica-Bold", fontSize=10, leading=11.5, spaceAfter=0))
+styles.add(ParagraphStyle(name="Next", parent=styles["BodyText"], textColor=forest, fontName="Helvetica-Bold", fontSize=8, leading=9.4, spaceAfter=1))
+styles.add(ParagraphStyle(name="RightSmall", parent=styles["Small"], alignment=TA_RIGHT))
 
-def esc(v):
-    return str(v or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-def text_list(values):
-    return '<br/>'.join('• ' + esc(v) for v in (values or [])) or 'Not established.'
-def money(v):
-    return '${:,.0f}'.format(v) if isinstance(v, (int,float)) else 'Not sourced'
-def corrected(item):
-    event = (states.get(item.get('id')) or {}).get('event') or {}
-    corr = ((event.get('new_value') or {}).get('corrections') or {})
-    card = item.get('finding_card') or {}; epi = item.get('epistemic_states') or {}; source = item.get('source') or {}
-    return event, corr, card, epi, source
 
-story = [Paragraph('SHELTER PREP', styles['Brand']), Paragraph('Reviewed Property Report', styles['Title2']), Paragraph(esc(data.get('propertyAddress')), styles['H2x'])]
-meta = [['Report', 'Version {}'.format(data.get('reportVersion'))], ['Status', 'Human Reviewed'], ['Generated', esc(data.get('generatedAt'))], ['Findings', str((data.get('summary') or {}).get('total', len(observations)))]]
-t = Table(meta, colWidths=[1.15*inch, 5.7*inch]); t.setStyle(TableStyle([('TEXTCOLOR',(0,0),(0,-1),muted),('TEXTCOLOR',(1,0),(1,-1),ink),('FONTNAME',(0,0),(0,-1),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),8),('BOTTOMPADDING',(0,0),(-1,-1),5),('LINEBELOW',(0,-1),(-1,-1),.5,rule)])); story += [t, Spacer(1,12)]
-summary = data.get('summary') or {}
-story += [Paragraph('Whole-report overview', styles['H2x']), Paragraph('{} approved · {} needs more information · {} rejected'.format(summary.get('approved',0), summary.get('needsInfo',0), summary.get('rejected',0)), styles['Bodyx']), Paragraph('Ranges shown below are scope-specific context. Do not add incompatible or mutually exclusive ranges into a project total.', styles['Smallx'])]
+def esc(value):
+    return str("" if value is None else value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-for index, item in enumerate(observations, 1):
-    event, corr, card, epi, source = corrected(item)
-    action = event.get('review_action')
-    title = corr.get('title') or card.get('finding_title') or source.get('inspector_statement') or 'Inspection finding'
-    src = card.get('source_refs') or {}
-    disposition = 'Needs more information — unresolved' if action == 'needs_more_info' else 'Rejected during review' if action == 'reject' else 'Approved / corrected'
-    story += [KeepTogether([Paragraph('{} · {}'.format(index, esc(title)), styles['H2x']), Paragraph('Review disposition: {}'.format(disposition), styles['Smallx'])])]
-    story += [Paragraph('WHAT WAS REPORTED', styles['H3x']), Paragraph(esc(epi.get('source_observation') or source.get('inspector_statement') or title), styles['Bodyx'])]
-    story += [Paragraph('SOURCE', styles['H3x']), Paragraph('Inspection report · Page {} · Item {} · {}'.format(esc(src.get('source_page') or source.get('source_page') or 'not specified'), esc(src.get('source_item_number') or source.get('source_item_number') or 'not specified'), esc(src.get('source_section') or source.get('source_section') or 'section not specified')), styles['Bodyx'])]
-    story += [Paragraph('SHELTER PREP INTERPRETATION', styles['H3x']), Paragraph(esc(corr.get('interpretation') or epi.get('shelter_prep_interpretation') or 'No reviewed interpretation.'), styles['Bodyx'])]
-    catalog = {(s.get('id') or s.get('source_id')): s for s in (artifact.get('external_sources') or []) if (s.get('id') or s.get('source_id'))}
-    research_sources = [catalog.get(source_id) for source_id in card.get('research_source_refs') or [] if catalog.get(source_id)]
-    if research_sources:
-        source_lines = []
-        for research_source in research_sources:
-            label = research_source.get('source_name') or research_source.get('provider') or research_source.get('title') or research_source.get('id')
-            url = research_source.get('source_url') or research_source.get('source_reference') or ''
-            scope = research_source.get('scope_basis') or ''
-            linked_label = '<link href="{}" color="#174c35">{}</link>'.format(esc(url), esc(label)) if str(url).startswith('http') else esc(label)
-            source_lines.append('{}{}'.format(linked_label, ' — {}'.format(esc(scope)) if scope else ''))
-        story += [Paragraph('INDEPENDENT RESEARCH SOURCES', styles['H3x']), Paragraph('<br/>'.join(source_lines), styles['Smallx'])]
-    story += [Paragraph('KNOWN', styles['H3x']), Paragraph(text_list(corr.get('known') or card.get('what_we_know')), styles['Bodyx']), Paragraph('UNKNOWN', styles['H3x']), Paragraph(text_list(corr.get('unknown') or card.get('what_we_dont_know')), styles['Bodyx'])]
-    paths = card.get('repair_paths') or []
-    if paths and action == 'approve':
-        story.append(Paragraph('LIKELY PATHS AND COST CONTEXT', styles['H3x']))
-        adjustments = {p.get('path_id'): p for p in (corr.get('price_adjustments') or []) if p}
-        if corr.get('price'): adjustments[corr['price'].get('path_id')] = corr['price']
-        for path in paths:
-            adj = adjustments.get(path.get('id')) or {}; low = adj.get('low', path.get('price_low')); high = adj.get('high', path.get('price_high'))
-            source_ids = adj.get('supporting_source_ids') or path.get('price_source_refs') or []
-            source_lines = []
-            for source_id in source_ids:
-                source_item = catalog.get(source_id) or {}
-                label = source_item.get('source_name') or source_item.get('provider') or source_item.get('title') or source_id
-                geography = (source_item.get('source_geography') or {}).get('label') or source_item.get('geography') or 'geography not stated'
-                date = source_item.get('published_at') or source_item.get('retrieved_at') or source_item.get('retrieval_time')
-                url = source_item.get('source_url') or source_item.get('source_reference') or ''
-                linked_label = '<link href="{}" color="#174c35">{}</link>'.format(esc(url), esc(label)) if str(url).startswith('http') else esc(label)
-                source_lines.append('{} — {}{}'.format(linked_label, esc(geography), ' · {}'.format(esc(date)) if date else ''))
-            source_text = '<br/>'.join(source_lines) or 'No defensible sourced range attached'
-            story += [Paragraph('<b>{}</b><br/>{}–{} · {}<br/><font color="#5f6d64">Pricing sources:<br/>{}<br/>Scope geography: {}<br/>Assumptions: {}<br/>Exclusions: {}</font>'.format(esc(path.get('label') or 'Potential repair path'), money(low), money(high), esc(adj.get('confidence_status') or path.get('range_status') or 'preliminary'), source_text, esc(adj.get('geography') or (path.get('price_geography') or {}).get('label') or 'Not established'), esc('; '.join(adj.get('assumptions') or path.get('assumptions') or []) or 'None stated'), esc('; '.join(adj.get('exclusions') or path.get('major_exclusions') or []) or 'None stated')), styles['Bodyx'])]
-    story += [Paragraph('NEXT TASK', styles['H3x']), Paragraph(esc(corr.get('next_step') or card.get('recommended_next_step') or 'Human follow-up required.'), styles['Bodyx']), Paragraph('WHY', styles['H3x']), Paragraph(esc(corr.get('rationale') or card.get('why_next_step') or 'No reviewed rationale.'), styles['Bodyx'])]
 
-groups = (data.get('localProfessionals') or {}).get('groups') or []
+def money(value):
+    return "${:,.0f}".format(value) if isinstance(value, (int, float)) else "Not yet sourced"
+
+
+def date_label(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%B %-d, %Y")
+    except (ValueError, TypeError):
+        return str(value or "Not stated")
+
+
+def range_label(path):
+    if path.get("status") != "priced":
+        return "Not yet sourced"
+    suffix = "" if path.get("unit") in (None, "", "project") else " / {}".format(esc(path.get("unit")))
+    return "{}-{}{}".format(money(path.get("low")), money(path.get("high")), suffix)
+
+
+def link_or_text(source):
+    label = esc(source.get("name") or source.get("reference") or source.get("id"))
+    return '<link href="{}" color="#174C35">{}</link>'.format(esc(source.get("url")), label) if source.get("url") else label
+
+
+def status_color(status):
+    if status == "rejected":
+        return red_soft
+    if status == "needs_more_information":
+        return amber
+    return mint
+
+
+def summary_box(label, value):
+    return [Paragraph(esc(value), styles["FindingTitle"]), Paragraph(esc(label), styles["Small"])]
+
+
+def overview_list(title, rows):
+    body = [Paragraph(esc(title), styles["Label"])]
+    body.extend(Paragraph("- " + esc(row), styles["Small"]) for row in rows[:6])
+    if len(body) == 1:
+        body.append(Paragraph("No items returned.", styles["Small"]))
+    return body
+
+
+def compact_finding(finding):
+    source = finding.get("inspectionSource") or {}
+    source_bits = ["Inspection report"]
+    if source.get("page"):
+        source_bits.append("Page {}".format(source["page"]))
+    if source.get("item"):
+        source_bits.append("Item {}".format(source["item"]))
+    status = finding.get("status") or "approved"
+    tags = " - ".join([finding.get("statusLabel") or "Reviewed"] + (finding.get("priorityLabels") or []))
+    content = [
+        Table([[Paragraph(esc(tags), styles["Small"]), Paragraph(esc(finding.get("trade")), styles["RightSmall"])]], colWidths=[2.2*inch, 1.3*inch], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), status_color(status)), ("BOX", (0, 0), (-1, -1), 0.5, rule), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)])),
+        Spacer(1, 2),
+        Paragraph('<a name="brief-{}"/>{}'.format(esc(finding.get("id")), esc(finding.get("title"))), styles["FindingTitle"]),
+        Paragraph("WHAT WAS FOUND", styles["Label"]), Paragraph(esc(finding.get("found")), styles["Body"]),
+        Paragraph("SHELTER PREP VIEW", styles["Label"]), Paragraph(esc(finding.get("view")), styles["Body"]),
+    ]
+    if finding.get("paths") and status != "rejected":
+        path_rows = []
+        for path in finding["paths"]:
+            details = "Confidence: {} - Pricing sources: {}".format(path.get("confidence") or "Low", path.get("sourceCount") or 0)
+            path_rows.append([[Paragraph(esc(path.get("label")), styles["Body"]), Paragraph(esc(details), styles["Small"])], Paragraph(range_label(path), styles["Price"])])
+        content += [Paragraph("LIKELY PATHS", styles["Label"]), Table(path_rows, colWidths=[2.15*inch, 1.35*inch], style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -2), 0.35, rule), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))]
+    unknowns = finding.get("keyUnknowns") or []
+    if unknowns:
+        content += [Paragraph("KEY UNKNOWN", styles["Label"]), Paragraph(esc(unknowns[0]), styles["Body"])]
+    content += [
+        Table([[[Paragraph("NEXT STEP", styles["Label"]), Paragraph(esc(finding.get("nextStep")), styles["Next"]), Paragraph("WHY THIS MATTERS", styles["Label"]), Paragraph(esc(finding.get("why")), styles["Small"])]]], colWidths=[3.5*inch], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), soft), ("BOX", (0, 0), (-1, -1), 0.5, rule), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)])),
+        Spacer(1, 2),
+        Paragraph("{} - Research sources: {} - <link href=\"#appendix-{}\" color=\"#174C35\">Technical details</link>".format(esc(" - ".join(source_bits)), len(finding.get("researchSources") or []), esc(finding.get("id"))), styles["Small"]),
+        Spacer(1, 3), HRFlowable(width="100%", thickness=0.6, color=rule), Spacer(1, 3),
+    ]
+    return KeepTogether(content)
+
+
+def appendix_finding(finding):
+    source = finding.get("inspectionSource") or {}
+    technical = finding.get("technicalDetails") or {}
+    rows = [
+        Paragraph('<a name="appendix-{}"/>{}'.format(esc(finding.get("id")), esc(finding.get("title"))), styles["FindingTitle"]),
+        Paragraph("{} - {} - Reviewed event {}".format(esc(finding.get("statusLabel")), esc(finding.get("trade")), esc(finding.get("reviewEventId") or "not returned")), styles["Small"]),
+        Paragraph("INSPECTION SOURCE", styles["Label"]),
+        Paragraph("Inspection report - Page {} - Item {} - {}".format(esc(source.get("page") or "not stated"), esc(source.get("item") or "not stated"), esc(source.get("section") or "section not stated")), styles["Small"]),
+        Paragraph(esc(technical.get("fullSourceText") or finding.get("found")), styles["Body"]),
+        Paragraph("REVIEWED INTERPRETATION", styles["Label"]), Paragraph(esc(technical.get("fullInterpretation") or finding.get("view")), styles["Body"]),
+    ]
+    known, unknowns = technical.get("known") or [], technical.get("unknowns") or []
+    if known:
+        rows += [Paragraph("FULL KNOWN DETAIL", styles["Label"]), Paragraph("<br/>".join("- " + esc(value) for value in known), styles["Small"])]
+    if unknowns:
+        rows += [Paragraph("FULL UNKNOWN DETAIL", styles["Label"]), Paragraph("<br/>".join("- " + esc(value) for value in unknowns), styles["Small"])]
+    if finding.get("researchSources"):
+        rows += [Paragraph("RESEARCH SOURCES", styles["Label"])]
+        for source_item in finding["researchSources"]:
+            detail = " - ".join(str(value) for value in [source_item.get("geography"), source_item.get("date"), source_item.get("scopeBasis")] if value)
+            rows.append(Paragraph("{}{}".format(link_or_text(source_item), " - " + esc(detail) if detail else ""), styles["Small"]))
+    for path in finding.get("paths") or []:
+        rows += [Paragraph("{} - {} - Confidence: {}".format(esc(path.get("label")), range_label(path), esc(path.get("confidence"))), styles["Body"])]
+        for source_item in path.get("sources") or []:
+            detail = " - ".join(str(value) for value in [source_item.get("geography"), source_item.get("date"), source_item.get("scopeBasis")] if value)
+            rows.append(Paragraph("Pricing source: {}{}".format(link_or_text(source_item), " - " + esc(detail) if detail else ""), styles["Small"]))
+        if path.get("assumptions"):
+            rows.append(Paragraph("Assumptions: " + esc("; ".join(path["assumptions"])), styles["Small"]))
+        if path.get("exclusions"):
+            rows.append(Paragraph("Exclusions: " + esc("; ".join(path["exclusions"])), styles["Small"]))
+    rows += [Paragraph("NEXT STEP", styles["Label"]), Paragraph(esc(technical.get("fullNextStep") or finding.get("nextStep")), styles["Body"]), Paragraph("Why: " + esc(technical.get("fullWhy") or finding.get("why")), styles["Small"]), Spacer(1, 5), HRFlowable(width="100%", thickness=0.5, color=rule), Spacer(1, 5)]
+    return KeepTogether(rows)
+
+
+story = [Paragraph("SHELTER PREP", styles["Brand"]), Paragraph("Reviewed Property Report", styles["ReportTitle"]), Paragraph(esc(data.get("propertyAddress")), styles["Address"])]
+meta = "Version {} - Generated {} - Human Reviewed".format(data.get("reportVersion"), date_label(data.get("generatedAt")))
+story += [Paragraph(esc(meta), styles["Small"]), Spacer(1, 7)]
+summary = brief.get("summary") or data.get("summary") or {}
+summary_table = Table([[summary_box("Findings", summary.get("total", 0)), summary_box("Approved", summary.get("approved", 0)), summary_box("Rejected", summary.get("rejected", 0)), summary_box("Need more information", summary.get("needsInfo", 0))]], colWidths=[1.72*inch]*4)
+summary_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), soft), ("BOX", (0, 0), (-1, -1), 0.6, rule), ("INNERGRID", (0, 0), (-1, -1), 0.4, rule), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+story += [summary_table, Spacer(1, 10)]
+
+overview = brief.get("overview") or {}
+decision_rows = ["{} - {}".format(item.get("title"), item.get("decision")) for item in overview.get("keyDecisions") or []]
+follow_rows = ["{} - {}".format(item.get("title"), item.get("task")) for item in overview.get("immediateFollowUp") or []]
+trade_rows = ["{} ({})".format(item.get("trade"), item.get("count")) for item in overview.get("majorTrades") or []]
+cost_rows = []
+for item in overview.get("largestCostUncertainties") or []:
+    amount = "Not yet sourced" if item.get("status") == "blocked" else "{}-{}".format(money(item.get("low")), money(item.get("high")))
+    cost_rows.append("{} - {} ({})".format(item.get("title"), item.get("path"), amount))
+overview_table = Table([[overview_list("KEY DECISIONS", decision_rows), overview_list("IMMEDIATE FOLLOW-UP", follow_rows)], [overview_list("MAJOR TRADES", trade_rows), overview_list("LARGEST COST UNCERTAINTIES", cost_rows)]], colWidths=[3.44*inch, 3.44*inch])
+overview_table.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.6, rule), ("INNERGRID", (0, 0), (-1, -1), 0.4, rule), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+story += [overview_table, Spacer(1, 9), Paragraph("Report-level notes", styles["Label"]), Paragraph(" ".join(esc(value) for value in brief.get("universalCaveats") or []), styles["Small"]), NextPageTemplate("Brief"), PageBreak()]
+
+for group in brief.get("groups") or []:
+    findings = group.get("findings") or []
+    heading = [Paragraph(esc(group.get("label")), styles["Section"]), HRFlowable(width="100%", thickness=1.0, color=green), Spacer(1, 5)]
+    if findings:
+        story.append(KeepTogether(heading + [compact_finding(findings[0])]))
+    for finding in findings[1:]:
+        story.append(compact_finding(finding))
+
+story += [NextPageTemplate("Appendix"), PageBreak(), Paragraph("Technical Appendix", styles["ReportTitle"]), Paragraph("Complete reviewed evidence, source provenance, pricing detail, assumptions, exclusions, and review references. The primary brief above is a compressed presentation of this same canonical reviewed artifact.", styles["Body"]), Spacer(1, 8)]
+for group in brief.get("groups") or []:
+    story += [Paragraph(esc(group.get("label")), styles["Section"])]
+    for finding in group.get("findings") or []:
+        story.append(appendix_finding(finding))
+
+groups = (data.get("localProfessionals") or {}).get("groups") or []
 if groups:
-    story += [PageBreak(), Paragraph('Local professionals to consider', styles['Title2']), Paragraph('These sourced listings are not endorsements. Verify licensing, insurance, availability, fit, and scope directly.', styles['Bodyx'])]
+    story += [PageBreak(), Paragraph("Local Professionals to Consider", styles["ReportTitle"]), Paragraph("Public business listings are not endorsements. Verify licensing, insurance, availability, fit, and scope directly.", styles["Body"])]
     for group in groups:
-        story.append(Paragraph(esc(group.get('trade')), styles['H2x']))
-        for pro in group.get('professionals') or []:
-            rating = '{} / 5 from {} reviews'.format(pro.get('rating'), pro.get('reviewCount')) if pro.get('rating') is not None else 'Rating not returned'
-            business_link = ' · <link href="{}" color="#174c35">View Business</link>'.format(esc(pro.get('sourceUrl'))) if pro.get('sourceUrl') else ''
-            story.append(Paragraph('<b>{}</b><br/>{}<br/>{}<br/><font color="#5f6d64">Source: Google Places{} · Retrieved {} · Qualification not verified by Shelter Prep</font>'.format(esc(pro.get('name')), esc(pro.get('address')), esc(rating), business_link, esc(pro.get('retrievedAt'))), styles['Bodyx']))
+        story.append(Paragraph(esc(group.get("trade")), styles["Section"]))
+        for professional in group.get("professionals") or []:
+            rating = "{} / 5 from {} reviews".format(professional.get("rating"), professional.get("reviewCount")) if professional.get("rating") is not None else "Rating not returned"
+            link = '<link href="{}" color="#174C35">View business</link>'.format(esc(professional.get("sourceUrl"))) if professional.get("sourceUrl") else "Stored Google Places reference"
+            story.append(Paragraph("<b>{}</b> - {}<br/>{}<br/>{} - Not verified by Shelter Prep".format(esc(professional.get("name")), esc(rating), esc(professional.get("address")), link), styles["Body"]))
 
-story += [Spacer(1,18), Paragraph(esc(data.get('notice')), styles['Smallx'])]
+story += [Spacer(1, 12), Paragraph(esc(data.get("notice")), styles["Small"])]
+
+
 def footer(canvas, doc):
-    canvas.saveState(); canvas.setFillColor(colors.white); canvas.rect(0, 0, letter[0], letter[1], fill=1, stroke=0); canvas.setStrokeColor(rule); canvas.line(.65*inch,.48*inch,7.85*inch,.48*inch); canvas.setFont('Helvetica',7); canvas.setFillColor(muted); canvas.drawString(.65*inch,.30*inch,'Shelter Prep · Human Reviewed'); canvas.drawRightString(7.85*inch,.30*inch,'Page {}'.format(doc.page)); canvas.restoreState()
-doc = SimpleDocTemplate(sys.argv[2], pagesize=letter, rightMargin=.65*inch, leftMargin=.65*inch, topMargin=.62*inch, bottomMargin=.62*inch, title='Shelter Prep Reviewed Property Report', author='Shelter Prep')
-doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    canvas.saveState()
+    canvas.setStrokeColor(rule)
+    canvas.line(0.55*inch, 0.45*inch, 7.95*inch, 0.45*inch)
+    canvas.setFont("Helvetica", 6.8)
+    canvas.setFillColor(muted)
+    canvas.drawString(0.55*inch, 0.28*inch, "Shelter Prep - Reviewed Property Report")
+    canvas.drawRightString(7.95*inch, 0.28*inch, "Page {}".format(doc.page))
+    canvas.restoreState()
+
+
+document = BaseDocTemplate(sys.argv[2], pagesize=letter, rightMargin=0.55*inch, leftMargin=0.55*inch, topMargin=0.5*inch, bottomMargin=0.58*inch, title="Shelter Prep Reviewed Property Report", author="Shelter Prep")
+full_frame = Frame(document.leftMargin, document.bottomMargin, document.width, document.height, id="full")
+gutter = 0.2*inch
+column_width = (document.width - gutter) / 2
+left_frame = Frame(document.leftMargin, document.bottomMargin, column_width, document.height, rightPadding=3, id="brief-left")
+right_frame = Frame(document.leftMargin + column_width + gutter, document.bottomMargin, column_width, document.height, leftPadding=3, id="brief-right")
+document.addPageTemplates([
+    PageTemplate(id="Cover", frames=[full_frame], onPage=footer),
+    PageTemplate(id="Brief", frames=[left_frame, right_frame], onPage=footer),
+    PageTemplate(id="Appendix", frames=[full_frame], onPage=footer),
+])
+document.build(story)

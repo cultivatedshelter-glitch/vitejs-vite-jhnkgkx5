@@ -369,6 +369,63 @@ button { color: inherit; }
 .phase1-report-findings { display: grid; gap: 10px; }
 .phase1-report-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 20px 0 28px; }
 .phase1-report-actions button { width: auto; min-height: 42px; margin: 0; }
+.phase1-report-address { margin: 10px 0 2px; color: #31453a; font-family: Georgia, "Times New Roman", serif; font-size: 20px; line-height: 1.35; }
+.phase1-report-meta { margin: 0 0 16px; color: #737c76; font-size: 12px; }
+.phase1-decision-brief { display: grid; gap: 34px; margin-top: 26px; }
+.phase1-brief-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #d5dbd6; border-radius: 7px; background: #fff; }
+.phase1-brief-summary div { display: grid; gap: 3px; min-width: 0; padding: 16px; }
+.phase1-brief-summary div + div { border-left: 1px solid #e0e4e0; }
+.phase1-brief-summary strong { color: #173c2a; font-family: Georgia, "Times New Roman", serif; font-size: 27px; font-weight: 500; }
+.phase1-brief-summary span { color: #6d7770; font-size: 11px; }
+.phase1-brief-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid #d8ddd9; border-radius: 7px; background: #fff; }
+.phase1-brief-overview > div { min-width: 0; padding: 20px; }
+.phase1-brief-overview > div:nth-child(even) { border-left: 1px solid #e0e4e0; }
+.phase1-brief-overview > div:nth-child(n+3) { border-top: 1px solid #e0e4e0; }
+.phase1-brief-overview h2 { margin: 0 0 11px; color: #526158; font-size: 12px; font-weight: 750; }
+.phase1-brief-overview p { display: grid; gap: 3px; margin: 0; padding: 7px 0; border-bottom: 1px solid #edf0ed; color: #5f6962; font-size: 12px; line-height: 1.45; }
+.phase1-brief-overview p:last-child { border-bottom: 0; }
+.phase1-brief-overview p strong { color: #27382d; }
+.phase1-brief-overview ul { margin: 0; padding: 0; list-style: none; }
+.phase1-brief-overview li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #edf0ed; color: #536057; font-size: 12px; }
+.phase1-brief-group > header { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; padding-bottom: 9px; border-bottom: 2px solid #29583f; }
+.phase1-brief-group > header h2 { margin: 0; color: #173c2a; font-family: Georgia, "Times New Roman", serif; font-size: 25px; font-weight: 500; }
+.phase1-brief-group > header span { color: #77817a; font-size: 12px; }
+.phase1-brief-finding { padding: 27px 0 29px; border-bottom: 1px solid #dce1dd; }
+.phase1-brief-finding h3 { max-width: 680px; margin: 10px 0 17px; overflow-wrap: anywhere; color: #18271f; font-family: Georgia, "Times New Roman", serif; font-size: 25px; font-weight: 500; line-height: 1.18; }
+.phase1-brief-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.phase1-brief-status span { padding: 4px 7px; border: 1px solid #ced8d0; border-radius: 4px; background: #eef3ef; color: #315a43; font-size: 10px; font-weight: 750; }
+.phase1-brief-status small { margin-left: auto; color: #6b756e; font-size: 11px; }
+.phase1-brief-finding.is-rejected .phase1-brief-status span:first-child { border-color: #dfc6c1; background: #f8ece9; color: #7b443b; }
+.phase1-brief-finding.is-needs_more_information .phase1-brief-status span:first-child { border-color: #dfd0ad; background: #f7f1e6; color: #74571e; }
+.phase1-brief-copy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; }
+.phase1-brief-copy p { margin: 0; color: #56625a; font-size: 14px; line-height: 1.55; }
+.phase1-brief-copy strong, .phase1-brief-unknown strong { display: block; margin-bottom: 4px; color: #2d4034; font-size: 11px; }
+.phase1-brief-paths { margin-top: 20px; padding-top: 17px; border-top: 1px solid #e2e6e2; }
+.phase1-brief-paths > h4 { margin: 0 0 3px; color: #526158; font-size: 11px; }
+.phase1-brief-path { padding: 12px 0; border-bottom: 1px solid #e5e9e5; }
+.phase1-brief-path > div:first-child { display: flex; justify-content: space-between; gap: 22px; align-items: baseline; }
+.phase1-brief-path > div:first-child strong { color: #27382d; font-size: 14px; }
+.phase1-brief-path > div:first-child span { flex: none; color: #174c35; font-size: 22px; font-weight: 780; }
+.phase1-brief-path > small { display: block; margin-top: 3px; color: #6d7770; font-size: 11px; }
+.phase1-brief-path details, .phase1-brief-details, .phase1-report-caveats { margin-top: 9px; color: #4b6655; font-size: 12px; }
+.phase1-brief-path summary, .phase1-brief-details summary, .phase1-report-caveats summary { font-weight: 720; cursor: pointer; }
+.phase1-brief-sources { margin-top: 8px; padding: 9px 12px; border-left: 2px solid #b7c7bb; background: #f5f7f5; }
+.phase1-brief-sources p { margin: 4px 0; overflow-wrap: anywhere; color: #5d6861; line-height: 1.5; }
+.phase1-brief-unknown { margin: 17px 0 0; color: #5c675f; font-size: 13px; line-height: 1.5; }
+.phase1-brief-next { display: grid; grid-template-columns: 92px minmax(0, 1.2fr) minmax(180px, .8fr); gap: 15px; align-items: start; margin-top: 19px; padding: 16px; border: 1px solid #cfd9d1; border-radius: 7px; background: #f2f6f2; }
+.phase1-brief-next > span { color: #315a43; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.phase1-brief-next > strong { color: #1f3f2c; font-size: 14px; line-height: 1.45; }
+.phase1-brief-next > small { color: #68736b; font-size: 11px; line-height: 1.45; }
+.phase1-brief-next b { display: block; margin-bottom: 3px; color: #3c4f43; }
+.phase1-brief-source-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 12px; color: #747d77; font-size: 11px; }
+.phase1-brief-source-row > span { display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: baseline; }
+.phase1-brief-source-row button { padding: 0; border: 0; background: transparent; color: #245d40; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
+.phase1-brief-details > div { margin-top: 11px; padding: 15px; border: 1px solid #dde2de; border-radius: 6px; background: #fff; }
+.phase1-brief-details h4 { margin: 13px 0 5px; color: #526158; font-size: 11px; }
+.phase1-brief-details h4:first-child { margin-top: 0; }
+.phase1-brief-details p { overflow-wrap: anywhere; color: #5c675f; line-height: 1.55; }
+.phase1-report-caveats { padding-top: 18px; border-top: 1px solid #d9ded9; }
+.phase1-report-caveats p { color: #68726b; line-height: 1.5; }
 .phase1-release-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 32px; padding: 22px 0; border-top: 1px solid #dfe1dd; border-bottom: 1px solid #dfe1dd; }
 .phase1-release-status p { margin: 0; color: #59645c; line-height: 1.6; }
 .phase1-gap h1 { max-width: 720px; }
@@ -438,6 +495,10 @@ button { color: inherit; }
   .phase1-source-drawer-backdrop { align-items: flex-end; }
   .phase1-source-drawer { width: 100%; height: min(82vh, 720px); border-radius: 8px 8px 0 0; }
   .phase1-release-status { grid-template-columns: 1fr; }
+  .phase1-brief-overview, .phase1-brief-copy { grid-template-columns: 1fr; }
+  .phase1-brief-overview > div:nth-child(even) { border-left: 0; }
+  .phase1-brief-overview > div + div { border-top: 1px solid #e0e4e0; }
+  .phase1-brief-next { grid-template-columns: 1fr; gap: 6px; }
 }
 
 @media (max-width: 430px) {
@@ -445,6 +506,14 @@ button { color: inherit; }
   .phase1-main h1 { font-size: 34px; }
   .phase1-stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .phase1-stat-row span { overflow-wrap: anywhere; }
+  .phase1-brief-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .phase1-brief-summary div:nth-child(3) { border-top: 1px solid #e0e4e0; border-left: 0; }
+  .phase1-brief-summary div:nth-child(4) { border-top: 1px solid #e0e4e0; }
+  .phase1-brief-path > div:first-child { display: grid; gap: 4px; }
+  .phase1-brief-path > div:first-child span { font-size: 20px; }
+  .phase1-brief-status small { flex-basis: 100%; margin-left: 0; }
+  .phase1-brief-group > header h2 { font-size: 22px; }
+  .phase1-brief-finding h3 { font-size: 23px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

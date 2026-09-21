@@ -1,6 +1,18 @@
 # Current Dev State
 
-Date: 2026-09-20
+Date: 2026-09-21
+
+## Reviewed Report Decision Brief
+
+- Reviewed-report generation now snapshots a canonical `phase1-reviewed-decision-brief.v1` presentation model alongside the unchanged full reviewed artifact. The decision brief changes presentation only; research, pricing, review decisions, provenance, report versioning, storage, delivery, authorization, and RLS contracts remain unchanged.
+- The primary report groups findings into Safety, Roof, Exterior / Envelope, Electrical, Plumbing, HVAC, and Maintenance / Minor Items. Each compact finding preserves its finding/review identity and surfaces the reviewed observation, Shelter Prep view, realistic repair paths, prominent sourced range, human-readable confidence, one consequential unknown, next step, rationale, and concise source references.
+- Complete reviewed text, Known/Unknown detail, research and pricing provenance, geography, dates, assumptions, exclusions, corrections, review-event identity, and rejected findings remain in the technical appendix. Raw canonical artifact data remains immutable; customer-facing transcription applies only conservative OCR cleanup and title casing.
+- New PDF reports use one full-width summary page, a two-column decision brief, and a full-width technical appendix. Finding blocks remain intact where practical, group headings stay with their first finding, public source URLs are embedded as links, and internal enum strings are not rendered.
+- The exact released production report `c9e12e47-4735-4af9-97d5-bce036b16fcc` for request `cd235456-12fe-4ef1-bc41-ca8891f5fae7` was downloaded read-only and rerendered locally from its canonical 31-finding artifact. The primary decision brief is 9 pages, all 31 findings remain represented, all 48 repair paths remain available, the technical appendix begins on page 10, and the complete PDF is 38 pages.
+- Representative cover, findings, final-primary, and appendix pages were rendered and visually inspected. The latest render has no observed clipping or overlap, pricing and next steps remain prominent, rejected status is distinct, the summary displays zero values correctly, and targeted OCR artifacts/internal pricing enums are absent from extracted customer-facing text.
+- Legacy stored reports are not rewritten. The production repository derives the same decision-brief presentation at read time when an older immutable report document lacks it; newly generated versions store the decision brief directly.
+- The released-report web view and reviewer preview consume the same decision brief. Full source and technical detail use progressive disclosure, and responsive rules collapse summary, overview, path, and next-step layouts without changing report data.
+- Acceptance coverage enforces a 6-10 page primary brief for a 31-finding report, preservation of the appendix and pricing sources, conservative OCR cleanup without raw-artifact mutation, human-readable confidence labels, legacy-report fallback, and mobile-safe web hierarchy.
 
 ## Finding-Level Investigation Quality Pass
 
