@@ -503,6 +503,8 @@ button { color: inherit; }
 
 @media (max-width: 430px) {
   .phase1-progress span:not(.is-current) { display: none; }
+  .phase1-role-nav { gap: 2px; }
+  .phase1-role-nav button { padding-inline: 4px; font-size: 11px; }
   .phase1-main h1 { font-size: 34px; }
   .phase1-stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .phase1-stat-row span { overflow-wrap: anywhere; }

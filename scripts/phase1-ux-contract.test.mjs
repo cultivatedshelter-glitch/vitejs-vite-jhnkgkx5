@@ -142,6 +142,7 @@ test('released web reports use the compact canonical decision brief with mobile-
   assert.match(component, /preview\.report\?\.decisionBrief/)
   assert.match(css, /\.phase1-brief-summary[\s\S]*grid-template-columns: repeat\(4/)
   assert.match(css, /@media \(max-width: 430px\)[\s\S]*\.phase1-brief-summary[\s\S]*repeat\(2/)
+  assert.match(css, /@media \(max-width: 430px\)[\s\S]*\.phase1-role-nav button[\s\S]*font-size: 11px/)
   assert.match(css, /overflow-wrap: anywhere/)
 })
 
