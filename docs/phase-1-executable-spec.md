@@ -1,19 +1,33 @@
 # Shelter Prep Phase 1 Executable Spec
 
-This file controls the current implementation gate for the active Shelter Prep repository.
+Status: historical named-gate specification.
+
+This file preserves the executable contracts used to build Phase 1. It is not
+current-state authority and does not automatically authorize or prohibit present
+production work. A future task should apply a named gate below only when the user
+explicitly invokes that gate. Permanent doctrine lives in `AGENTS.md`; current
+task procedure lives in `docs/SHELTER_PREP_EXECUTION_CONTRACT.md`; present
+operational truth lives in `docs/CURRENT-DEV-STATE.md`.
 
 ## Authority Order
 
-1. `docs/phase-1-executable-spec.md`
-2. `docs/CURRENT-DEV-STATE.md`
-3. `docs/master-plan.md`
-4. Supporting architecture, schema, security, and historical docs only when present and relevant.
+1. Explicit system and user instructions for the current task
+2. `AGENTS.md` for permanent doctrine and invariants
+3. `docs/SHELTER_PREP_EXECUTION_CONTRACT.md` for execution procedure
+4. `docs/CURRENT-DEV-STATE.md` for verified current facts
+5. `docs/phase-1-executable-spec.md` only for an explicitly invoked historical gate
+6. `docs/master-plan.md` for product doctrine and strategy
+7. Supporting architecture, schema, security, and historical docs only when present and relevant.
 
-If documents conflict, this executable spec controls implementation scope.
+If a task explicitly invokes one of this file's named gates, that gate controls
+its implementation scope after higher-priority explicit instructions and
+permanent repository invariants are honored. Otherwise, do not treat historical
+gate restrictions as current operational truth.
 
 `docs/CURRENT-DEV-STATE.md` records verified implementation state. It is not desired future architecture.
 
-`docs/master-plan.md` records product doctrine and strategy. It does not authorize features beyond the current executable gate.
+`docs/master-plan.md` records product doctrine and strategy. It does not authorize
+later-stage features by itself.
 
 ## Execution Rules
 
@@ -27,7 +41,7 @@ If documents conflict, this executable spec controls implementation scope.
 - Do not apply migrations unless the current gate and user request explicitly authorize safe database execution.
 - Do not touch production.
 
-## Current Verified Status
+## Historical Verified Status At Time Of Gate Record
 
 Historical completed gates from the source Phase 1 spec:
 
@@ -71,7 +85,7 @@ Step 5, Roof Visual Evidence Interpretation:
 - No migration was run or applied.
 - No production system was touched.
 
-Current gate:
+Historical gate recorded here:
 
 `ROUND 1P - ADMIN REVIEW NOTIFICATIONS AND PRODUCTION LAUNCH READINESS`
 

@@ -2,7 +2,7 @@
 
 This is the practical operating procedure for future Codex work in this
 repository. It implements the permanent doctrine in `AGENTS.md` without
-expanding the active product gate.
+expanding Phase 1 beyond the explicit task.
 
 ## Authority And Reading Order
 
@@ -11,15 +11,17 @@ documents:
 
 1. Read `AGENTS.md`.
 2. Read this execution contract.
-3. Read `docs/phase-1-executable-spec.md` for the active implementation gate.
-4. Read `docs/CURRENT-DEV-STATE.md` for verified current state.
+3. Read `docs/CURRENT-DEV-STATE.md` for verified current state.
+4. Read `docs/phase-1-executable-spec.md` when the task invokes a named
+   historical gate or needs one of its acceptance contracts.
 5. Read `docs/master-plan.md` and supporting architecture, security, schema, or
    deployment docs only when relevant.
 
 Explicit system and user instructions control the current task. `AGENTS.md`
-contains permanent doctrine. The executable spec controls authorized scope.
-`CURRENT-DEV-STATE.md` records facts, not desired architecture. The master plan
-guides product direction but does not authorize later-stage features by itself.
+contains permanent doctrine. `CURRENT-DEV-STATE.md` records facts, not desired
+architecture. A named executable-spec gate controls scope only when explicitly
+invoked. The master plan guides product direction but does not authorize
+later-stage features by itself.
 
 Do not rely on sibling worktrees, invisible history, or remembered state when
 the active repository can establish the fact directly.
@@ -112,9 +114,11 @@ When deployment is required and authorized:
 8. Record the deployment ID, branch, commit, health result, and workflow result in
    `docs/CURRENT-DEV-STATE.md`.
 
-Do not redeploy documentation-only changes. When a Git push is needed solely to
-install repository instructions, use the repository's supported skip-deploy
-mechanism and verify that no Railway deployment was created.
+Do not intentionally redeploy documentation-only changes. Before a documentation
+push, inspect the connected service's current watch-path behavior. A commit
+message is not a verified Railway skip mechanism for this repository. If branch
+autodeploy still creates a documentation-only deployment, report it accurately,
+verify health, and do not invent application work to justify it.
 
 ## Database And Supabase Changes
 
@@ -141,6 +145,44 @@ mechanism and verify that no Railway deployment was created.
 - Push the current branch normally; never force-push.
 - Confirm local HEAD, upstream HEAD, and remote branch HEAD match after push.
 - Confirm unrelated local files remain untouched.
+- If GitHub authentication fails, stop with the exact single human action needed
+  to restore the existing credential path. Do not embed credentials in a remote
+  URL or create an alternate secret-bearing workaround.
+- Update `docs/CURRENT-DEV-STATE.md` after verified work. Move detailed obsolete
+  milestones into the historical record instead of preserving stale values as
+  current truth.
+
+## Definition Of Done
+
+A task is complete only when:
+
+- the requested behavior works
+- protected behavior still works
+- applicable checks pass
+- production is verified when the task requires it
+- `docs/CURRENT-DEV-STATE.md` reflects verified current truth
+- relevant commits are pushed when authentication permits
+
+Do not call a task complete while a known acceptance criterion remains
+unverified.
+
+## Future Prompt Contract
+
+The repository carries the repeated operating context. Future user prompts may
+remain short and task-specific, for example:
+
+```text
+Read AGENTS.md, docs/SHELTER_PREP_EXECUTION_CONTRACT.md, and
+docs/CURRENT-DEV-STATE.md first.
+
+Task:
+[task]
+
+Follow the standard Shelter Prep execution and verification contract.
+```
+
+The short prompt does not expand the executable gate or waive production,
+security, review, or provenance safeguards.
 
 ## Completion Report
 
@@ -154,3 +196,20 @@ Report facts, not aspiration:
 
 Do not claim completion merely because implementation or tests passed when the
 requested user-facing workflow remains unverified.
+
+Use one of these result shapes when the user requests the standard format:
+
+### A. LIVE AND VERIFIED
+
+Include what changed, production verification, deployment ID, commit, checks,
+and remaining optional gaps.
+
+### A. LIVE AND SYNCED
+
+Use when repository synchronization is also part of the task. Include local and
+remote heads, branch, deployment state, and intentionally untouched files.
+
+### B. BLOCKED
+
+Include only the exact blocker, exact human action required, and what has already
+been safely completed.

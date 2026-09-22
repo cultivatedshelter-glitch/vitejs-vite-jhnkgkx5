@@ -24,7 +24,7 @@ inspection / photos / notes
 ```
 
 Protect this loop from feature sprawl. A broader idea remains later-stage unless
-it directly improves this loop and the current executable gate authorizes it.
+it directly improves this loop and the explicit task authorizes it.
 
 ## Property-Centered Model
 
