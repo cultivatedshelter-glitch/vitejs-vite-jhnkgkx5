@@ -2,6 +2,13 @@
 
 Date: 2026-09-21
 
+## Canonical Codex Operating Structure
+
+- Added repository-root `AGENTS.md` as the permanent Shelter Prep doctrine for Phase 1 purpose, Property-centered workflow, AI/human boundaries, provenance, uncertainty, construction reasoning, pricing, repair paths, UX, release safety, security, and repository discipline.
+- Added `docs/SHELTER_PREP_EXECUTION_CONTRACT.md` as the practical procedure for future work: authority and reading order, pre-change inspection, implementation rules, UX/report acceptance, production and Supabase safeguards, verification, Git hygiene, and factual completion reporting.
+- `docs/CURRENT-DEV-STATE.md` remains the factual implementation record. `docs/phase-1-executable-spec.md` remains the active scope gate, and `docs/master-plan.md` remains strategy rather than automatic implementation authority.
+- This installation changes repository instructions and documentation only. It does not modify application code, migrations, tests, runtime configuration, Supabase, Railway, or production behavior.
+
 ## Agent-Facing Reviewed Report Completion Pass
 
 - The existing compact reviewed-report model remains unchanged: one summary page, trade/category grouping, compact decision-first finding blocks, and a full technical appendix derived from the same canonical reviewed artifact on web and PDF.
@@ -10,7 +17,7 @@ Date: 2026-09-21
 - Production draft report version 12 (`8f652062-976d-43aa-880b-294d5dd40f9a`) was generated through the authenticated reviewer preview boundary for request `cd235456-12fe-4ef1-bc41-ca8891f5fae7`. It remains draft and was not released or delivered. The persisted PDF has 37 total pages, a 9-page primary brief, an appendix beginning on page 10, 31 findings, 30 approved findings, 1 rejected finding, 185 URI hyperlink annotations, and 67 unique URI targets.
 - Authenticated production browser verification loaded the exact version-12 report and displayed the corrected hard-surface, panel-knockout, AFCI, and exposed-fastener paths with prominent pricing, concise unknowns, specific next steps, source counts, and progressive technical details. At a measured 391 by 844 CSS viewport (one-pixel browser rounding from the requested 390 width), document width matched viewport width, horizontal overflow was false, all 31 finding blocks remained present, and report actions/summary panels stacked cleanly.
 - `GOOGLE_PLACES_API_KEY` remains unconfigured in Railway. Version 12 records `skipped_not_configured` for local-professional lookups and shows no fabricated businesses; this remains optional configuration rather than a report blocker.
-- Application commit `a6fffe9` is pushed to `shelter-prep-phase1-dev` and is live at `https://shelterprep.com`; Railway health returns HTTP 200. Follow-up commit `b997b26`, containing the final browser-found OCR cleanup and exposed-fastener presentation alignment, is local because the macOS `osxkeychain` Git credential helper returned authentication error `-25293`. No force push, remote rewrite, or alternate credential was used.
+- Application commits `a6fffe9` and `b997b26`, plus documentation commit `d849332`, are pushed to `shelter-prep-phase1-dev`. Railway deployment `26845094-a1ed-4423-bb2b-d2ca1608a3a2` serves the combined synced head at `https://shelterprep.com`; health returns HTTP 200. No force push, remote rewrite, or alternate credential was used.
 - Final verification passes: `npm test` 107/107, `npm run build`, the Round 1 Python self-test, focused reviewed-report/source-relevance tests 15/15, and `git diff --check`. The build emits only the existing stale `caniuse-lite` advisory.
 
 ## Safe Property Archive And Restore
@@ -72,8 +79,8 @@ Date: 2026-09-21
 
 - Active branch: `shelter-prep-phase1-dev` at checkpoint `1f573a77d08c2e2d9c7d7d0d76894aed9b3c7bf5` when the local runtime work began.
 - Active app path: `src/main.tsx` renders the guided `Phase1Experience` by default; the preserved legacy `App` is development-only behind `?legacy=1`.
-- Pre-existing local changes kept outside the Phase 1 runtime work include `package-lock.json`, `AGENTS.md`, `codex-backups/`, and `security-audit-fixes.patch`.
-- This checkout did not contain `AGENTS.md`, `docs/phase-1-executable-spec.md`, `docs/codex-build-spec.md`, `docs/SHELTER_PREP_MASTER_CODEX_PROMPT.md`, or this file before the benchmark task.
+- Pre-existing local changes kept outside the Phase 1 runtime work include `package-lock.json`, `codex-backups/`, `output/`, and `security-audit-fixes.patch`.
+- This checkout did not contain the canonical `AGENTS.md` when the benchmark work began. It is now the repository-owned permanent doctrine; `docs/SHELTER_PREP_EXECUTION_CONTRACT.md` is the repository-owned operating procedure.
 - The sibling `import/request-to-review` worktree contains the Phase 1 instruction/spec documents that were read as repository context.
 
 ## Active Implementation Summary
