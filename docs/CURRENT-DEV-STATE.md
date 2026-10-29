@@ -1,5 +1,96 @@
 # Shelter Prep Current Development State
 
+## Current External Engineering Status — 2026-10-29
+
+**BLOCKED. Production isolation has not been verified and the three engineering
+credential bindings remain unavailable. No full Builder/staging/QA cycle or live
+QA-failure recovery has been executed.**
+
+### Work continued from existing components
+
+- Reused the existing orchestration core, GitHub state branch, task #8, workflows,
+  and health monitor; no duplicate infrastructure or paid service was created.
+- Corrected retry enforcement so Builder is not invoked after its attempt budget.
+  Malformed adapter results now persist a blocker rather than leaving an exception
+  path outside the state transition handler.
+- Added a fixed-purpose hosted checkpoint using the existing GitHubState adapter.
+  It records actual environment-scoped credential evidence and the production
+  isolation blocker on the existing state branch. It cannot clear that blocker,
+  grant approval, invoke Builder, deploy, or attest QA PASS.
+- Passed all 47 guardrail tests locally and on GitHub-hosted infrastructure.
+- Verified a real GitHub-backed state write and replay: task #8 reached revision 3;
+  replay of the same hosted operation returned the same revision without another
+  state transition. Approval flags, source commit, task digest and prior audit
+  history were preserved.
+- Updated the existing six-hour health monitor to use the tested guardrails.
+  Its push-triggered hosted run passed. A cron-triggered occurrence has not yet
+  been observed during this task.
+
+### Actual infrastructure and release boundary
+
+- Production still names `shelter-prep-phase1-dev` as its source branch. This
+  branch remains unprotected, and the repository ruleset list is empty.
+- The connected tools do not expose Disable-autodeploy or branch-protection
+  mutation. The available source-switch operation immediately builds/deploys,
+  so it cannot be used under the no-production-deployment requirement.
+- Production source/settings were not changed. The deployed build and rollback
+  options are preserved. Production health returned HTTP 200 with status ok.
+- Staging remains a separate service/project with no connected GitHub source.
+  Its previous deployment remains in place; no new candidate was deployed.
+- All automation code updates are isolated from the production-connected branch.
+  Its source commit remains unchanged. No production credentials were accessed.
+
+### Credential activation
+
+Hosted scoped probes in run 40823115376 confirmed all three bindings unavailable:
+
+| GitHub environment | Secret | Required scope |
+| --- | --- | --- |
+| engineering-builder | OPENAI_API_KEY | Reuse the founder-approved existing model key. |
+| engineering-staging-deploy | RAILWAY_STAGING_TOKEN | Staging-project/environment-only project token; never an account token. |
+| engineering-qa | SUPABASE_DEV_SECRET_KEY | Development Supabase project only. |
+
+No secret values were displayed or copied. Scope cannot be verified for an
+unavailable credential. Presence checks alone will not establish safe scope
+when credentials are later bound.
+
+### Exact next founder action
+
+In the production Railway service, open Settings -> Source and choose **Disable**
+for GitHub autodeploy. Preserve the connected branch, current deployment and
+rollback history. Do not choose Deploy Latest Commit or reconnect the source.
+This is the provider's documented non-deploying control:
+https://docs.railway.com/deployments/github-autodeploys#disable-automatic-deployments
+
+Then securely bind the three environment secrets above through GitHub settings.
+Do not paste secret values into chat, issues, task text or commits. Codex can
+continue engineering and hosted verification after those access gates are clear.
+
+### Evidence and durable state
+
+- Hosted tests/checkpoint/replay (full QA gate stays BLOCKED):
+  https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40823115376
+- Checkpoint artifact:
+  https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40823115376/artifacts/12874999183
+- Updated read-only health monitor:
+  https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40823003626
+- Automation implementation commit: `f3c2c480b606f669db6f4fb85f55a8564c1446e0`.
+- Monitor update commit: `8c13cc6f7485ba89b224c7cf015ec0955e013d02`.
+- Durable state commit: `b015bdc0920411f4521a0696bc5893c7e9b7fbdc` on `automation/engineering-state`.
+- Structured production/rollback and activation evidence:
+  `docs/engineering-evidence/production-activation-verification.json`.
+
+The scheduled monitor and checkpoint execute without a laptop process. This does
+not establish offline operation of the unfinished full engineering loop. The
+existing unrelated default-branch Security Agent continues its prior failure;
+it was not modified. Full Builder publication/validation/deployment integration,
+authenticated independent QA, task/defect/deployment routing, and live controlled
+failure recovery remain unfinished.
+
+## Earlier Verification Records — Historical
+
+# Shelter Prep Current Development State
+
 ## External Engineering Verification — 2026-10-29
 
 Status: **BLOCKED / NOT DEPLOYED**. Current configuration was inspected directly;

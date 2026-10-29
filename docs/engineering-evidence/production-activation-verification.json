@@ -1,0 +1,81 @@
+{
+  "schema": "shelter-prep-production-activation-verification.v1",
+  "status": "BLOCKED",
+  "production": {
+    "source_branch": "shelter-prep-phase1-dev",
+    "source_branch_protected": false,
+    "rulesets": 0,
+    "autodeploy_disabled": "unverified",
+    "configuration_changed": false,
+    "deployment_triggered": false,
+    "health_http_status": 200,
+    "current_deployment": "e65a0f07-149a-4a95-b608-95868d5fe8fe",
+    "rollback_inventory": [
+      {
+        "deployment_id": "e65a0f07-149a-4a95-b608-95868d5fe8fe",
+        "status": "SUCCESS",
+        "can_redeploy": true,
+        "can_rollback": true
+      },
+      {
+        "deployment_id": "c6fd6c1c-8aa9-4d87-895e-4b2b1b73e404",
+        "status": "REMOVED",
+        "can_redeploy": true,
+        "can_rollback": true
+      },
+      {
+        "deployment_id": "71bdff19-5156-4885-81e2-084a57c8b079",
+        "status": "REMOVED",
+        "can_redeploy": true,
+        "can_rollback": false
+      },
+      {
+        "deployment_id": "841f55ef-a972-46b7-8b76-449603350201",
+        "status": "REMOVED",
+        "can_redeploy": true,
+        "can_rollback": false
+      },
+      {
+        "deployment_id": "26845094-a1ed-4423-bb2b-d2ca1608a3a2",
+        "status": "REMOVED",
+        "can_redeploy": true,
+        "can_rollback": false
+      }
+    ]
+  },
+  "staging": {
+    "separate_project": true,
+    "source": null,
+    "deployment_created": false,
+    "secret_scope": "unverified"
+  },
+  "hosted": {
+    "run_id": 40823115376,
+    "tests_passed": 47,
+    "checkpoint_persisted": true,
+    "revision": 3,
+    "replay_verified": true,
+    "replay_duplicate_transition": false,
+    "state_commit": "b015bdc0920411f4521a0696bc5893c7e9b7fbdc",
+    "health_run": 40823003626,
+    "health_conclusion": "success"
+  },
+  "credentials": {
+    "engineering-builder/OPENAI_API_KEY": {
+      "available": false,
+      "scope": "unverified"
+    },
+    "engineering-staging-deploy/RAILWAY_STAGING_TOKEN": {
+      "available": false,
+      "scope": "unverified"
+    },
+    "engineering-qa/SUPABASE_DEV_SECRET_KEY": {
+      "available": false,
+      "scope": "unverified"
+    }
+  },
+  "full_engineering_cycle_executed": false,
+  "controlled_live_qa_failure_executed": false,
+  "production_modified": false,
+  "required_next_action": "Use Railway production service Settings/Source Disable autodeploy; preserve current deployment and rollback history."
+}
