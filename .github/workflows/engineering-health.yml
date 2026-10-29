@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 7c3b26de4370cf73bfdf42fbf45032914ea02388
+          ref: 8a97581f3870743383e59e0f7cfbe58ae53c55ac
           persist-credentials: false
           sparse-checkout: |
             automation
