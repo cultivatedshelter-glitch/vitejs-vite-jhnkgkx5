@@ -1,0 +1,45 @@
+{
+  "github-issue-8": {
+    "task_id": "github-issue-8",
+    "current_agent": "builder",
+    "stage": "blocked",
+    "commit": "9b18ad8df76167e494fe7c47e92f110bbef3e186",
+    "staging_deployment": null,
+    "qa_status": "pending",
+    "blocker_status": "cloud_execution_credentials_required",
+    "founder_approval_status": "task_approved_only",
+    "approval_id": "founder-session-20261029",
+    "approved_by": "cultivatedshelter-glitch",
+    "task_spec_sha256": "4265d3eeaf7cb653f23e6f7b61bd926b286573a355b43b72265514982faa6290",
+    "production_approval": false,
+    "customer_mail_approval": false,
+    "customer_data_approval": false,
+    "destructive_approval": false,
+    "revision": 1,
+    "attempt": 0,
+    "lease": null,
+    "builder_identity": null,
+    "qa_evidence": null,
+    "defects": [],
+    "audit": [
+      {
+        "event": "founder_approved_task_registered",
+        "revision": 0,
+        "stage": "queued",
+        "commit": "9b18ad8df76167e494fe7c47e92f110bbef3e186",
+        "deployment": null,
+        "previous": null,
+        "hash": "7df0a93920be38c3cdce8dbe803f6dceabf1a056a75340d3a466821f9dc477ab"
+      },
+      {
+        "event": "credential_blocker_recorded",
+        "revision": 1,
+        "stage": "blocked",
+        "commit": "9b18ad8df76167e494fe7c47e92f110bbef3e186",
+        "deployment": null,
+        "previous": "7df0a93920be38c3cdce8dbe803f6dceabf1a056a75340d3a466821f9dc477ab",
+        "hash": "c73c79e3304de50437e6de0e363d1ac87950e45afca6891e013a769dc7b0d1b9"
+      }
+    ]
+  }
+}
