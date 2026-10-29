@@ -1,0 +1,44 @@
+name: Staging health and engineering regression
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/engineering-health.yml']
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shelter-prep-staging-health
+  cancel-in-progress: false
+
+jobs:
+  read-only-staging-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 7c3b26de4370cf73bfdf42fbf45032914ea02388
+          persist-credentials: false
+          sparse-checkout: |
+            automation
+          sparse-checkout-cone-mode: false
+      - name: Verify orchestration and proposal guardrails
+        run: python3 -m unittest discover -s automation -p 'test_*.py' -v
+      - name: Probe staging without credentials or customer data
+        env:
+          STAGING_URL: https://shelter-prep-phase1-staging-production.up.railway.app
+          APPROVED_STAGING_URL: https://shelter-prep-phase1-staging-production.up.railway.app
+        run: python3 automation/preflight.py --health-only
+      - name: Preserve scoped health evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: engineering-evidence/*.json
+          if-no-files-found: error
+          retention-days: 30
