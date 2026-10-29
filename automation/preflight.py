@@ -128,6 +128,7 @@ def live_preflight(origin, *, allowed_origin, fetch=probe):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', default='engineering-evidence/preflight.json')
+    parser.add_argument('--health-only', action='store_true')
     args = parser.parse_args()
     origin = os.environ.get('STAGING_URL', '')
     allowed = os.environ.get('APPROVED_STAGING_URL', '')
@@ -137,13 +138,18 @@ def main():
         evidence = {'schema': 'shelter-prep-engineering-preflight.v1',
                     'status': 'BLOCKED', 'blocker_codes': ['staging_origin_not_configured'],
                     'qa_checks': dict.fromkeys(sorted(CHECKS), 'blocked')}
+    if args.health_only:
+        checks = evidence.get('prerequisite_checks', {})
+        healthy = bool(checks) and all(v == 'pass' for v in checks.values())
+        evidence['status'] = 'HEALTHY' if healthy else 'UNHEALTHY'
+        evidence['scope'] = 'read_only_staging_health_only'
     target = Path(args.output)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(evidence, sort_keys=True, indent=2) + '\n')
     print(json.dumps({'status': evidence['status'],
                       'blocker_codes': evidence['blocker_codes']}))
     # Until complete live QA and provenance are installed, never greenlight release.
-    return 2
+    return (0 if evidence['status'] == 'HEALTHY' else 1) if args.health_only else 2
 
 
 if __name__ == '__main__':
