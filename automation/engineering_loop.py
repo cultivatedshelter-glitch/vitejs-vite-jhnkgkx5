@@ -119,7 +119,9 @@ class Loop:
         claimed = deepcopy(task)
         role = STAGES[claimed['stage']]
         try:
-            result = self.adapters[role](deepcopy(claimed), operation_id)
+            # Enforce the budget before a model call, command, or external effect.
+            result = ({} if role == 'builder' and claimed['attempt'] >= self.max_attempts
+                      else self.adapters[role](deepcopy(claimed), operation_id))
         except Exception:
             # Never persist provider/command exceptions: they may contain secrets.
             result = {'blocked': 'adapter_failure'}
@@ -141,15 +143,17 @@ class Loop:
         return task['stage']
 
     def _transition(self, task, role, result, worker_id):
+        if role == 'builder' and task['attempt'] >= self.max_attempts:
+            task['stage'], task['blocker_status'] = 'blocked', 'retry_limit'
+            return 'retry_limit'
+        if not isinstance(result, dict):
+            raise ValueError('adapter result must be structured evidence')
         if result.get('blocked'):
             # Do not copy arbitrary adapter error text into the audit trail.
             task['stage'] = 'blocked'
             task['blocker_status'] = 'adapter_blocked'
             return 'adapter_blocked'
         if role == 'builder':
-            if task['attempt'] >= self.max_attempts:
-                task['stage'], task['blocker_status'] = 'blocked', 'retry_limit'
-                return 'retry_limit'
             if not SHA.fullmatch(result['commit']):
                 raise ValueError('commit required')
             if set(result['validation']) != VALIDATION or not all(

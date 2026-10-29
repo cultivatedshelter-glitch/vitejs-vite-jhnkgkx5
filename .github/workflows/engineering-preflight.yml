@@ -6,7 +6,8 @@ on:
     paths: ['automation/**', '.github/workflows/engineering-preflight.yml']
   workflow_dispatch:
 
-# Preparation-only workflow. It cannot write code, release, deploy, or send mail.
+# Preparation-only workflow. Only the fixed state recorder can write; no job
+# can run Builder, deploy, release, or send mail.
 permissions:
   contents: read
 
@@ -56,6 +57,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      guardrails: ${{ steps.guardrails.outcome }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -64,6 +67,7 @@ jobs:
             automation
           sparse-checkout-cone-mode: false
       - name: Verify orchestration and fail-closed checks
+        id: guardrails
         run: python3 -m unittest discover -s automation -p 'test_*.py' -v
       - name: Record read-only staging prerequisites
         env:
@@ -77,4 +81,35 @@ jobs:
           name: engineering-preflight-${{ github.run_id }}-${{ github.run_attempt }}
           path: engineering-evidence/*.json
           if-no-files-found: warn
+          retention-days: 30
+  persist-prerequisites:
+    needs: [credential-readiness, verify]
+    if: ${{ always() && needs['credential-readiness'].result == 'success' && needs.verify.outputs.guardrails == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            automation
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: engineering-credential-readiness-*-${{ github.run_id }}
+          path: binding-evidence
+      - name: Persist the real prerequisite blocker on the dedicated state branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 automation/checkpoint.py
+      - name: Preserve checkpoint evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: engineering-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: engineering-evidence/checkpoint.json
+          if-no-files-found: error
           retention-days: 30

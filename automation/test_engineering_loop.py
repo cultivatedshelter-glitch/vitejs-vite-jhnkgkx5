@@ -185,8 +185,15 @@ class LoopTests(unittest.TestCase):
 
     def test_retry_limit_is_explicit_blocker(self):
         self.loop.max_attempts = 0
+        self.adapters['builder'] = lambda t, o: self.fail('budget must prevent Builder invocation')
         self.assertEqual(self.tick(), 'blocked')
         self.assertEqual(self.current()['blocker_status'], 'retry_limit')
+
+    def test_malformed_adapter_result_persists_blocker(self):
+        self.adapters['builder'] = lambda t, o: ['unstructured output']
+        self.assertEqual(self.tick(), 'blocked')
+        self.assertEqual(self.current()['blocker_status'], 'invalid_adapter_evidence')
+        self.assertIsNone(self.current()['lease'])
 
     def test_state_store_only_updates_dedicated_branch_without_force(self):
         calls = []
