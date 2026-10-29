@@ -1,0 +1,23 @@
+{
+  "schema": "shelter-prep-hosted-verification.v1",
+  "scope": "partial_predeployment_evidence",
+  "overall": "BLOCKED",
+  "health_run": 40821551466,
+  "health_run_conclusion": "success",
+  "health_trigger": "push",
+  "scheduled_cron": "17 */6 * * *",
+  "cron_occurrence_observed": false,
+  "hosted_tests_passed": 39,
+  "preflight_run": 40821728102,
+  "preflight_qa_status": "BLOCKED",
+  "credential_bindings": {
+    "engineering-builder/OPENAI_API_KEY": false,
+    "engineering-staging-deploy/RAILWAY_STAGING_TOKEN": false,
+    "engineering-qa/SUPABASE_DEV_SECRET_KEY": false
+  },
+  "synthetic_issue": 8,
+  "state_commit": "0caa125c645f16606d2f8e68e706e0872b20c883",
+  "live_builder_cycle_executed": false,
+  "live_qa_recovery_executed": false,
+  "production_modified": false
+}

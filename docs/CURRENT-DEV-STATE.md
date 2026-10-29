@@ -25,17 +25,52 @@ the historical record below does not establish current release readiness.
   prepared. Unit tests use simulated workers and model responses.
 - `automation/evidence/local-live-preflight.json` records actual partial live
   checks. It explicitly records BLOCKED for the full QA contract.
-- Workflow publication/execution is being attempted separately; a definition on
-  this branch does not establish a successful hosted run or an active schedule.
+- Hosted workflow publication and read-only execution are now verified; see the
+  exact run evidence below. Full engineering-agent operation remains blocked.
 - Builder publication/validation integration, deployment adapter, authenticated
   independent synthetic QA, approval intake, live retry recovery, state-branch
-  provisioning, alerting and scheduled regression remain uninstalled.
+  integration and alerting remain uninstalled. The separate read-only health/core
+  regression schedule is installed; full authenticated QA is not scheduled.
 - No real engineering cycle, controlled live QA-failure recovery, or queued-task
   offline advancement has been demonstrated. No new paid service was provisioned.
 
 Exact scopes, activation gates, limitations and rollback instructions are recorded
 in `automation/DEPLOYMENT-GATES.md`. Production, customer data and mail were
 untouched. No production or development schema changes were performed.
+
+## Verified Hosted Results — 2026-10-29
+
+- Automation source: `fc5997393dd291680e0b30bb654eeee3b3e3a41c`.
+- Hosted preflight run: https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40821728102
+  All 39 tests pass; the full-QA gate intentionally remains BLOCKED.
+- Default-branch health workflow commit: `fffaeb6bd4f97c81b21645f8313c094c5c92455f`.
+  The read-only workflow is installed with UTC cron `17 */6 * * *`.
+- First health execution (push-triggered): https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40821551466
+  It passed all 39 tests and live staging health/disabled-notification/unauthenticated
+  denial probes on a GitHub-hosted runner. No laptop process was involved.
+  A cron-triggered occurrence has not yet been observed.
+- Health artifact: https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/actions/runs/40821551466/artifacts/12875085611
+  This is partial health evidence, not authenticated end-to-end QA evidence.
+- Hosted environment-scoped probes confirm these bindings are unavailable:
+  `engineering-builder/OPENAI_API_KEY`,
+  `engineering-staging-deploy/RAILWAY_STAGING_TOKEN`, and
+  `engineering-qa/SUPABASE_DEV_SECRET_KEY`. Only booleans were recorded.
+- Approved harmless synthetic task: https://github.com/cultivatedshelter-glitch/vitejs-vite-jhnkgkx5/issues/8
+- Durable task state: `automation/engineering-state:engineering-state.json`,
+  commit `0caa125c645f16606d2f8e68e706e0872b20c883`.
+  It records the approved task digest, actor/provenance, explicit credential blocker,
+  current agent/stage, commit, deployment, QA and founder approval status, and audit
+  events. No Builder completion, staging candidate or QA PASS was fabricated.
+- No new staging deployment was created. Final provider inspection confirms that
+  production's deployment, source branch and settings remain unchanged.
+- The existing default-branch Security Agent job still fails. Its prior runs
+  also failed before these changes. It was not altered by this task.
+
+Remaining: secure credential bindings, production-branch protection before any
+write-capable broker, staging secret/data isolation attestation, Builder validation
+and publication integration, trusted deploy adapter, independent authenticated
+synthetic QA, task/deployment/defect routing, live failure recovery and full offline
+queue advancement. The read-only monitor does not satisfy those requirements.
 
 ## Historical Record — not reverified by this task
 

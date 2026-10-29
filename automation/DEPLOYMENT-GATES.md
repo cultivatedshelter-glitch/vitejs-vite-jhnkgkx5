@@ -62,16 +62,17 @@ Do not paste credential values into issues, task text, commits, logs, or chat.
    ticks, deployment-complete handoff, QA-failure handback, monitoring and alerts.
 7. Exercise a real synthetic change, an actual successful staging deployment,
    independent live QA, then one controlled QA failure and automatic recovery.
-8. Install the scheduled regression workflow on the repository's default branch
-   only after the credential and source gates pass. A schedule on a nondefault
+8. Activate full authenticated scheduled QA on the repository's default branch
+   only after the credential and source gates pass. The separate read-only
+   health/core-regression schedule is already installed and does not grant QA PASS. A schedule on a nondefault
    branch is not an active schedule. Do not claim offline PASS until a queued task
    advances on hosted runners with no local process.
 
 ## Audit, rollback, and limits
 
 Persist state in the dedicated engineering state branch, with immutable QA
-artifacts in Actions and commit/deployment references in state. No state branch
-has been provisioned yet. Alerts must include the task and hosted run link, never
+artifacts in Actions and commit/deployment references in state. The dedicated state branch now records the approved synthetic task and its
+credential blocker. Live worker CAS transport remains unexercised. Alerts must include the task and hosted run link, never
 raw provider output or secret values. Preflight artifacts are retained for 30
 days; durable candidate evidence must also be committed through the trusted
 broker rather than relying on artifact retention alone.
@@ -82,7 +83,8 @@ back to its recorded prior deployment. Never roll back report/version history or
 modify production as part of engineering-worker recovery.
 
 Known limits: model-backed Builder, hosted broker, live synthetic QA, staging
-deployment adapter, operational triggers, alerts and scheduled regression remain
-uninstalled. Local tests use simulated worker results and cannot prove live
+deployment adapter, operational task/deployment/defect triggers, alerts and full authenticated
+scheduled QA remain uninstalled. Read-only health/core regression is installed on
+the default branch with a six-hour UTC schedule and a successful hosted push run. Local tests use simulated worker results and cannot prove live
 deployment, QA, isolation or offline operation. After this system proves stable,
 add a read-only security/regression auditor.
