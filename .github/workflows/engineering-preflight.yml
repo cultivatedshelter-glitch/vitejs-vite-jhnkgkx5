@@ -105,11 +105,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 automation/checkpoint.py
+      - name: Verify replay against real hosted state without a second transition
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+          path = Path('engineering-evidence/checkpoint.json')
+          first = json.loads(path.read_text())
+          Path('engineering-evidence/checkpoint-first.json').write_text(json.dumps(first))
+          subprocess.run([sys.executable, 'automation/checkpoint.py'], check=True)
+          second = json.loads(path.read_text())
+          assert second['persisted'] and second['replayed']
+          assert second['revision'] == first['revision']
+          print('Hosted checkpoint replay: no duplicate state transition')
+          PY
       - name: Preserve checkpoint evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: engineering-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
-          path: engineering-evidence/checkpoint.json
+          path: engineering-evidence/checkpoint*.json
           if-no-files-found: error
           retention-days: 30
