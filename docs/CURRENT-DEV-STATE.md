@@ -1,5 +1,46 @@
 # Shelter Prep Current Development State
 
+## External Engineering Verification — 2026-10-29
+
+Status: **BLOCKED / NOT DEPLOYED**. Current configuration was inspected directly;
+the historical record below does not establish current release readiness.
+
+- Work is isolated on `automation/external-engineering` in the requested repository.
+- The named development branch remains the production service's autodeploy source.
+  No commit was pushed to that branch and no production setting was changed.
+- Staging is a separate project with no GitHub source attached. Its health endpoint
+  returned HTTP 200, notifications disabled; unauthenticated identity, review queue,
+  and dashboard access were denied in live probes.
+- Development database catalog checks show RLS on all 21 public tables, both
+  evidence/report Storage buckets private, and no configured foreign servers.
+  These catalog checks do not prove synthetic-only contents or staging key provenance.
+- Security advisors report leaked-password protection disabled; see the provider's
+  password-security guidance. No Auth configuration was changed.
+- The source branch tracks an environment file; its values were not read. Source
+  and bundle credential validation remains mandatory before any agent deployment.
+- The existing model credential is approved for reuse but is not bound to an
+  unattended engineering runtime. Railway OAuth provides variable names only.
+- A bounded proposal adapter, GitHub state-store adapter, orchestration core,
+  read-only live preflight, workflow definition and 39 passing local tests are
+  prepared. Unit tests use simulated workers and model responses.
+- `automation/evidence/local-live-preflight.json` records actual partial live
+  checks. It explicitly records BLOCKED for the full QA contract.
+- Workflow publication/execution is being attempted separately; a definition on
+  this branch does not establish a successful hosted run or an active schedule.
+- Builder publication/validation integration, deployment adapter, authenticated
+  independent synthetic QA, approval intake, live retry recovery, state-branch
+  provisioning, alerting and scheduled regression remain uninstalled.
+- No real engineering cycle, controlled live QA-failure recovery, or queued-task
+  offline advancement has been demonstrated. No new paid service was provisioned.
+
+Exact scopes, activation gates, limitations and rollback instructions are recorded
+in `automation/DEPLOYMENT-GATES.md`. Production, customer data and mail were
+untouched. No production or development schema changes were performed.
+
+## Historical Record — not reverified by this task
+
+# Shelter Prep Current Development State
+
 Last verified: 2026-09-21 (America/Los_Angeles)
 
 This file records changing operational truth. Permanent doctrine lives in

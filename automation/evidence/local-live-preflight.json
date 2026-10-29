@@ -1,0 +1,31 @@
+{
+  "blocker_codes": [
+    "cloud_identity_not_verified",
+    "staging_secret_provenance_not_verified",
+    "synthetic_live_cycle_not_executed"
+  ],
+  "prerequisite_checks": {
+    "notifications_disabled": "pass",
+    "staging_health": "pass",
+    "unauthenticated_dashboard_denied": "pass",
+    "unauthenticated_identity_denied": "pass",
+    "unauthenticated_review_queue_denied": "pass"
+  },
+  "production_changed": false,
+  "qa_checks": {
+    "auth": "blocked",
+    "immutable_reports": "blocked",
+    "mobile_routes": "blocked",
+    "no_release_delivery": "blocked",
+    "pdf_retrieval": "blocked",
+    "private_storage": "blocked",
+    "processing": "blocked",
+    "production_untouched": "blocked",
+    "reviewer_boundaries": "blocked",
+    "synthetic_email_auth": "blocked",
+    "uploads": "blocked",
+    "user_isolation": "blocked"
+  },
+  "schema": "shelter-prep-engineering-preflight.v1",
+  "status": "BLOCKED"
+}

@@ -1,0 +1,42 @@
+name: External engineering preflight
+
+on:
+  push:
+    branches: [automation/external-engineering]
+    paths: ['automation/**', '.github/workflows/engineering-preflight.yml']
+  workflow_dispatch:
+
+# Preparation-only workflow. It cannot write code, release, deploy, or send mail.
+permissions:
+  contents: read
+
+concurrency:
+  group: shelter-prep-engineering-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            automation
+          sparse-checkout-cone-mode: false
+      - name: Verify orchestration and fail-closed checks
+        run: python3 -m unittest discover -s automation -p 'test_*.py' -v
+      - name: Record read-only staging prerequisites
+        env:
+          STAGING_URL: https://shelter-prep-phase1-staging-production.up.railway.app
+          APPROVED_STAGING_URL: https://shelter-prep-phase1-staging-production.up.railway.app
+        run: python3 automation/preflight.py
+      - name: Preserve evidence even when blocked
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: engineering-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: engineering-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 30
