@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { extname, join, relative } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { findServiceRoleCredentialExposures } from './security-agent-secrets.mjs'
 
 const root = process.cwd()
 const allowedExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.json', '.md', '.css', '.html', '.sql'])
@@ -47,11 +48,6 @@ function lineNumber(content, index) {
 function scanSecrets(files) {
   const secretPatterns = [
     {
-      label: 'Supabase service role key',
-      pattern: /(?:SUPABASE_SERVICE_ROLE_KEY|service_role)/gi,
-      level: 'error',
-    },
-    {
       label: 'Hard-coded agent key',
       pattern: /(AGENT_API_KEY|x-agent-key)\s*[:=]\s*['"][^'"]{4,}['"]/gi,
       level: 'error',
@@ -76,6 +72,15 @@ function scanSecrets(files) {
     }
 
     const content = read(file)
+    for (const index of findServiceRoleCredentialExposures(content)) {
+      addFinding(
+        'error',
+        `${rel}:${lineNumber(content, index)}`,
+        'Supabase service role key',
+        'Move secrets to Supabase/Railway server-side env vars.'
+      )
+    }
+
     for (const { label, pattern, level } of secretPatterns) {
       for (const match of content.matchAll(pattern)) {
         const line = lineNumber(content, match.index || 0)
